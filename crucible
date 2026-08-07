@@ -1,0 +1,1053 @@
+#!/bin/sh
+# crucible - a file-only refusal gate for maker/judge work. No dependencies.
+#
+#   crucible adopt [PROGRAM]               install into the repo you are standing in
+#   crucible claim add|list|verdict|scout|admit  the outer loop: audit a problem document
+#   crucible triage                        evidence-grounded decision table for the operator
+#   crucible panes [VIEW...]               overlay live views onto the tmux window you are in
+#   crucible selftest                      verify the gate refuses what it claims to
+#   crucible add SLUG "TITLE"             create the item (also sets the run up)
+#   crucible agents                       list the panel: name, kind, model, effort
+#   crucible target SLUG REPO BRANCH BASE  point the item at a real git branch
+#   crucible next                         what to do now, read from files not memory
+#   crucible phase SLUG [PHASE]           show or advance the lifecycle phase
+#   crucible dispatch SLUG ROLE AGENT     write the contract for a call, print its path
+#   crucible brief SLUG maker|judge NAME  build a brief directly (dispatch is usually better)
+#   crucible run  SLUG NAME -- CMD...     run CMD and record the result as evidence
+#   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
+#   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
+#   crucible check SLUG                   THE GATE. non-zero unless closeable
+#   crucible close SLUG "LESSON"          refuses unless check passes
+#   crucible workid SLUG                  print the current work id
+#   crucible help                         this list
+#
+# Roles come from the brief an agent receives, never from which agent it is. Any CLI
+# can be maker; any 1+ CLIs can be judges, same kind or mixed. agents.tsv is two
+# columns: name<TAB>kind. Launching agents is the orchestrator's job, not this file's.
+#
+# WHAT THIS ENFORCES (a missing or wrong file stops the run):
+#   work exists; no symlinks or newline filenames anywhere in the item; the falsifier
+#   is written; evidence exists, is non-empty, was produced by `crucible run`, and
+#   carries the current work id; each verdict is a registered agent, is a regular file,
+#   has an exact VERDICT and WORK-ID header, is fresh, is not byte-identical to another,
+#   and is backed by at least one evidence file that agent recorded itself; enough
+#   verdicts; enough distinct kinds; work unchanged across check and close; no reclose.
+#
+# WHAT THIS DOES NOT ENFORCE, stated plainly rather than dressed up:
+#   WHO WROTE A FILE. Under one user with a shell, one actor can author every verdict
+#   under different registered names. Independence here is a property of how you
+#   dispatch, not something this script can prove. It raises the cost of faking a panel;
+#   it does not close it. Nor can it prove a recorded command was meaningful, that a
+#   judge understood what it read, or that a lesson was applied rather than present.
+#
+# Environment: CRUCIBLE_MIN_JUDGES (default 2), CRUCIBLE_MIN_KINDS (default 1).
+
+set -eu
+
+# The run root is wherever this script lives. That means a program copied into
+# <target-repo>/.crucible/<program>/ works with cwd anywhere, and its memory,
+# lessons and items are stored in the repo they belong to.
+ROOT=${CRUCIBLE_ROOT:-$(cd "$(dirname "$0")" && pwd)}
+MIN_JUDGES=${CRUCIBLE_MIN_JUDGES:-2}
+MIN_KINDS=${CRUCIBLE_MIN_KINDS:-1}
+MARK='crucible-run/1'
+
+die() { printf 'crucible: %s\n' "$*" >&2; exit 2; }
+usage() { sed -n '/^#   crucible adopt/,/^# Environment/p' "$0" | sed 's/^# \{0,1\}//'; }
+have() { command -v "$1" >/dev/null 2>&1; }
+posint() { case $1 in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ]; }
+posint "$MIN_JUDGES" || die "CRUCIBLE_MIN_JUDGES must be a positive integer"
+posint "$MIN_KINDS"  || die "CRUCIBLE_MIN_KINDS must be a positive integer"
+
+hashfile() {
+  if   have shasum;    then shasum -a 256 "$1" | cut -d' ' -f1
+  elif have sha256sum; then sha256sum   "$1" | cut -d' ' -f1
+  else cksum "$1" | cut -d' ' -f1; fi
+}
+h12() {
+  if   have shasum;    then shasum -a 256
+  elif have sha256sum; then sha256sum
+  else cksum; fi | cut -d' ' -f1 | cut -c1-12
+}
+
+# How an agent should invoke this from the working directory it will actually be in. A hardcoded
+# "./crucible" was wrong for an installed program: the documents put cwd at the repository root,
+# where ./crucible does not exist, so every generated contract handed the agent a 127.
+self_path() {
+  [ -n "${CRUCIBLE_SELF:-}" ] && { printf '%s' "$CRUCIBLE_SELF"; return; }
+  if [ -f "$ROOT/PROGRAM" ]; then
+    r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM" | head -1)
+    if [ -n "$r" ]; then
+      # Resolve both sides before comparing. git reports the physical path and `pwd` may report
+      # a symlinked one — on macOS /var is a link to /private/var — so a textual prefix test
+      # silently failed and every generated contract fell back to a path that does not exist.
+      rr=$(cd "$r" 2>/dev/null && pwd -P) || rr=$r
+      rt=$(cd "$ROOT" 2>/dev/null && pwd -P) || rt=$ROOT
+      case $rt in
+        "$rr"/*) printf '%s/crucible' "${rt#"$rr"/}"; return ;;
+      esac
+    fi
+  fi
+  printf './crucible'
+}
+
+D() { printf '%s/items/%s' "$ROOT" "$1"; }
+need() { [ -n "${1:-}" ] || die "need a slug"; [ -d "$(D "$1")" ] || die "no such item: $1"; }
+# agents.tsv: name <TAB> kind <TAB> model <TAB> effort <TAB> command
+# The command may contain {BRIEF} {MODEL} {EFFORT}. Only listed names may judge.
+col() {
+  [ -f "$ROOT/agents.tsv" ] || return 0
+  grep -v '^#' "$ROOT/agents.tsv" 2>/dev/null | awk -F'\t' -v n="$1" -v c="$2" '$1==n{print $c; exit}'
+}
+kind_of() { col "$1" 2; }
+
+cmd_agents() {
+  [ -f "$ROOT/agents.tsv" ] || die "no agents.tsv here"
+  printf '%-10s %-8s %-22s %-8s %s\n' NAME KIND MODEL EFFORT COMMAND
+  grep -v '^#' "$ROOT/agents.tsv" | grep -v '^[[:space:]]*$' |
+    while IFS="$(printf '\t')" read -r n k m e c; do
+      printf '%-10s %-8s %-22s %-8s %s\n' "$n" "$k" "${m:--}" "${e:--}" "${c:-(none)}"
+    done
+}
+
+invocation() {
+  n=$1; b=$2
+  c=$(col "$n" 5); [ -n "$c" ] || { printf '(no command registered for %s — add column 5 to agents.tsv)' "$n"; return; }
+  m=$(col "$n" 3); e=$(col "$n" 4)
+  printf '%s' "$c" | sed -e "s|{BRIEF}|$b|g" -e "s|{MODEL}|${m:-}|g" -e "s|{EFFORT}|${e:-}|g"
+}
+reg() { [ -n "$(kind_of "$1")" ] || die "unregistered agent: $1 — add '$1<TAB>kind' to $ROOT/agents.tsv"; }
+
+# Symlinks are refused: the target lives outside the tree and can change after a PASS
+# without changing the work id. Newlines are refused: they truncate line-oriented reads.
+faults() {
+  [ -d "$1" ] || { printf 'missing directory %s\n' "$1"; return; }
+  find "$1" -type l | while IFS= read -r l; do printf 'symlink not allowed: %s\n' "${l#"$1/"}"; done
+  a=$(find "$1" -type f -exec printf 'x\n' \; | wc -l | tr -d ' ')
+  b=$(find "$1" -type f -print | wc -l | tr -d ' ')
+  [ "$a" = "$b" ] || printf 'a filename under %s contains a newline\n' "$1"
+}
+
+TARGET_HELP='target file format: three lines — repo: <path>  branch: <name>  base: <ref>'
+
+tgt() { sed -n "s/^$2: //p" "$(D "$1")/TARGET" 2>/dev/null | head -1; }
+
+cmd_target() {
+  need "${1:-}"; slug=$1; repo=${2:-}; br=${3:-}; base=${4:-}
+  [ -n "$repo" ] && [ -n "$br" ] && [ -n "$base" ] || die "usage: crucible target SLUG REPO BRANCH BASE"
+  [ -d "$repo/.git" ] || [ -f "$repo/.git" ] || die "not a git repo: $repo"
+  git -C "$repo" rev-parse --verify --quiet "$base" >/dev/null || die "no such base ref: $base"
+  printf 'repo: %s\nbranch: %s\nbase: %s\n' "$repo" "$br" "$base" > "$(D "$slug")/TARGET"
+  printf 'item %s now tracks %s branch %s off %s\n' "$slug" "$repo" "$br" "$base"
+  printf 'the maker works in that repo on that branch, not in items/%s/work/\n' "$slug"
+}
+
+# Work id. In git mode this is the branch's COMMIT, not its tree: an empty commit leaves the
+# tree identical, so a tree-based id let a commit land without voiding any verdict. In sandbox
+# mode the mode bits are hashed alongside the content, because making a file executable is a
+# change to the work that content hashing alone cannot see.
+workid() {
+  d=$(D "$1")
+  if [ -f "$d/TARGET" ]; then
+    r=$(tgt "$1" repo); b=$(tgt "$1" branch)
+    c=$(git -C "$r" rev-parse --verify --quiet "$b" 2>/dev/null || true)
+    [ -n "$c" ] && { printf '%s' "$c" | cut -c1-12; return; }
+    printf 'NOBRANCH'; return
+  fi
+  [ -n "$(find "$d/work" -type f 2>/dev/null | head -1)" ] || { printf 'EMPTY'; return; }
+  find "$d/work" -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+    m=$(ls -l "$f" 2>/dev/null | cut -c1-10)
+    printf '%s %s %s\n' "${f#"$d/"}" "$m" "$(hashfile "$f")"
+  done | h12
+}
+
+# What a judge is shown as "the work": a real diff in git mode, file contents in sandbox mode.
+emit_work() {
+  d=$(D "$1"); wid=$2
+  if [ -f "$d/TARGET" ]; then
+    r=$(tgt "$1" repo); b=$(tgt "$1" branch); base=$(tgt "$1" base)
+    echo "Repository: $r"; echo "Branch: $b  Base: $base  Tree: $wid"; echo
+    echo "### commits"; echo '```'; git -C "$r" log --oneline "$base..$b" 2>/dev/null || echo "(none)"; echo '```'
+    echo "### files changed"; echo '```'; git -C "$r" diff --stat "$base..$b" 2>/dev/null; echo '```'
+    echo "### diff"; echo '```diff'; git -C "$r" diff -U10 "$base..$b" 2>/dev/null; echo '```'
+  else
+    find "$d/work" -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+      echo "### ${f#"$d/"}"; echo '```'; cat "$f"; echo '```'; done
+  fi
+}
+
+cmd_add() {
+  slug=${1:-}; shift 2>/dev/null || true; title=${*:-}
+  [ -n "$slug" ] || die 'usage: crucible add SLUG "TITLE"'
+  case $slug in *[!A-Za-z0-9._-]*) die "slug may only contain A-Za-z0-9._-" ;; esac
+  mkdir -p "$ROOT/items"
+  [ -f "$ROOT/LESSONS.md" ] || : > "$ROOT/LESSONS.md"
+  if [ ! -f "$ROOT/agents.tsv" ]; then
+    { printf '# name\tkind\tmodel\teffort\tcommand   ({BRIEF} {MODEL} {EFFORT} are substituted)\n'
+      printf '# Only names listed here may author a verdict. Repeat a kind for a same-kind panel.\n'
+      have kiro-cli && printf 'lead\tkiro\tclaude-opus-5\tmax\tkiro-cli chat --no-interactive --trust-all-tools --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
+      have kiro-cli && printf 'mk1\tkiro\tclaude-sonnet-5\thigh\tkiro-cli chat --no-interactive --trust-all-tools --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
+      have kiro-cli && printf 'j1\tkiro\tclaude-opus-5\thigh\tkiro-cli chat --no-interactive --trust-all-tools --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
+      have grok     && printf 'j2\tgrok\tgrok-4.5\thigh\tgrok -p "read {BRIEF} and follow it exactly" --model {MODEL}\n'
+      have codex    && printf 'j3\tcodex\tgpt-5-codex\thigh\tcodex exec --skip-git-repo-check -m {MODEL} "read {BRIEF} and follow it exactly"\n'
+      true; } > "$ROOT/agents.tsv"
+    printf 'wrote %s — edit it to match the agents you will actually use\n' "$ROOT/agents.tsv"
+  fi
+  d=$(D "$slug"); [ -d "$d" ] && die "item exists: $slug"
+  mkdir -p "$d/work" "$d/evidence" "$d/verdicts" "$d/briefs"
+  cat > "$d/ITEM.md" <<EOF
+# $slug — ${title:-untitled}
+
+PHASE: SPEC
+STATUS: OPEN
+
+## The ask
+
+${title:-Describe the work, and quote the report sentence that caused this item.}
+
+## Acceptance criteria
+
+- [ ] A1
+
+## Falsifier
+
+TEMPLATE-FALSIFIER-UNWRITTEN. Replace this line: name the change to undo and the check
+that must then fail. The gate refuses closure while this marker is present.
+EOF
+  if [ -f "$ROOT/PROGRAM" ]; then
+    r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM" | head -1)
+    b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM" | head -1)
+    [ -n "$r" ] && cmd_target "$slug" "$r" "ai/$slug" "${b:-main}" >/dev/null 2>&1 || true
+  fi
+  printf '%s/ITEM.md\n' "$d"
+  printf 'next: write the ask, criteria and falsifier into that file, then\n'
+  printf '      crucible brief %s maker <name>\n' "$slug"
+}
+
+cmd_brief() {
+  need "${1:-}"; slug=$1; role=${2:-}; name=${3:-}
+  [ -n "$name" ] || die "usage: crucible brief SLUG maker|judge NAME"
+  reg "$name"
+  d=$(D "$slug"); wid=$(workid "$slug"); self=$(self_path)
+  case $role in
+  maker)
+    printf '%s\n' "$name" > "$d/MAKER"
+    out="$d/briefs/maker.md"
+    { echo "# Maker brief: $slug"
+      echo
+      echo "You are $name, the maker. Do the work described below."
+      echo
+      if [ -f "$d/TARGET" ]; then
+        echo "Work in the repository **$(tgt "$slug" repo)** on branch **$(tgt "$slug" branch)**,"
+        echo "which branches from **$(tgt "$slug" base)**. Commit there. Do not push."
+      else
+        echo "Write your changes only under \`$d/work/\`. Do not create symlinks and do not put"
+        echo "newlines in filenames; both are refused."
+      fi
+      echo
+      echo "Do not write to \`$d/evidence/\` by hand — hand-written evidence is refused. To record"
+      echo "a check, have this run it for you:"
+      echo
+      echo "    $self run $slug $name -- <your command>"
+      echo
+      echo "That captures the command, its exit status and its output, and stamps it with the"
+      echo "work id at the moment it ran, so it cannot be relabelled later."
+      echo
+      echo "Do not write to \`$d/verdicts/\` or edit \`$d/ITEM.md\`. Ask the orchestrator if the"
+      echo "acceptance criteria are wrong."
+      echo
+      echo "Run \`$self check $slug\` to see what still refuses. When only the judge count"
+      echo "refuses, you are done."
+      echo; echo "---"; echo; cat "$d/ITEM.md"
+      if [ -s "$ROOT/LESSONS.md" ]; then
+        echo; echo "---"; echo; echo "## Lessons from earlier items — these bind you"; echo
+        cat "$ROOT/LESSONS.md"
+      fi
+    } > "$out"
+    printf '%s\n' "$out" ;;
+  judge)
+    [ "$wid" = EMPTY ] && die "refused: no work yet, so there is nothing to judge"
+    maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER")
+    [ "$name" = "$maker" ] && die "refused: $name is the maker of $slug"
+    out="$d/briefs/judge-$name.md"
+    { echo "# Judge brief: $slug"
+      echo
+      echo "You are $name, an independent judge. You have no knowledge of how this was built."
+      echo "You get the goal, the work, and the recorded evidence. There is no implementer"
+      echo "report or rationale here."
+      echo
+      echo "Verify by running things, not by reading. Record every check you run with:"
+      echo
+      echo "    $self run $slug $name -- <your command>"
+      echo
+      echo "A PASS is refused unless you recorded at least one check yourself."
+      echo
+      echo "Then write \`$d/verdicts/$name.md\`, and no other file. First two lines exactly:"
+      echo
+      echo "    VERDICT: PASS"
+      echo "    WORK-ID: $wid"
+      echo
+      echo "Use REJECT, INSUFFICIENT_EVIDENCE or SCOPE_CONFLICT instead of PASS as warranted."
+      echo "PASS also requires that you ran the falsifier in the item and cite its output."
+      echo "REJECT requires file:line for every finding. If you cannot decide from what you"
+      echo "have, return INSUFFICIENT_EVIDENCE and name the missing artifact — never PASS."
+      echo
+      echo "The evidence below was recorded by other agents. It cannot be stale, but nothing"
+      echo "proves it was a meaningful check. Re-derive anything you rely on."
+      echo; echo "## The goal"; echo; cat "$d/ITEM.md"
+      echo; echo "## The work — work id $wid"; echo
+      emit_work "$slug" "$wid"
+      echo; echo "## Recorded evidence"; echo
+      if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
+        echo "(none. Absence of evidence is a finding, never a pass.)"
+      else
+        find "$d/evidence" -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+          echo "### ${f##*/}"; echo '```'; cat "$f"; echo '```'; done
+      fi
+    } > "$out"
+    printf '%s\n' "$out" ;;
+  *) die "role must be maker or judge" ;;
+  esac
+}
+
+cmd_run_claim() {
+  cn=${1:-}; name=${2:-}; shift 2 2>/dev/null || die "usage: crucible run-claim CN NAME -- CMD..."
+  [ "${1:-}" = "--" ] || die "usage: crucible run-claim CN NAME -- CMD..."
+  shift; [ $# -gt 0 ] || die "no command given"
+  reg "$name"
+  cdir="$ROOT/claims/$cn"; [ -d "$cdir" ] || die "no such claim: $cn"
+  mkdir -p "$cdir/evidence"
+  RUN_SEQ=$((${RUN_SEQ:-0} + 1)); tok="p$$s$RUN_SEQ"
+  out="$cdir/evidence/$name.$tok.txt"; tmp="$cdir/evidence/.partial.$name.$tok"
+  { printf '%s\n' "$MARK"; printf 'agent: %s\nclaim: %s\n' "$name" "$cn"
+    printf 'when: %s\ncommand:' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    for a in "$@"; do printf ' %s' "$a"; done; printf '\n--- output ---\n'; } > "$tmp"
+  rc=0; "$@" >> "$tmp" 2>&1 || rc=$?
+  printf -- '--- exit %s ---\n' "$rc" >> "$tmp"; mv "$tmp" "$out"
+  printf '%s (exit %s)\n' "$out" "$rc"; return 0
+}
+
+cmd_run() {
+  need "${1:-}"; slug=$1; name=${2:-}; shift 2 2>/dev/null || die "usage: crucible run SLUG NAME -- CMD..."
+  [ "${1:-}" = "--" ] || die "usage: crucible run SLUG NAME -- CMD..."
+  shift; [ $# -gt 0 ] || die "no command given"
+  reg "$name"; d=$(D "$slug"); wid=$(workid "$slug")
+  # The name is unique by construction. Asking whether a name is free and then taking
+  # it is a check-then-act race: two concurrent runs both see it free, both take it,
+  # and one silently overwrites the other. The pid separates concurrent writers, the
+  # counter separates sequential ones.
+  RUN_SEQ=$((${RUN_SEQ:-0} + 1)); tok="p$$s$RUN_SEQ"
+  out="$d/evidence/$name.$tok.$wid.txt"
+  tmp="$d/evidence/.partial.$name.$tok.$wid"
+  { printf '%s\n' "$MARK"; printf 'agent: %s\n' "$name"; printf 'work-id: %s\n' "$wid"
+    printf 'when: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; printf 'command:'
+    for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; printf -- '--- output ---\n'; } > "$tmp"
+  rc=0; "$@" >> "$tmp" 2>&1 || rc=$?
+  printf -- '--- exit %s ---\n' "$rc" >> "$tmp"
+  # Publish atomically: until this rename nothing can read a partial file, which is why
+  # a recorded command that inspects the evidence directory no longer sees its own
+  # incomplete header and call it truncated.
+  mv "$tmp" "$out"
+  printf '%s (exit %s)\n' "$out" "$rc"
+  return 0
+}
+
+# A claim-auditor judges a CLAIM, which is not an item and has no work tree. Dispatching
+# against a claim id used to refuse with "no such item", which made BOOTSTRAP step 5 — the
+# fact-checking step, the one that earns everything else — impossible to follow.
+cmd_dispatch_claim() {
+  cn=$1; role=${2:-}; name=${3:-}
+  [ -n "$role" ] && [ -n "$name" ] || die "usage: crucible dispatch CN ROLE AGENT"
+  rf="$ROOT/roles/$role.md"; [ -f "$rf" ] || die "no such role: $role"
+  reg "$name"
+  f=$(claims_file); [ -f "$f" ] || die "no CLAIMS.md here"
+  grep -q "^### $cn " "$f" || die "no such claim: $cn"
+  cdir="$ROOT/claims/$cn"; mkdir -p "$cdir/verdicts" "$cdir/dispatches" "$cdir/evidence"
+  n=1; while [ -e "$cdir/dispatches/$n-$role-$name.md" ]; do n=$((n+1)); done
+  out="$cdir/dispatches/$n-$role-$name.md"
+  self=$(self_path)
+  { echo "# Dispatch $n — $role — $name — claim $cn"
+    echo
+    echo "You are **$name**, acting as **$role**, auditing claim **$cn**. This file is your"
+    echo "complete task. Read it and follow it exactly. If it is insufficient, return"
+    echo "NEEDS_CONTEXT naming what is missing."
+    echo
+    echo "- **Purpose right now:** $(sed -n 's/^purpose: //p' "$rf" | head -1)"
+    echo "- **You may read:** $(sed -n 's/^may-read: //p' "$rf" | head -1)"
+    echo "- **You must not read:** $(sed -n 's/^must-not-read: //p' "$rf" | head -1)"
+    echo "- **You must return:** $(sed -n 's/^return: //p' "$rf" | head -1)"
+    echo "- **How to verify your own work:** $(sed -n 's/^verify: //p' "$rf" | head -1)"
+    echo
+    echo "Record every command you run:"
+    echo
+    echo "    $self run-claim $cn $name -- <command>"
+    echo
+    echo "Then record your result:"
+    echo
+    if [ "$role" = scout ]; then
+      echo "    $self claim scout $cn ABSENT|PARTLY-EXISTS|FULLY-EXISTS $name"
+      echo
+      echo "FULLY-EXISTS means the repository already does this; it blocks admission, so say where."
+      echo "PARTLY-EXISTS means some of it exists: name what does and what is missing, because the"
+      echo "item will be narrowed to the gap. ABSENT is a claim in its own right, so list every"
+      echo "search you ran and let it be checked. Search by behaviour, not by name — the thing that"
+      echo "would be built rarely contains the words someone would call it."
+      echo
+      echo "(the lines below apply to auditors, not to you)"
+    fi
+    echo "    $self claim verdict $cn $name TRUE|FALSE|STALE|UNVERIFIABLE"
+    echo
+    echo "TRUE means true of the code as it exists now, cited to file:line. STALE means it was"
+    echo "true and has since been fixed — cite the fix. UNVERIFIABLE means the code cannot settle"
+    echo "it; name what is missing. Never guess, and never resolve doubt in favour of the claim."
+    echo; echo "---"; echo; echo "## The claim"; echo
+    awk -v c="### $cn " 'index($0,c)==1{p=1;print;next} p&&/^### C[0-9]/{exit} p{print}' "$f"
+    echo; echo "---"; echo; echo "## Your role in full"; echo
+    sed -n '/^## Instructions/,$p' "$rf"
+    echo; echo "---"; echo; echo "## The rules that bind you"; echo
+    cat "$ROOT/RULES.md" 2>/dev/null || echo "(RULES.md missing)"
+  } > "$out"
+  printf '%s\n' "$out"
+  { printf '\n# %s as %s on claim %s. Run this:\n' "$name" "$role" "$cn"
+    printf '%s\n' "$(invocation "$name" "$out")"; } >&2
+}
+
+cmd_dispatch() {
+  slug=${1:-}; role=${2:-}; name=${3:-}
+  case $slug in C[0-9]*) cmd_dispatch_claim "$@"; return $? ;; esac
+  need "$slug"
+  [ -n "$role" ] && [ -n "$name" ] || die "usage: crucible dispatch SLUG ROLE AGENT"
+  rf="$ROOT/roles/$role.md"; [ -f "$rf" ] || die "no such role: $role (see $ROOT/roles/)"
+  reg "$name"; d=$(D "$slug"); wid=$(workid "$slug"); self=$(self_path)
+  ph=$(phase_of "$slug")
+  fld() { sed -n "s/^$1: //p" "$rf" | head -1; }
+  maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER")
+  case $role in
+    judge|adversary) case $wid in EMPTY|NOBRANCH) die "refused: no work yet, nothing to judge" ;; esac
+                     [ "$name" = "$maker" ] && die "refused: $name is the maker of $slug"
+                     # Archive a verdict this agent gave on different work rather than letting it be
+                     # overwritten. Without this the defect history is unreproducible: each round's
+                     # findings vanish when the next round's verdict lands on the same filename.
+                     old="$d/verdicts/$name.md"
+                     if [ -f "$old" ]; then
+                       ow=$(sed -n 's/^WORK-ID: //p' "$old" | head -1)
+                       if [ -n "$ow" ] && [ "$ow" != "$wid" ]; then
+                         mkdir -p "$d/verdicts/history"
+                         a="$d/verdicts/history/$ow-$name.md"
+                         n2=1; while [ -e "$a" ]; do a="$d/verdicts/history/$ow-$name.$n2.md"; n2=$((n2+1)); done
+                         mv "$old" "$a"
+                         printf 'archived the superseded verdict: %s\n' "${a#"$ROOT/"}" >&2
+                       fi
+                     fi ;;
+    maker) printf '%s\n' "$name" > "$d/MAKER" ;;
+  esac
+  mkdir -p "$d/dispatches"
+  n=1; while [ -e "$d/dispatches/$n-$role-$name.md" ]; do n=$((n+1)); done
+  out="$d/dispatches/$n-$role-$name.md"
+  { echo "# Dispatch $n — $role — $name"
+    echo
+    echo "You are **$name**, acting as **$role**, on item **$slug**, phase **$ph**."
+    echo "This file is your complete task. Read it and follow it exactly. Do not ask for more"
+    echo "context: if this file is insufficient, return NEEDS_CONTEXT naming what is missing."
+    echo
+    echo "- **Purpose right now:** $(fld purpose)"
+    echo "- **You may read:** $(fld may-read)"
+    echo "- **You must not read:** $(fld must-not-read)"
+    echo "- **You must write:** $(fld must-write)"
+    echo "- **You may dispatch:** $(fld may-call)"
+    echo "- **You must return:** $(fld return)"
+    echo "- **How to verify your own work:** $(fld verify)"
+    echo
+    echo "Record every command you run, and name at least one of those files in what you write:"
+    echo
+    echo "    $self run $slug $name -- <command>"
+    echo
+    echo "Hand-written evidence is refused. Check what still blocks this item with"
+    echo "\`$self check $slug\`. Current work id: **$wid**."
+    if [ -f "$d/TARGET" ]; then
+      echo
+      echo "**Where the work lives:** repository \`$(tgt "$slug" repo)\`, branch"
+      echo "\`$(tgt "$slug" branch)\`, branched from \`$(tgt "$slug" base)\`. Commit there."
+      echo "Do not push, do not merge, do not touch any other branch. The work id above is that"
+      echo "branch's tree, so every commit changes it and voids any verdict already given."
+      echo
+      echo "**Order matters: commit first, then record your evidence.** Evidence is stamped with the"
+      echo "branch tree at the moment it runs, so anything you record before your final commit goes"
+      echo "stale the instant you commit. Finish the code, commit, then run your checks."
+    else
+      echo
+      echo "**Where the work lives:** \`$d/work/\`. No symlinks, no newlines in filenames."
+    fi
+    if [ "$role" = judge ] || [ "$role" = adversary ]; then
+      echo
+      echo "Write your verdict to \`$d/verdicts/$name.md\`. First two lines exactly:"
+      echo
+      echo "    VERDICT: PASS"
+      echo "    WORK-ID: $wid"
+      echo
+      echo "substituting REJECT, INSUFFICIENT_EVIDENCE or SCOPE_CONFLICT as warranted."
+    fi
+    echo; echo "---"; echo; echo "## Your role in full"; echo
+    sed -n '/^## Instructions/,$p' "$rf"
+    echo; echo "---"; echo; echo "## The rules that bind you"; echo
+    cat "$ROOT/RULES.md" 2>/dev/null || echo "(RULES.md missing)"
+    echo; echo "---"; echo; echo "## The item"; echo
+    cat "$d/ITEM.md"
+    for f in DESIGN.md TASKS.md; do
+      [ -f "$d/$f" ] && { echo; echo "## $f"; echo; cat "$d/$f"; }
+    done
+    if [ -s "$ROOT/LESSONS.md" ] && [ "$role" != judge ] && [ "$role" != adversary ]; then
+      echo; echo "## Lessons from earlier items — these bind you"; echo; cat "$ROOT/LESSONS.md"
+    fi
+    if [ "$role" = judge ] || [ "$role" = adversary ]; then
+      echo; echo "## The work — work id $wid"; echo
+      emit_work "$slug" "$wid"
+      echo; echo "## Recorded evidence"; echo
+      if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
+        echo "(none. Absence of evidence is a finding, never a pass.)"
+      else
+        find "$d/evidence" -type f -print | LC_ALL=C sort | while IFS= read -r f; do
+          echo "### ${f##*/}"; echo '```'; cat "$f"; echo '```'; done
+      fi
+    fi
+  } > "$out"
+  printf '%s\n' "$out"
+  { printf '\n# %s as %s. Run this:\n' "$name" "$role"
+    printf '%s\n' "$(invocation "$name" "$out")"
+    printf '# or give %s any way you like, with exactly: read %s and follow it exactly\n' "$name" "$out"
+  } >&2
+}
+
+phase_of() { p=$(sed -n 's/^PHASE: //p' "$(D "$1")/ITEM.md" 2>/dev/null | head -1); printf '%s' "${p:-SPEC}"; }
+
+cmd_phase() {
+  need "${1:-}"; slug=$1; new=${2:-}
+  d=$(D "$slug")
+  [ -n "$new" ] || { phase_of "$slug"; echo; return; }
+  case $new in SPEC|DESIGN|TASKS|BUILD|VERIFY|ADVERSARY|GRADUATE) : ;;
+    *) die "phase must be one of SPEC DESIGN TASKS BUILD VERIFY ADVERSARY GRADUATE" ;; esac
+  req=""
+  case $new in
+    TASKS)     req="DESIGN.md" ;;
+    BUILD)     req="TASKS.md" ;;
+    GRADUATE)  req="ADVERSARY.md" ;;
+  esac
+  [ -z "$req" ] || [ -f "$d/$req" ] || die "refused: $new requires $req and it does not exist"
+  if grep -q '^PHASE: ' "$d/ITEM.md"; then
+    sed "s|^PHASE: .*|PHASE: $new|" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  else
+    sed "s|^STATUS: |PHASE: $new\\nSTATUS: |" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  fi
+  printf '%s is now in %s\n' "$slug" "$new"
+}
+
+# What to do now. Reads the files, not your memory.
+cmd_next() {
+  f="$ROOT/CLAIMS.md"
+  if [ -f "$f" ]; then
+    tot=$(grep -c '^### C' "$f" 2>/dev/null || true); tot=${tot:-0}
+    if [ "$tot" -gt 0 ]; then
+      un=0; ad=0; i=1
+      while [ "$i" -le "$tot" ]; do
+        v=0; [ -d "$ROOT/claims/C$i/verdicts" ] && v=$(find "$ROOT/claims/C$i/verdicts" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')
+        [ "${v:-0}" -eq 0 ] && un=$((un+1))
+        sed -n "/^### C$i /,/^### C/{s/^    item: //p;}" "$f" | grep -q . && ad=$((ad+1))
+        i=$((i+1))
+      done
+      printf 'outer loop: %s claim(s), %s unaudited, %s admitted\n' "$tot" "$un" "$ad"
+      if [ "$un" -gt 0 ]; then
+        printf '  do this first: dispatch two claim-auditors of DIFFERENT kinds per unaudited claim,\n'
+        printf '  record with: crucible claim verdict CN AGENT TRUE|FALSE|STALE|UNVERIFIABLE\n'
+        printf '  nothing should be planned or built until the report has been fact-checked.\n\n'
+      elif [ "$ad" -eq 0 ]; then
+        printf '  every claim is audited. now: crucible triage — then take it to the operator\n'
+        printf '  and agree the backlog before admitting anything.\n\n'
+      fi
+    elif [ -f "$ROOT/PROGRAM" ]; then
+      printf 'no claims yet. Ask the operator for the problem document, then one claim per finding:\n'
+      printf '  crucible claim add "<claim>" "<the exact sentence from the document>"\n\n'
+    fi
+  fi
+  [ -d "$ROOT/items" ] || { echo "no items yet. Read START.md, then: crucible add SLUG \"TITLE\""; return; }
+  found=0
+  for d in "$ROOT"/items/*; do
+    [ -d "$d" ] || continue
+    slug=${d##*/}
+    grep -q '^STATUS: CLOSED' "$d/ITEM.md" 2>/dev/null && continue
+    found=1; ph=$(phase_of "$slug"); [ -n "$ph" ] || ph=SPEC
+    printf '%s — phase %s\n' "$slug" "$ph"
+    case $ph in
+      SPEC)      [ -f "$d/DESIGN.md" ] || printf '  dispatch: specifier, then judge\n' ;;
+      DESIGN)    printf '  dispatch: architect, then judge\n' ;;
+      TASKS)     printf '  dispatch: planner, then judge\n' ;;
+      BUILD)     printf '  dispatch: maker per task, then judge each\n' ;;
+      VERIFY)    printf '  dispatch: maker to record the named checks, then judges\n' ;;
+      ADVERSARY) printf '  dispatch: adversary\n' ;;
+      GRADUATE)  printf '  dispatch: integrator, then close\n' ;;
+    esac
+    cmd_check "$slug" 2>/dev/null | sed -n 's/^  FAIL/  blocked: /p' | head -6 || true
+    printf '  when ready: crucible dispatch %s <role> <agent>\n' "$slug"
+  done
+  [ "$found" = 1 ] || echo "every item is closed."
+}
+
+
+# Install a program into the repository you are standing in. Run this from anywhere
+# inside the target repo. The program and its memory live in that repo from then on.
+cmd_adopt() {
+  prog=${1:-main}
+  case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
+  repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
+  src=$(cd "$(dirname "$0")" && pwd)
+  dst="$repo/.crucible/$prog"
+  [ -d "$dst" ] && die "program already exists: $dst"
+  mkdir -p "$dst/items"
+  for f in crucible BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md; do
+    [ -f "$src/$f" ] && cp "$src/$f" "$dst/"
+  done
+  [ -d "$src/roles" ] && cp -r "$src/roles" "$dst/"
+  mkdir -p "$dst/scripts"
+  for f in "$src"/scripts/*.sh; do
+    [ -f "$f" ] && cp "$f" "$dst/scripts/"
+  done
+  chmod +x "$dst/crucible" "$dst/scripts/"*.sh 2>/dev/null || true
+  base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
+  printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
+  : > "$dst/LESSONS.md"
+  printf -- '- [ ] example — replace this line with real items as claims are admitted\n' > "$dst/BACKLOG.md"
+  # STATE.md is the resume point, and RULES.md calls trusting it over your memory a CHECK.
+  # adopt used to not create it, so START.md pointed at a file that did not exist.
+  cat > "$dst/STATE.md" <<STATEEOF
+# STATE — $prog
+
+The resume point. Trust this over your memory, always, and especially after a restart or a
+context compaction. The orchestrator writes it after every transition; nobody else writes it.
+
+program: $prog
+repo: $repo
+phase: INTAKE
+
+## In flight
+
+item: (none)
+dispatch: (none — the path of the contract file)
+awaiting: (none — the output file that must appear)
+
+## Escalations awaiting the human
+
+(none)
+
+---
+
+Recover with: cat STATE.md; .crucible/$prog/crucible next; git log --oneline -10
+Never re-dispatch a phase this file marks complete.
+STATEEOF
+  printf '# CLAIMS — %s\n\nOne heading per finding from the problem document, quoting its source sentence\nverbatim. Nothing becomes an item until it survives audit.\n' "$prog" > "$dst/CLAIMS.md"
+  { printf '# Patterns here are relative to this .crucible/ directory.\n'
+    printf '# agents.tsv names the agents on THIS machine, so it is not project state.\n'
+    printf '*/agents.tsv\n'
+  } > "$repo/.crucible/.gitignore"
+  printf 'installed program "%s" into %s\n\n' "$prog" "$dst"
+  printf 'Everything from here runs as:\n  .crucible/%s/crucible <verb>\n\n' "$prog"
+  printf 'Its lessons, claims, items and evidence are stored in THIS repository, so what it\n'
+  printf 'learns here stays here and is versioned with the code. agents.tsv is gitignored\n'
+  printf 'because it names the agents on this machine.\n\n'
+  printf 'Next:\n'
+  printf '  1. .crucible/%s/crucible selftest        prove the gate refuses what it claims\n' "$prog"
+  printf '  2. edit .crucible/%s/agents.tsv          your panel: name, kind, model, effort, command\n' "$prog"
+  printf '  3. ask the operator for the problem document, then one claim per finding:\n'
+  printf '     .crucible/%s/crucible claim add "<claim>" "<exact source sentence>"\n' "$prog"
+  printf '  4. read .crucible/%s/START.md for the rest\n' "$prog"
+  [ -f "$dst/agents.tsv" ] || {
+    { printf '# name\tkind\tmodel\teffort\tcommand   ({BRIEF} {MODEL} {EFFORT} substituted)\n'
+      printf '# Only names here may author a verdict. kind is the model family and is what\n'
+      printf '# cross-model judging counts. Replace these with how YOUR agents are invoked.\n'
+      printf 'mk1\tkindA\tMODEL\thigh\tAGENT_CLI --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
+      printf 'j1\tkindA\tMODEL\thigh\tAGENT_CLI --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
+      printf 'j2\tkindB\tMODEL\thigh\tOTHER_CLI --model {MODEL} "read {BRIEF} and follow it exactly"\n'
+    } > "$dst/agents.tsv"; }
+}
+
+# Claims: the outer loop. The script keeps the ledger honest; the agent supplies meaning.
+claims_file() { printf '%s/CLAIMS.md' "$ROOT"; }
+cmd_claim() {
+  sub=${1:-}; shift 2>/dev/null || true
+  f=$(claims_file)
+  # The ledger creates itself. Requiring `adopt` first meant a program that was set up
+  # any other way could not audit anything, which blocked the outer loop entirely.
+  [ -f "$f" ] || printf '# CLAIMS\n\nOne heading per finding, quoting its source sentence verbatim.\nNothing becomes an item until it survives audit.\n' > "$f"
+  case $sub in
+  add)
+    txt=${1:-}; src=${2:-}
+    [ -n "$txt" ] || die 'usage: crucible claim add "CLAIM" "EXACT SOURCE SENTENCE"'
+    [ -n "$src" ] || die 'refused: a claim needs its source sentence quoted verbatim'
+    cnt=$(grep -c '^### C' "$f" 2>/dev/null || true); cnt=${cnt:-0}
+    n=$((cnt + 1))
+    { printf '\n### C%s — %s\n\n' "$n" "$txt"
+      printf '    source: "%s"\n' "$src"
+      printf '    status: NEW\n    audited-by:\n    scout:\n    item:\n' ; } >> "$f"
+    mkdir -p "$ROOT/claims/C$n/verdicts"
+    printf 'C%s\n' "$n" ;;
+  list)
+    grep -E '^### C|^    status:' "$f" | paste - - 2>/dev/null || grep -E '^### C' "$f" ;;
+  verdict)
+    n=${1:-}; who=${2:-}; word=${3:-}
+    [ -n "$n" ] && [ -n "$who" ] && [ -n "$word" ] || die 'usage: crucible claim verdict N AGENT TRUE|FALSE|STALE|UNVERIFIABLE'
+    [ -n "$(kind_of "$who")" ] || die "unregistered agent: $who"
+    case $word in TRUE|FALSE|STALE|UNVERIFIABLE) : ;; *) die "verdict must be TRUE FALSE STALE or UNVERIFIABLE" ;; esac
+    d="$ROOT/claims/$n/verdicts"; [ -d "$d" ] || die "no such claim: $n"
+    # An auditor's verdict must be backed by a check that auditor recorded. Without this the
+    # outer loop is unauthenticated text: any name can assert TRUE about anything.
+    ce=0
+    for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
+      [ -s "$ef" ] || continue
+      [ "$(head -1 "$ef")" = "$MARK" ] || continue
+      ce=$((ce+1))
+    done
+    [ "$ce" -gt 0 ] \
+      || die "refused: $who recorded no usable evidence for $n — run: crucible run-claim $n $who -- <command>"
+    printf 'CLAIM-VERDICT: %s\nAGENT: %s\nKIND: %s\n' "$word" "$who" "$(kind_of "$who")" > "$d/$who.md"
+    printf '%s\n' "$d/$who.md" ;;
+  scout)
+    n=${1:-}; res=${2:-}; who=${3:-}
+    [ -n "$n" ] && [ -n "$res" ] || die 'usage: crucible claim scout CN ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT'
+    case $res in ABSENT|PARTLY-EXISTS|FULLY-EXISTS) : ;; *) die "scout result must be ABSENT, PARTLY-EXISTS or FULLY-EXISTS" ;; esac
+    grep -q "^### $n " "$f" || die "no such claim: $n"
+    [ -n "$who" ] || die 'usage: crucible claim scout CN RESULT AGENT — name the scout that searched'
+    [ -n "$(kind_of "$who")" ] || die "unregistered agent: $who"
+    # ABSENT is a claim in its own right, so it needs the searches behind it recorded.
+    se=0
+    for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
+      [ -s "$ef" ] && [ "$(head -1 "$ef")" = "$MARK" ] && se=$((se+1))
+    done
+    [ "$se" -gt 0 ] \
+      || die "refused: $who recorded no usable searches for $n — run: crucible run-claim $n $who -- <search>"
+    awk -v c="### $n " -v r="$res" '
+      $0 ~ "^"c {inc=1} inc && /^    scout:/ {print "    scout: " r; inc=0; next}
+      /^### C/ && $0 !~ "^"c {inc=0} {print}' "$f" > "$ROOT/c.$$.tmp" && mv "$ROOT/c.$$.tmp" "$f"
+    printf '%s scout: %s (by %s)\n' "$n" "$res" "$who" ;;
+  admit)
+    n=${1:-}; slug=${2:-}
+    [ -n "$n" ] && [ -n "$slug" ] || die 'usage: crucible claim admit CN SLUG'
+    d="$ROOT/claims/$n/verdicts"; [ -d "$d" ] || die "no such claim: $n"
+    t=0; kinds=""
+    for v in "$d"/*.md; do
+      [ -f "$v" ] || continue
+      # only a registered agent's verdict counts; a hand-dropped file with any name does not
+      vn=${v##*/}; vn=${vn%.md}
+      [ -n "$(kind_of "$vn")" ] || { printf 'ignoring unregistered verdict file: %s\n' "$vn" >&2; continue; }
+      ae=0
+      for ef in "$ROOT/claims/$n/evidence/$vn".*.txt; do
+        [ -s "$ef" ] && [ "$(head -1 "$ef")" = "$MARK" ] && ae=$((ae+1))
+      done
+      [ "$ae" -gt 0 ] || {
+        printf 'ignoring %s: no usable evidence for %s\n' "$vn" "$n" >&2; continue; }
+      [ "$(sed -n '1p' "$v")" = "CLAIM-VERDICT: TRUE" ] || continue
+      # The kind comes from agents.tsv, not from the verdict file. Reading it from the file let a
+      # writable KIND: line turn one agent into two kinds and satisfy a cross-model requirement.
+      k=$(kind_of "$vn")
+      case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
+      t=$((t+1))
+    done
+    [ "$t" -ge "${CRUCIBLE_MIN_AUDITORS:-2}" ] || die "refused: $n has $t TRUE verdicts, need ${CRUCIBLE_MIN_AUDITORS:-2}"
+    kn=0; for k in $kinds; do kn=$((kn+1)); done
+    [ "$kn" -ge "$MIN_KINDS" ] || die "refused: $n audited by $kn kind(s), need $MIN_KINDS"
+    # A scout that found the work already implemented blocks admission. LOOP.md said this and
+    # the code did not check it, so a claim the scout had closed could still become work —
+    # exactly the "proposing to build machinery that already exists" failure the role exists for.
+    sc=$(sed -n "/^### $n /,/^### C[0-9]/{s/^    scout: //p;}" "$(claims_file)" | head -1)
+    case $sc in
+      FULLY-EXISTS) die "refused: the scout found $n already implemented. Drop it, or record a narrowed claim for the gap." ;;
+      ABSENT|PARTLY-EXISTS) : ;;
+      # LOOP.md says admission requires a scout report and this did not check for one, so a
+      # claim could become work with nobody having looked for an existing implementation —
+      # which is the single most repeated failure this whole role exists to prevent.
+      *) die "refused: $n has no scout report. Dispatch a scout, then: crucible claim scout $n ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT" ;;
+    esac
+    cmd_add "$slug" "$(sed -n "/^### $n /s/^### $n — //p" "$(claims_file)" | head -1)"
+    awk -v c="### $n " -v s="$slug" '
+      $0 ~ "^"c {inc=1} inc && /^    item:/ {print "    item: " s; inc=0; next}
+      /^### C/ && $0 !~ "^"c {inc=0} {print}' "$(claims_file)" > "$ROOT/c.$$.tmp" \
+      && mv "$ROOT/c.$$.tmp" "$(claims_file)"
+    if [ -f "$ROOT/PROGRAM" ]; then
+      r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM"); b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM")
+      [ -n "$r" ] && cmd_target "$slug" "$r" "ai/$slug" "${b:-main}" >/dev/null 2>&1 || true
+    fi
+    printf 'admitted %s as item %s\n' "$n" "$slug" ;;
+  *) die "usage: crucible claim add|list|verdict|admit ..." ;;
+  esac
+}
+
+# Overlay the live views onto the tmux session you are already in. This creates no
+# session and replaces no session manager: whatever made the window keeps owning it,
+# and this only decides what the non-active panes show. Run it when the views become
+# useful — after adopt, before you dispatch anything.
+cmd_panes() {
+  [ -n "${TMUX:-}" ] || die "not inside tmux — start a session first (e.g. your session manager, then re-run)"
+  command -v tmux >/dev/null 2>&1 || die "tmux is not installed"
+  w="$ROOT/scripts/watch.sh"
+  [ -f "$w" ] || die "no watch.sh at $w"
+  views=${*:-}
+  [ -n "$views" ] || views="gate verdicts workids tail"
+  for v in $views; do
+    case $v in gate|verdicts|evidence|tail|git|workids|memory) : ;;
+      *) die "unknown view: $v (gate verdicts evidence tail git workids memory)" ;; esac
+  done
+  keep=$(tmux display-message -p '#{pane_id}')
+  tmux set-option -w pane-border-status top 2>/dev/null || true
+  tmux select-pane -t "$keep" -T "agent" 2>/dev/null || true
+  # panes already in this window, excluding the one you are working in
+  avail=$(tmux list-panes -F '#{pane_id}' | grep -v "^$keep$" || true)
+  n=0
+  for v in $views; do
+    n=$((n+1))
+    target=$(printf '%s\n' $avail | sed -n "${n}p")
+    if [ -z "$target" ]; then
+      target=$(tmux split-window -h -d -P -F '#{pane_id}' -t "$keep" -c "$PWD")
+      avail="$avail
+$target"
+    fi
+    tmux respawn-pane -k -t "$target" "sh '$w' $v 5" 2>/dev/null \
+      || tmux send-keys -t "$target" C-c "exec sh '$w' $v 5" C-m
+    tmux select-pane -t "$target" -T "$v" 2>/dev/null || true
+  done
+  tmux select-layout -t "$keep" main-vertical 2>/dev/null || true
+  tmux select-pane -t "$keep"
+  printf 'overlaid %s view(s) onto this window: %s\n' "$n" "$views"
+  printf 'your pane is titled "agent" and was left alone. re-run any time to reset them.\n'
+}
+
+# The evidence-grounded decision table taken to the operator before any planning.
+# It refuses to recommend a disposition for a claim nobody audited, so the
+# conversation starts from verdicts rather than from impressions.
+cmd_triage() {
+  f=$(claims_file); [ -f "$f" ] || die "no CLAIMS.md — run: <engine>/crucible adopt <program>"
+  n=$(grep -c '^### C' "$f" 2>/dev/null || true); n=${n:-0}
+  [ "$n" -gt 0 ] || die "no claims yet — crucible claim add \"<claim>\" \"<source sentence>\""
+  unaudited=0
+  printf 'TRIAGE — %s claim(s). Recommendations are derived from verdicts, not from opinion.\n\n' "$n"
+  i=1
+  while [ "$i" -le "$n" ]; do
+    title=$(sed -n "/^### C$i /s/^### C$i — //p" "$f" | head -1)
+    vd="$ROOT/claims/C$i/verdicts"
+    t=0; fa=0; st=0; uv=0; kinds=""; who=""
+    if [ -d "$vd" ]; then
+      for v in "$vd"/*.md; do
+        [ -f "$v" ] || continue
+        w=$(sed -n 's/^CLAIM-VERDICT: //p' "$v" | head -1)
+        a=$(sed -n 's/^AGENT: //p' "$v" | head -1)
+        k=$(sed -n 's/^KIND: //p' "$v" | head -1)
+        who="$who $a:$w"
+        case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
+        case $w in TRUE) t=$((t+1)) ;; FALSE) fa=$((fa+1)) ;; STALE) st=$((st+1)) ;; UNVERIFIABLE) uv=$((uv+1)) ;; esac
+      done
+    fi
+    kn=0; for k in $kinds; do kn=$((kn+1)); done
+    scout=$(sed -n "/^### C$i /,/^### C/{s/^    scout: //p;}" "$f" | head -1)
+    item=$(sed -n "/^### C$i /,/^### C/{s/^    item: //p;}" "$f" | head -1)
+    total=$((t+fa+st+uv))
+    if [ "$total" -eq 0 ]; then
+      rec="NO RECOMMENDATION — unaudited. Dispatch claim-auditors before deciding this."
+      unaudited=$((unaudited+1))
+    elif [ -n "$item" ]; then rec="ADMITTED as item $item"
+    elif [ "$fa" -gt 0 ] && [ "$t" -eq 0 ]; then rec="DROP — auditors found it untrue. This is work you do not have to do."
+    elif [ "$st" -gt 0 ] && [ "$t" -eq 0 ]; then rec="DROP — already fixed. Record the change that fixed it."
+    elif [ "$uv" -gt 0 ] && [ "$t" -eq 0 ]; then rec="ASK THE OPERATOR — unverifiable from the code. Do not resolve this yourself."
+    elif [ "$t" -gt 0 ] && [ "$fa" -gt 0 ]; then rec="AUDITORS DISAGREE — $t TRUE, $fa FALSE. Dispatch a third of a different kind."
+    else
+      case $scout in
+        FULLY-EXISTS) rec="DROP — the scout found this already implemented. Cite where." ;;
+        PARTLY-EXISTS) rec="ADMIT, NARROWED — only the gap the scout could not find." ;;
+        '') rec="SCOUT FIRST — audited TRUE but nobody checked whether it already exists." ;;
+        *) if [ "$t" -ge "${CRUCIBLE_MIN_AUDITORS:-2}" ] && [ "$kn" -ge "$MIN_KINDS" ]; then
+             rec="ADMIT — audited TRUE by $t agent(s) across $kn kind(s), and absent from the repo."
+           else
+             rec="MORE AUDIT — $t TRUE across $kn kind(s); need ${CRUCIBLE_MIN_AUDITORS:-2} across $MIN_KINDS."
+           fi ;;
+      esac
+    fi
+    printf 'C%s  %s\n' "$i" "${title:-(untitled)}"
+    printf '     verdicts:%s   kinds: %s   scout: %s\n' "${who:- none}" "${kn}" "${scout:-not run}"
+    printf '     -> %s\n\n' "$rec"
+    i=$((i+1))
+  done
+  printf 'Take this to the operator. Say what the evidence says, say what you would do, and let\n'
+  printf 'them decide. Propose merges for overlapping claims and splits for oversized ones —\n'
+  printf 'neither is visible from verdicts alone, so that part is your judgement and theirs.\n'
+  printf 'Report anything you found that the document never mentioned; do not silently add it.\n'
+  if [ "$unaudited" -gt 0 ]; then
+    printf '\nREFUSED: %s claim(s) have no verdicts, so no disposition was recommended for them.\n' "$unaudited"
+    return 1
+  fi
+}
+
+# THE GATE. Every branch is a refusal, never a warning.
+cmd_check() {
+  need "${1:-}"; slug=$1; d=$(D "$slug"); wid=$(workid "$slug"); bad=0
+  say() { printf '  %s\n' "$*"; }
+  printf 'check %s (work id %s)\n' "$slug" "$wid"
+
+  scan="$d/evidence $d/verdicts"; [ -f "$d/TARGET" ] || scan="$d/work $scan"
+  for dir in $scan; do
+    f=$(faults "$dir"); [ -z "$f" ] || { printf '%s\n' "$f" | while IFS= read -r l; do say "FAIL $l"; done; bad=1; }
+  done
+  [ "$wid" = EMPTY ]    && { say "FAIL no work in $d/work/"; bad=1; }
+  [ "$wid" = NOBRANCH ] && { say "FAIL branch $(tgt "$slug" branch) does not exist in $(tgt "$slug" repo)"; bad=1; }
+  if grep -q 'TEMPLATE-FALSIFIER-UNWRITTEN' "$d/ITEM.md" 2>/dev/null; then
+    say "FAIL falsifier not written in ITEM.md"; bad=1
+  else
+    # Absence of the template marker is not presence of a falsifier. Deleting the whole
+    # section used to pass, which made the strongest closure requirement optional.
+    fbody=$(awk '/^## Falsifier/{f=1;next} f&&/^## /{exit} f{print}' "$d/ITEM.md" 2>/dev/null \
+              | tr -d '[:space:]')
+    if ! grep -q '^## Falsifier' "$d/ITEM.md" 2>/dev/null; then
+      say "FAIL ITEM.md has no ## Falsifier section"; bad=1
+    elif [ "${#fbody}" -lt 40 ]; then
+      say "FAIL the falsifier is empty or too short to name a change and a check"; bad=1
+    fi
+  fi
+
+  # Self-review is only refused if a maker was recorded, so an unrecorded maker made the
+  # check vacuous — and that was the common case.
+  if [ ! -f "$d/MAKER" ] || [ ! -s "$d/MAKER" ]; then
+    say "FAIL no maker recorded — run: crucible brief $slug maker NAME (or dispatch a maker)"; bad=1
+  fi
+
+  # The phase's prerequisite must exist even if PHASE was written by hand rather
+  # than through `crucible phase`. A hand-edited phase is still a phase.
+  case $(phase_of "$slug") in
+    TASKS)     [ -f "$d/DESIGN.md" ]    || { say "FAIL phase TASKS requires DESIGN.md"; bad=1; } ;;
+    BUILD|VERIFY) for r in DESIGN.md TASKS.md; do
+                   [ -f "$d/$r" ] || { say "FAIL phase $(phase_of "$slug") requires $r"; bad=1; }
+                 done ;;
+    ADVERSARY) for r in DESIGN.md TASKS.md; do
+                   [ -f "$d/$r" ] || { say "FAIL phase ADVERSARY requires $r"; bad=1; }
+                 done ;;
+    GRADUATE)  for r in DESIGN.md TASKS.md ADVERSARY.md; do
+                   [ -f "$d/$r" ] || { say "FAIL phase GRADUATE requires $r"; bad=1; }
+                 done ;;
+  esac
+
+  ok_agents=""; en=0
+  if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
+    say "FAIL no evidence — use: crucible run $slug NAME -- CMD"; bad=1
+  else
+    for f in "$d/evidence"/*; do
+      [ -f "$f" ] || continue
+      b=${f##*/}
+      case $b in .partial.*) continue ;; esac   # a run still in flight is not evidence
+      stem=${b%.txt}
+      case $b in *.txt) : ;; *) say "FAIL evidence $b must end in .txt"; bad=1; continue ;; esac
+      id=${stem##*.}; rest=${stem%.*}; seq=${rest##*.}; an=${rest%.*}
+      if [ "$id" != "$wid" ]; then say "FAIL stale evidence $b (not from $wid)"; bad=1; continue; fi
+      case $an in *.*|'') say "FAIL evidence $b: name must be AGENT.TOKEN.WORKID.txt"; bad=1; continue ;; esac
+      case $seq in ''|*[!A-Za-z0-9]*) say "FAIL evidence $b: name must be AGENT.TOKEN.WORKID.txt"; bad=1; continue ;; esac
+      [ -n "$(kind_of "$an")" ] || { say "FAIL evidence $b: '$an' is not a registered agent"; bad=1; continue; }
+      [ -s "$f" ] || { say "FAIL empty evidence $b"; bad=1; continue; }
+      [ "$(head -1 "$f")" = "$MARK" ] ||
+        { say "FAIL evidence $b was not produced by 'crucible run'"; bad=1; continue; }
+      iw=$(sed -n 's/^work-id: //p' "$f" | head -1)
+      [ "$iw" = "$wid" ] ||
+        { say "FAIL evidence $b says work-id $iw inside — renamed, not re-run"; bad=1; continue; }
+      ia=$(sed -n 's/^agent: //p' "$f" | head -1)
+      [ "$ia" = "$an" ] ||
+        { say "FAIL evidence $b says agent $ia inside — renamed"; bad=1; continue; }
+      grep -q '^--- exit ' "$f" || { say "FAIL evidence $b has no exit line (truncated)"; bad=1; continue; }
+      case " $ok_agents " in *" $an "*) : ;; *) ok_agents="$ok_agents $an" ;; esac
+      en=$((en+1))
+    done
+    [ "$en" -gt 0 ] || { say "FAIL no usable evidence for $wid"; bad=1; }
+  fi
+
+  maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER" 2>/dev/null || true)
+  vn=0; kinds=""; bodies=""
+  for v in "$d/verdicts"/*; do
+    [ -e "$v" ] || continue
+    nm=${v##*/}
+    # the archive of superseded verdicts is a record, not a live verdict
+    [ "$nm" = history ] && continue
+    case $nm in *.md) nm=${nm%.md} ;; *) say "FAIL $nm: only NAME.md belongs in verdicts/"; bad=1; continue ;; esac
+    [ -L "$v" ] && { say "FAIL $nm is a symlink"; bad=1; continue; }
+    [ -f "$v" ] || { say "FAIL $nm is not a regular file"; bad=1; continue; }
+    k=$(kind_of "$nm")
+    [ -n "$k" ] || { say "FAIL $nm is not registered in agents.tsv, so it is not a judge"; bad=1; continue; }
+    [ -n "$maker" ] && [ "$nm" = "$maker" ] &&
+      { say "FAIL $nm is the maker and may not judge its own work"; bad=1; continue; }
+    [ -s "$v" ] || { say "FAIL empty verdict $nm.md"; bad=1; continue; }
+    l1=$(sed -n '1p' "$v"); l2=$(sed -n '2p' "$v")
+    case $l1 in "VERDICT: PASS") : ;;
+      "VERDICT: REJECT"|"VERDICT: INSUFFICIENT_EVIDENCE"|"VERDICT: SCOPE_CONFLICT")
+        say "FAIL $nm returned ${l1#VERDICT: }"; bad=1; continue ;;
+      *) say "FAIL $nm: line 1 must be exactly 'VERDICT: <WORD>'"; bad=1; continue ;; esac
+    vwid=""; case $l2 in "WORK-ID: "*) vwid=${l2#"WORK-ID: "} ;; esac
+    case $vwid in ''|*[!A-Za-z0-9]*) say "FAIL $nm: line 2 must be exactly 'WORK-ID: <id>'"; bad=1; continue ;; esac
+    [ "$vwid" = "$wid" ] || { say "FAIL $nm judged $vwid but work is $wid (stale)"; bad=1; continue; }
+    case " $ok_agents " in *" $nm "*) : ;;
+      *) say "FAIL $nm passed but recorded no evidence of its own"; bad=1; continue ;; esac
+    cited=0
+    for e in "$d/evidence/$nm".*."$wid".txt; do
+      [ -f "$e" ] || continue
+      grep -qF "${e##*/}" "$v" && cited=1
+    done
+    [ "$cited" -eq 1 ] || {
+      say "FAIL $nm passed without naming any evidence file it recorded"; bad=1; continue; }
+    body=$(tail -n +3 "$v" | h12)
+    case " $bodies " in *" $body "*) say "FAIL $nm is byte-identical to another verdict"; bad=1; continue ;; esac
+    bodies="$bodies $body"
+    case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
+    vn=$((vn+1)); say "ok   $nm PASS on $wid (kind $k, recorded its own evidence)"
+  done
+  [ "$vn" -lt "$MIN_JUDGES" ] && { say "FAIL $vn passing judges, need $MIN_JUDGES"; bad=1; }
+  kn=0; for k in $kinds; do kn=$((kn+1)); done
+  [ "$kn" -lt "$MIN_KINDS" ] && { say "FAIL $kn distinct kinds, need $MIN_KINDS"; bad=1; }
+
+  [ "$bad" -eq 0 ] || { printf 'NOT CLOSEABLE\n'; return 1; }
+  printf 'CLOSEABLE %s\n' "$wid"; return 0
+}
+
+cmd_close() {
+  need "${1:-}"; slug=$1; shift; lesson=${*:-}; d=$(D "$slug")
+  [ -n "$lesson" ] || die 'usage: crucible close SLUG "one-line lesson, or NONE"'
+  [ "$(printf '%s' "$lesson" | wc -l | tr -d ' ')" = 0 ] || die "lesson must be one line"
+  grep -q '^STATUS: CLOSED' "$d/ITEM.md" 2>/dev/null && die "$slug is already closed"
+  # mkdir is atomic and fails if the directory exists, so exactly one caller claims a
+  # close. Reading STATUS and then writing it is check-then-act: two callers both read
+  # OPEN, both append a lesson, and both write the status.
+  mkdir "$d/.closing" 2>/dev/null || die "a close of $slug is already in progress or finished"
+  before=$(workid "$slug")
+  cmd_check "$slug" || { rmdir "$d/.closing" 2>/dev/null; die "refused: $slug is not closeable"; }
+  after=$(workid "$slug")
+  [ "$before" = "$after" ] || { rmdir "$d/.closing" 2>/dev/null
+    die "refused: work changed during check ($before -> $after)"; }
+  printf -- '- [%s] %s (item %s, work %s)\n' "$(date +%Y-%m-%d)" "$lesson" "$slug" "$after" >> "$ROOT/LESSONS.md"
+  sed "s|^STATUS: OPEN.*|STATUS: CLOSED $after|" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  printf 'closed %s at %s\n' "$slug" "$after"
+}
+
+case ${1:-help} in
+adopt)    shift; cmd_adopt "$@" ;;
+claim)    shift; cmd_claim "$@" ;;
+triage)   shift; cmd_triage "$@" ;;
+panes)    shift; cmd_panes "$@" ;;
+add)      shift; cmd_add "$@" ;;
+selftest) shift
+          [ -z "${CRUCIBLE_IN_SELFTEST:-}" ] || die "already inside a selftest — refusing to recurse"
+          CRUCIBLE_IN_SELFTEST=1; export CRUCIBLE_IN_SELFTEST
+          exec "$ROOT/scripts/selftest.sh" "$@" ;;
+agents)   shift; cmd_agents "$@" ;;
+target)   shift; cmd_target "$@" ;;
+next)     shift; cmd_next "$@" ;;
+phase)    shift; cmd_phase "$@" ;;
+dispatch) shift; cmd_dispatch "$@" ;;
+brief)    shift; cmd_brief "$@" ;;
+run)      shift; cmd_run "$@" ;;
+run-claim) shift; cmd_run_claim "$@" ;;
+run-claim) shift; cmd_run_claim "$@" ;;
+check)    shift; cmd_check "$@" ;;
+close)    shift; cmd_close "$@" ;;
+workid)   shift; need "${1:-}"; workid "$1"; echo ;;
+help|-h|--help) usage ;;
+# An unknown verb refuses. A tool whose premise is "refuse, never warn" must not
+# silently succeed on a command it does not have.
+*) printf 'crucible: unknown verb: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;
+esac

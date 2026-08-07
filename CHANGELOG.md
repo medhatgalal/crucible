@@ -1,0 +1,54 @@
+# Changelog
+
+All notable changes to this project are documented here. This project follows
+[Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
+
+## [1.0.0] - 2026-08-07
+
+Initial release.
+
+### What it is
+
+A file-only refusal gate for agentic software work. One agent orchestrates, others make and judge,
+and nothing closes until the recorded evidence says it may. POSIX shell and markdown; nothing to
+install beyond `git` and a shell.
+
+### The loop
+
+An outer loop turns a problem document into a backlog: one claim per finding quoting its source,
+audited by two or more agents of different kinds, scouted for work that already exists, then
+triaged with the operator before anything is admitted. An inner loop walks each admitted item
+through SPEC, DESIGN, TASKS, BUILD, VERIFY, ADVERSARY and GRADUATE, with a contract generated for
+every dispatch and a lesson recorded at close that binds every later maker.
+
+### What is enforced
+
+Each of these refuses, and each is asserted in `scripts/selftest.sh` by a test that fails when the
+mechanism is removed:
+
+- Evidence is recorded by the tool, never written by an agent, and carries the work id in its
+  filename and inside the file, so renaming stale evidence is refused.
+- A PASS must name an evidence file its own author recorded.
+- Only agents registered in `agents.tsv` may judge, and the maker may not judge its own work.
+- A judge's brief is built from a whitelist and contains no maker report, transcript or rationale.
+- A commit after a verdict voids that verdict; the work id is the branch tree.
+- Absence fails: no work, no evidence, no falsifier, no verdict, no scout report — all refuse.
+- A claim cannot become an item without enough TRUE verdicts across enough distinct kinds.
+- Phases refuse without their artifacts, even when the phase is hand-edited.
+- Closing twice refuses, and work changing between check and close refuses.
+- Concurrent recording and closing are safe; an unknown verb refuses rather than succeeding.
+
+### What is not enforced
+
+The gate cannot prove who wrote a file. Under one user with a shell, one actor can author every
+verdict under different registered names, and this has happened in practice during development.
+Independence is a property of how you dispatch, not something a file-only design can establish.
+`RULES.md` labels every line CHECK or RULE so it is always clear which one you are relying on, and
+`SECURITY.md` states the boundary plainly.
+
+### Verification status
+
+The suite runs on Linux for every push and on BSD for tags, and reports its own assertion count.
+Two things are not yet demonstrated and are named rather than implied: no agent has followed the
+documented bootstrap prompt end to end in a clean environment without help, and the loop has not
+yet been used to build a feature — it was validated on this repository's own release check.

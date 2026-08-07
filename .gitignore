@@ -1,0 +1,27 @@
+# machine-specific: which CLIs and models exist on THIS box
+agents.tsv
+
+# per-run state. A program lives outside the template; if you run one here, it stays local.
+items/
+STATE.md
+CLAIMS.md
+BACKLOG.md
+LESSONS.md
+
+.DS_Store
+
+# editor and local tooling
+.kiro/
+.vscode/
+.idea/
+docs/history/
+
+# A program run against the engine itself is scratch: shipping a copy of the engine
+# inside the engine is absurd. Its lessons are hand-lifted into LESSONS or the changelog.
+.crucible/
+
+# session research artifacts live outside the repo
+RETROSPECTIVE.md
+reviews/
+surveys/
+decisions/

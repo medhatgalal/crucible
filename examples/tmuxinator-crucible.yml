@@ -1,0 +1,31 @@
+# Optional static layout, if you prefer tmuxinator over creating panes by hand.
+#   cp examples/tmuxinator-crucible.yml ~/.tmuxinator/crucible.yml
+#   edit PROGRAM and root, then: tmuxinator start crucible
+#
+# Nothing here is required. crucible needs no session manager; this is only a window
+# onto a run. The pane contents are the point, not the layout.
+name: crucible
+root: /path/to/your/repo
+
+windows:
+  - run:
+      layout: main-vertical
+      panes:
+        # left, large: where you talk to the orchestrator
+        - clear
+        # right column: artifacts only, never narration
+        - sh .crucible/PROGRAM/scripts/watch.sh gate 5
+        - sh .crucible/PROGRAM/scripts/watch.sh verdicts 5
+        - sh .crucible/PROGRAM/scripts/watch.sh workids 5
+  - evidence:
+      layout: main-horizontal
+      panes:
+        - sh .crucible/PROGRAM/scripts/watch.sh tail 5
+        - sh .crucible/PROGRAM/scripts/watch.sh evidence 5
+  - agents:
+      layout: tiled
+      panes:
+        - clear
+        - clear
+        - clear
+        - clear

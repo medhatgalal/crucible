@@ -1,0 +1,88 @@
+name: selftest
+
+# The gate must prove it refuses what it claims, on every push and every pull request.
+# No dependencies are installed: if this needs anything beyond a POSIX shell and git,
+# that is itself a defect.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Linux gates every push: it is fast, and it is the harsher test — GNU sed and grep,
+# sha256sum instead of shasum, a stricter /bin/sh. macOS gates releases only, because
+# private-repo macOS runners cost ten times as much and queue for long enough that
+# they would make every push look broken while nothing is actually wrong.
+jobs:
+  refusals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: every shell file parses under /bin/sh
+        run: |
+          for f in crucible scripts/*.sh; do
+            /bin/sh -n "$f" || exit 1
+            echo "ok  $f"
+          done
+
+      - name: no tracked file references a path outside this repository
+        run: |
+          hp="/$(printf 'U')sers/|/$(printf 'h')ome/[a-z]"
+          if git ls-files | xargs grep -lE "$hp" 2>/dev/null | grep .; then
+            echo "a tracked file contains an absolute home path"; exit 1
+          fi
+          echo "ok  self-contained"
+
+      - name: the gate refuses what it claims
+        run: ./scripts/selftest.sh -v
+
+      - name: the documented smoke test actually runs
+        run: |
+          d=$(mktemp -d); cp crucible "$d/"; cp -r roles "$d/"; cp RULES.md "$d/"; cd "$d"
+          printf 'mk\tkiro\tm\thigh\techo {BRIEF}\nj1\tkiro\tm\thigh\techo {BRIEF}\nj2\tgrok\tm\thigh\techo {BRIEF}\n' > agents.tsv
+          ./crucible add demo "Close one file-only item" >/dev/null
+          sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' items/demo/ITEM.md > i && mv i items/demo/ITEM.md
+          mkdir -p items/demo/work && echo 'x = 1' > items/demo/work/a.py
+          ./crucible run demo j1 -- sh -c 'echo j1 ran the falsifier' >/dev/null
+          ./crucible run demo j2 -- sh -c 'echo j2 re-derived independently' >/dev/null
+          w=$(./crucible workid demo)
+          printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$(ls items/demo/evidence | grep ^j1)" > items/demo/verdicts/j1.md
+          printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$(ls items/demo/evidence | grep ^j2)" > items/demo/verdicts/j2.md
+          CRUCIBLE_MIN_KINDS=2 ./crucible check demo
+          CRUCIBLE_MIN_KINDS=2 ./crucible close demo "Kinds beat counts."
+          echo 'x = 2' >> items/demo/work/a.py
+          if ./crucible check demo; then echo "editing after a PASS did not void it"; exit 1; fi
+          echo "ok  the gate voided both verdicts after an edit"
+
+      - name: adopt works on a foreign repository
+        run: |
+          r=$(mktemp -d)/target; mkdir -p "$r"
+          git -C "$r" init -q -b main
+          echo code > "$r/app.py"
+          git -C "$r" add -A
+          git -C "$r" -c user.email=ci@ci -c user.name=ci commit -qm init
+          ( cd "$r" && "$GITHUB_WORKSPACE/crucible" adopt ci-program )
+          test -x "$r/.crucible/ci-program/crucible"
+          ( cd "$r" && ./.crucible/ci-program/scripts/selftest.sh >/dev/null )
+          echo "ok  an adopted program passes its own selftest"
+
+      - name: the version and the changelog agree
+        run: |
+          v=$(cat VERSION)
+          grep -q "\[$v\]" CHANGELOG.md || { echo "CHANGELOG has no entry for $v"; exit 1; }
+          echo "ok  CHANGELOG documents $v"
+
+  refusals-bsd:
+    # BSD userland differs from GNU in sed -i, grep -E and find, which is exactly where
+    # a portability defect would hide. Gate releases on it rather than every push.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: every shell file parses under /bin/sh
+        run: for f in crucible scripts/*.sh; do /bin/sh -n "$f" || exit 1; done
+      - name: the gate refuses what it claims
+        run: ./scripts/selftest.sh
