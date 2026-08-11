@@ -39,24 +39,6 @@ jobs:
       - name: the gate refuses what it claims
         run: ./scripts/selftest.sh -v
 
-      - name: the documented smoke test actually runs
-        run: |
-          d=$(mktemp -d); cp crucible "$d/"; cp -r roles "$d/"; cp RULES.md "$d/"; cd "$d"
-          printf 'mk\tkiro\tm\thigh\techo {BRIEF}\nj1\tkiro\tm\thigh\techo {BRIEF}\nj2\tgrok\tm\thigh\techo {BRIEF}\n' > agents.tsv
-          ./crucible add demo "Close one file-only item" >/dev/null
-          sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' items/demo/ITEM.md > i && mv i items/demo/ITEM.md
-          mkdir -p items/demo/work && echo 'x = 1' > items/demo/work/a.py
-          ./crucible run demo j1 -- sh -c 'echo j1 ran the falsifier' >/dev/null
-          ./crucible run demo j2 -- sh -c 'echo j2 re-derived independently' >/dev/null
-          w=$(./crucible workid demo)
-          printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$(ls items/demo/evidence | grep ^j1)" > items/demo/verdicts/j1.md
-          printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$(ls items/demo/evidence | grep ^j2)" > items/demo/verdicts/j2.md
-          CRUCIBLE_MIN_KINDS=2 ./crucible check demo
-          CRUCIBLE_MIN_KINDS=2 ./crucible close demo "Kinds beat counts."
-          echo 'x = 2' >> items/demo/work/a.py
-          if ./crucible check demo; then echo "editing after a PASS did not void it"; exit 1; fi
-          echo "ok  the gate voided both verdicts after an edit"
-
       - name: adopt works on a foreign repository
         run: |
           r=$(mktemp -d)/target; mkdir -p "$r"

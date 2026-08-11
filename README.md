@@ -110,6 +110,11 @@ invisible to every review it performs.
 **It does not enforce that a dispatch preceded a verdict**, that a finding is not resubmitted, or
 that file ownership in `TASKS.md` is respected. Those are in `RULES.md` and labelled RULE, not CHECK.
 
+**It cannot tell a hand-typed copy of a documented sequence inside `scripts/` from the real thing:**
+the workflow-form check refuses a new inline verification block in `.github/workflows/`
+**in a form the check opens**, but a `run:` block that delegates to a file under `scripts/` is
+accepted without reading that file, so a second writer living there passes.
+
 So the honest description is narrow: **it keeps an auditable record and refuses careless omissions.**
 It raises the cost of a fabricated review; it does not make one impossible. `RULES.md` labels every
 line CHECK or RULE so you always know which you are relying on.

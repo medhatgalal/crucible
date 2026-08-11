@@ -403,6 +403,146 @@ done
   && ok "README smoke closes an item and post-edit check refuses" \
   || bad "README smoke (scripts/verify-quickstart.sh) failed"
 
+# A6: one writer per fact (RULES.md 17), asserted positively.
+#
+# The first form of this check was negative: grep the workflow for a lifecycle verb on the same
+# line as the binary. An adversary escaped it three ways at d0369c11e47d, each reintroducing the
+# whole deleted smoke transcription with the suite green: `c=./crucible` then `$c add demo`, a
+# `./crucible \` line continuation, and `g() { ./crucible "$@"; }` then `g add demo`. A fourth
+# spelling is not the answer — enumerating forbidden tokens one at a time is what terminally
+# stalled the previous item on this repository. Whether a shell fragment ends up executing the
+# gate is not decidable by reading it, so no forbidden-text pattern can state the real property.
+# This asserts what a run: block may CONTAIN instead, because a forbidden set is fixed by whoever
+# is escaping it and every novelty passes, which is the wrong direction under RULES.md 3.
+#
+# What the pin covers, and it is narrower than "the workflow has not been edited". A block is
+# accepted if it is one invocation of a file under scripts/ — a delegation, and new ones are free.
+# Every other block in a spelling this classifier opens is inline verification, and what the digest
+# covers is those blocks' NORMALISED text: blank lines and whole-line comments dropped, each block
+# left-trimmed to its own indentation. So for those blocks a change that survives normalisation
+# refuses, and a change normalisation removes does not. Both directions were measured at
+# 912633494739: two spaces added to every body line of a pinned block left this check at ok, while
+# two spaces added to, or removed from, one body line moved the pin and refused. Read the ok line
+# as what it says and not as more. Recompute a6_pin only when you have decided that a new inline
+# block belongs; the failing message prints the value to use.
+#
+# The five blocks pinned at d0369c11e47d predate this check, and three of them state facts this
+# suite also states, which is the same RULES.md 17 defect one level up and is recorded as its own
+# item rather than fixed here.
+#
+# The spellings this classifier opens: `run: |` and single-line `run:`, each in the standard
+# `- name:` shape and in the compact `- run:` shape a step with no name uses. The compact form was
+# a hole and not a choice: the first draft anchored on `^[[:blank:]]*run:`, so a step written
+# `- run: |` contributed nothing to the digest and the whole transcription could be planted under
+# it with the suite green.
+#
+# The spellings it does not open are an OPEN SET, and this comment does not enumerate them. Every
+# round of this item found more of them, so what follows are examples and not an inventory: a
+# block-scalar modifier after `|`, of which `run: |-` and `run: |0` were measured; a trailing
+# comment after `|` (`run: | # smoke`); a quoted key (`"run": |`); a flow-mapping step
+# (`- { name: x, run: "..." }`); a space before the colon (`run : |`); and a composite action
+# reached by `uses:` from outside `.github/actions/`. Each of those carried a whole gate lifecycle
+# past this check at exit 0 when it was measured. Assume an unlisted spelling passes until someone
+# has measured it. Completeness over the spellings a step's shell can take is not asserted here and
+# is not this check's to assert: it is carried by workflow-form-completeness, filed at
+# .crucible/self/items/workflow-form-completeness/ITEM.md.
+#
+# Two neighbours of that set behave differently and are not part of it. A folded `run: >` is seen
+# as a one-line body of `>` with its continuation lines dropped, so the digest moves and the check
+# refuses — a false-positive hazard rather than a silent pass. And `uses:` is met by the guard
+# below, which refuses the existence of `.github/actions/` and reads no composite action's shell
+# wherever that action lives. `env:`, `with:` and `defaults` are audited by nothing here.
+wf=.github/workflows/selftest.yml
+a6_pin=c17cd4acc3c4
+if [ -f "$wf" ] && [ -f scripts/verify-quickstart.sh ]; then
+  # A11: `uses:` is an execution surface this classifier never reads, so a local composite action can
+  # carry the whole transcription while every run: block above is a clean delegation. Measured, not
+  # imagined: .github/actions/smoke/action.yml holding the smoke sequence left the check at ok. Two
+  # answers were available. (a) whitelist every `uses:` value — rejected: it must be iterated over
+  # every occurrence including refusals-bsd's, and it still reads no shell, so it buys enumeration
+  # rather than coverage. (b) refuse the existence of the surface — chosen: this repository has no
+  # .github/actions/, so a fail-closed guard costs nothing until someone adds a composite action, at
+  # which point it demands a deliberate decision instead of passing in silence. The exclusion, stated
+  # plainly: a composite action's contents are still not read. Its existence is what refuses.
+  [ -e .github/actions ] \
+    && bad ".github/actions exists and this check reads run: blocks only, so a composite action's shell is unaudited: remove it or decide the exclusion deliberately" \
+    || ok "no composite action exists under .github/actions/ (a composite action reached by uses: from elsewhere is not read)"
+  # Classify every run: block. Whole-line comments and blank lines are dropped and each block is
+  # left-trimmed to its own indentation, so explaining or reindenting a step does not force a
+  # re-pin. An inline # is kept, because stripping it would corrupt shell that contains a hash.
+  # Counts come out on the first line, so no temporary file is needed and nothing races.
+  # Every bracket expression is a POSIX class: [ \t] is not portable across awks, and read as
+  # backslash-or-t it would mis-trim any body line beginning with t, of which there is one.
+  a6_awk='
+    function flush() {
+      if (n == 1 && body[1] ~ /^\.?\/?scripts\/[A-Za-z0-9_.-]+\.sh([[:blank:]]+-[A-Za-z-]+)*$/) {
+        deleg++
+        # Counted only in the job every push runs. refusals-bsd also runs the suite, but it is
+        # gated to tags and workflow_dispatch, so it cannot stand in for push coverage.
+        if (job == "refusals" && body[1] ~ /scripts\/selftest\.sh/) invokes++
+      } else if (n > 0) {
+        inl++
+        for (i = 1; i <= n; i++) out = out body[i] "\n"
+      }
+      n = 0
+    }
+    /^  [A-Za-z0-9_-]+:[[:blank:]]*$/ {
+      flush(); blk = 0; job = $1; sub(/:$/, "", job); next
+    }
+    /^[[:blank:]]*-?[[:blank:]]*run:[[:blank:]]*\|[[:blank:]]*$/ {
+      flush(); blk = 1; ind = 0; next
+    }
+    /^[[:blank:]]*-?[[:blank:]]*run:[[:blank:]]*[^|[:space:]]/ {
+      flush(); line = $0; sub(/^[[:blank:]]*-?[[:blank:]]*run:[[:blank:]]*/, "", line)
+      body[++n] = line; flush(); next
+    }
+    blk {
+      if ($0 ~ /^[[:blank:]]*$/) next
+      match($0, /[^[:blank:]]/)
+      if (ind == 0) ind = RSTART
+      if (RSTART < ind) { flush(); blk = 0 }
+      else { if (substr($0, ind, 1) != "#") body[++n] = substr($0, ind); next }
+    }
+    { flush(); blk = 0 }
+    END { printf "%d %d %d\n", deleg, inl, invokes; printf "%s", out }
+  '
+  # Explicit status capture, never `|| true`: the integrator recorded that a swallowed non-zero
+  # exit from the old grep would have printed the identical ok line. An empty result is a
+  # refusal here, not agreement.
+  a6_all=$(awk "$a6_awk" "$wf") || a6_all=""
+  a6_counts=$(printf '%s\n' "$a6_all" | sed -n 1p)
+  a6_bodies=$(printf '%s\n' "$a6_all" | sed 1d)
+  a6_deleg=${a6_counts%% *}; a6_rest=${a6_counts#* }
+  a6_inline=${a6_rest%% *}; a6_invokes=${a6_rest##* }
+  if [ -z "$a6_counts" ] || { [ "$a6_deleg" = 0 ] && [ "$a6_inline" = 0 ]; }; then
+    # A parser that silently matched nothing would report agreement it never checked, which is
+    # this item's own defect one level up. RULES.md 3.
+    bad "$wf yielded no run: block, so workflow/suite agreement was never checked"
+  elif [ "$a6_invokes" = 0 ]; then
+    # j1 recorded that the only other assertion about this file is that it exists, so deleting
+    # the step that runs the suite leaves the suite green while CI verifies nothing. An A6 that
+    # CI never reaches is theatre, so A6 asserts its own activation on the push-gated job.
+    bad "$wf job refusals has no step running scripts/selftest.sh, so a push would verify nothing"
+  else
+    # A pin is compared across machines, so the cksum fallback h12() tolerates for a same-machine
+    # work id is not tolerable here: it would refuse honest trees. Demand a real digest and refuse
+    # without one rather than compare two values that cannot be equal.
+    if   command -v shasum    >/dev/null 2>&1; then a6_got=$(printf '%s' "$a6_bodies" | shasum -a 256)
+    elif command -v sha256sum >/dev/null 2>&1; then a6_got=$(printf '%s' "$a6_bodies" | sha256sum)
+    else a6_got=""; fi
+    a6_got=$(printf '%s' "$a6_got" | cut -d' ' -f1 | cut -c1-12)
+    if [ -z "$a6_got" ]; then
+      bad "cannot verify $wf: without shasum or sha256sum the inline-step pin cannot be computed"
+    elif [ "$a6_got" = "$a6_pin" ]; then
+      ok "$wf delegates to scripts/ and its $a6_inline inline verification steps match the recorded pin"
+    else
+      bad "$wf added or changed an inline verification step ($a6_inline inline, $a6_deleg delegating; pin is $a6_got, expected $a6_pin): a run: block must be one scripts/ invocation, or a6_pin must be updated deliberately"
+    fi
+  fi
+else
+  bad "cannot check workflow/suite agreement: $wf or scripts/verify-quickstart.sh is missing"
+fi
+
 else
   printf '  (adopted program: engine-repo documentation assertions skipped)\n'
 fi
