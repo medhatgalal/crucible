@@ -554,7 +554,9 @@ cd "$HERE"
 # case statement intact: sh -n passed, and the only symptom was "command not found" at
 # runtime for verbs no test happened to call.
 broken=""
-for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help selftest; do
+# `selftest` is asserted through the explicit recursion guard below. Calling it here starts a
+# second complete suite, ignores --fast, and turns a routing assertion into a minutes-long proxy.
+for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help; do
   o=$(./crucible "$v" 2>&1 || true)
   case "$o" in *"command not found"*) broken="$broken $v" ;; esac
 done

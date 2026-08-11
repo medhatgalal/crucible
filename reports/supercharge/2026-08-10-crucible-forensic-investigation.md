@@ -145,7 +145,7 @@ The coordinator only schedules and synthesizes this state. It does not implement
 
 ## 10. Evidence appendix
 
-- Repository identity at start: `/Users/medhat.galal/Desktop/crucible`, branch `ai/ci-on-push`, HEAD `a2097294669b3c88cb51619131ff49caefc46733`.
+- Repository identity at start: the primary Crucible checkout (`<repo>`), branch `ai/ci-on-push`, HEAD `a2097294669b3c88cb51619131ff49caefc46733`.
 - Source: `README.md`, `RULES.md`, `LOOP.md`, `crucible`, `scripts/selftest.sh`, and `.github/workflows/selftest.yml` cited above.
 - Historical period inspected: 7–10 August 2026, 16 commits.
 - Run ledger: `.crucible/self/run/*/state`; current counts and live runs are stated in sections 1, 3, and 4.
