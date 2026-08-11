@@ -7,8 +7,10 @@ run its internal commands.
    Stay in this repository.
 2. If exactly one `.crucible/*/START.md` already exists, read it and resume. If several cycles exist and
    repository state does not identify the intended one, ask one concise question.
-3. Otherwise treat the directory containing this file as the Crucible source/package. Verify its bounded
-   cold-start contract with `scripts/verify-agent-cycle.sh`; stop if it fails.
+3. Otherwise obtain one local Crucible source/package. If this file was read from an HTTPS raw URL,
+   derive its repository URL and clone it once to a temporary directory. If it was read from disk, use
+   the directory containing it. Verify the local source with `scripts/verify-agent-cycle.sh`; stop if
+   the bounded cold-start contract fails.
 4. Install the default guided cycle from the target repository:
 
        <crucible-directory>/crucible adopt work --managed
