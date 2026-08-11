@@ -84,7 +84,7 @@ Create the managed lifecycle state kernel.
 
 ## Non-goals
 
-No attempt ledger in this slice.
+No task-DAG parallelism in this slice.
 
 ## Risk
 
@@ -117,27 +117,50 @@ grep -q "^alpha\tACTIVE\tREADY\t" "$P/STATE.tsv" && ok || bad 'ready did not upd
 grep -q '| alpha | ACTIVE | READY |' "$P/STATE.md" && ok || bad 'ready did not regenerate STATE.md'
 refuses 'cannot skip BUILD' 'transition READY -> REVIEW' "$P/crucible" phase alpha REVIEW
 expect 'BUILD transition' 'alpha is now in BUILD' "$P/crucible" phase alpha BUILD
-expect 'REVIEW transition' 'alpha is now in REVIEW' "$P/crucible" phase alpha REVIEW
-refuses 'cannot move backward' 'transition REVIEW -> BUILD' "$P/crucible" phase alpha BUILD
-expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
+refuses 'review requires implemented work' 'current-work maker PASS' "$P/crucible" phase alpha REVIEW
 
+maker_contract=$($P/crucible dispatch alpha maker mk1 A1 FOCUSED 2>/dev/null)
+maker_attempt=$(basename "$(dirname "$maker_contract")")
+$P/crucible attempt start "$maker_attempt" "$$" >/dev/null
 (
   cd "$repo"
   git checkout -qb ai/alpha
   printf 'implemented\n' >> tracked.txt
   git add tracked.txt
   git -c user.name=test -c user.email=test@example.invalid commit -qm implementation
-  .crucible/p/crucible brief alpha maker mk1 >/dev/null 2>&1
-  .crucible/p/crucible run alpha j1 -- sh -c 'echo focused-j1' >/dev/null
-  .crucible/p/crucible run alpha j2 -- sh -c 'echo focused-j2' >/dev/null
-  wid=$(.crucible/p/crucible workid alpha)
-  e1=$(basename "$(ls .crucible/p/items/alpha/evidence/j1.*."$wid".txt)")
-  e2=$(basename "$(ls .crucible/p/items/alpha/evidence/j2.*."$wid".txt)")
-  printf 'VERDICT: PASS\nWORK-ID: %s\nfocused check: %s\n' "$wid" "$e1" \
-    > .crucible/p/items/alpha/verdicts/j1.md
-  printf 'VERDICT: PASS\nWORK-ID: %s\nindependent check: %s\n' "$wid" "$e2" \
-    > .crucible/p/items/alpha/verdicts/j2.md
 )
+maker_out=$(cd "$repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo focused-maker')
+maker_evidence=$(basename "$(printf '%s' "$maker_out" | awk '{print $1}')")
+$P/crucible attempt finish "$maker_attempt" RETURNED observed-exit-zero >/dev/null
+$P/crucible result "$maker_attempt" PASS "$maker_evidence" CLOSE - >/dev/null
+refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
+  "$P/crucible" run alpha j1 -- sh -c 'echo unbound-review'
+
+expect 'REVIEW transition' 'alpha is now in REVIEW' "$P/crucible" phase alpha REVIEW
+refuses 'cannot move backward' 'transition REVIEW -> BUILD' "$P/crucible" phase alpha BUILD
+expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
+
+j1_contract=$($P/crucible dispatch alpha judge j1 A1 FOCUSED 2>/dev/null)
+j1_attempt=$(basename "$(dirname "$j1_contract")")
+$P/crucible attempt start "$j1_attempt" "$$" >/dev/null
+j1_out=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo focused-j1')
+j1_evidence=$(basename "$(printf '%s' "$j1_out" | awk '{print $1}')")
+$P/crucible attempt finish "$j1_attempt" RETURNED observed-exit-zero >/dev/null
+wid=$($P/crucible workid alpha)
+printf 'VERDICT: PASS\nWORK-ID: %s\nmanual compatibility verdict; see %s\n' "$wid" "$j1_evidence" \
+  > "$P/items/alpha/verdicts/j1.md"
+refuses 'managed check rejects a hand-written verdict' 'not bound to an attempt result' \
+  "$P/crucible" check alpha
+$P/crucible result "$j1_attempt" PASS "$j1_evidence" CLOSE - >/dev/null
+
+j2_contract=$($P/crucible dispatch alpha judge j2 A1 FOCUSED 2>/dev/null)
+j2_attempt=$(basename "$(dirname "$j2_contract")")
+$P/crucible attempt start "$j2_attempt" "$$" >/dev/null
+j2_out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo focused-j2')
+j2_evidence=$(basename "$(printf '%s' "$j2_out" | awk '{print $1}')")
+$P/crucible attempt finish "$j2_attempt" RETURNED observed-exit-zero >/dev/null
+$P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
+
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
 expect 'managed close' '^closed alpha at ' "$P/crucible" close alpha 'state is authoritative'
 grep -q "^alpha\tCLOSED\tREVIEW\t" "$P/STATE.tsv" && ok || bad 'close did not update authoritative state'

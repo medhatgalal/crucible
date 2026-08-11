@@ -98,6 +98,19 @@ how to verify its own work, and what to return. Generate it, never freehand it:
 $C dispatch <item> <role> <agent>   # writes the contract, prints the path
 ```
 
+In a managed program, the printed path contains an attempt id. Record the observed process and its
+typed result rather than writing a verdict by hand:
+
+```sh
+$C attempt start <attempt-id> <pid>
+$C run <item> <agent> -- <bounded-check>
+$C attempt finish <attempt-id> RETURNED "launcher observed exit"
+$C result <attempt-id> PASS <evidence-filename> CLOSE -
+```
+
+Use the full [managed lifecycle operator guide](docs/managed-lifecycle.md) for maker output work ids,
+review, timeouts, the single retry, and escalation outcomes.
+
 Then invoke the agent however that agent is invoked — CLI, app, protocol, another window — and give
 it exactly one instruction: *read this file and follow it exactly.* The contract carries everything
 else. A callee that needs more than its contract means the contract was wrong; fix the contract, not

@@ -64,7 +64,9 @@ That seven-phase path is the compatibility behavior for existing programs. New p
 enable the behavior-named [managed lifecycle](docs/managed-lifecycle.md) before their first item. It
 uses authoritative `STATE.tsv`, generated `STATE.md`, and the smaller
 `DRAFT → READY → BUILD → REVIEW → CLOSED` path. The guide states what is implemented and what remains
-manual.
+manual. Its dispatches create bounded, immutable attempt identities; observed lifecycle events and
+write-once, evidence-bound results prevent silent redispatch and distinguish overdue work from an
+observed timeout.
 
 ## What it refuses
 
@@ -113,8 +115,10 @@ read, that a lesson was applied rather than merely present, or that your accepta
 complete. Nothing here challenges the criteria you wrote; a requirement you failed to write is
 invisible to every review it performs.
 
-**It does not enforce that a dispatch preceded a verdict**, that a finding is not resubmitted, or
-that file ownership in `TASKS.md` is respected. Those are in `RULES.md` and labelled RULE, not CHECK.
+**The item-file lifecycle does not enforce that a dispatch preceded a verdict**, that a finding is
+not resubmitted, or that file ownership in `TASKS.md` is respected. Managed lifecycle closes the
+first two gaps for its typed attempt results: it requires a dispatch identity and blocks a repeated
+finding fingerprint. Neither behavior enforces task-file ownership.
 
 **It cannot tell a hand-typed copy of a documented sequence inside `scripts/` from the real thing:**
 the workflow-form check refuses a new inline verification block in `.github/workflows/`
@@ -144,7 +148,9 @@ crucible lifecycle status|enable       inspect or enable managed lifecycle behav
 crucible state                         regenerate managed STATE.md from STATE.tsv
 crucible ready ITEM                    validate and freeze a managed item contract
 crucible next                          what to do now, read from files not memory
-crucible dispatch ITEM ROLE AGENT      write the contract for a call, print its path
+crucible dispatch ITEM ROLE AGENT ...  write the contract for a call, print its path
+crucible attempt start|overdue|finish  record observed managed process lifecycle
+crucible result ATTEMPT OUTCOME ...    write one managed evidence-bound result
 crucible run ITEM AGENT -- CMD...      run CMD and record the result as evidence
 crucible check ITEM                    the gate. non-zero unless closeable
 crucible close ITEM "LESSON"           refuses unless check passes
@@ -166,11 +172,14 @@ entire reason the views exist.
 ## Verifying it yourself
 
 ```sh
-./scripts/selftest.sh          # -v to name each assertion as it runs
+./scripts/selftest.sh                    # item-file compatibility refusals
+./scripts/verify-managed-lifecycle.sh    # managed state and closure contract
+./scripts/verify-attempt-ledger.sh       # managed dispatch, evidence, result and budget contract
 ```
 
-Every documented refusal is asserted there. A claim in this README that is not asserted in the
-selftest is an unverified claim, and CI runs it on every push.
+The focused verifier for each behavior owns its documented refusals. A claim in this README that is
+not asserted by one of these scripts is an unverified claim. CI still needs to be updated to run the
+two managed verifiers; until then their local evidence is not hosted release evidence.
 
 ## Smoke test
 

@@ -43,15 +43,19 @@ a RULE into a CHECK, do it and say so in the lesson.
 
 ## Roles and dispatch
 
-13. **RULE — Generate the dispatch before the call.** Relabelled from CHECK: an item can
-    close with no dispatch on record, so nothing enforces that a verdict was preceded by one. `.crucible/<program>/crucible dispatch` writes it.
+13. **CHECK in managed lifecycle; RULE in item-file lifecycle — Generate the dispatch before the
+    call.** A managed result is bound to a recorded attempt and refuses without it. An item-file
+    item can still close with no dispatch on record, so `.crucible/<program>/crucible dispatch`
+    remains operator discipline there.
 14. **RULE — One instruction per call: "read this file and follow it exactly."** Everything else
     belongs in the contract. If you find yourself explaining in the conversation, the contract is
     incomplete — fix the file.
 15. **RULE — A role may only read what its role file grants and write what it names.** The
     orchestrator dispatches and records; it does not implement, judge, or merge.
-16. **RULE — Dispatch is not completion.** A task handed to an agent has not happened until its
-    output file exists. "In flight" is not a status. Quote the reply or report it lost.
+16. **CHECK in managed lifecycle; RULE in item-file lifecycle — Dispatch is not completion.** A
+    managed dispatch records an in-flight attempt and `next` waits for its observed outcome; it does
+    not advance the item. In item-file lifecycle, a task handed to an agent has not happened until
+    its output file exists. Quote the reply or report it lost.
 
 ## Memory
 
@@ -89,10 +93,11 @@ a RULE into a CHECK, do it and say so in the lesson.
 
 ## Stopping
 
-27. **RULE — Bound your iteration.** The same finding twice, or an unchanged work id resubmitted,
-    should stop and escalate. Relabelled from CHECK: nothing counts findings or resubmissions, so
-    this is discipline, not a mechanism. Occupancy is not output; something running for hours
-    while nothing lands is a stall wearing a costume.
+27. **CHECK in managed lifecycle; RULE in item-file lifecycle — Bound your iteration.** Managed
+    lifecycle blocks a repeated finding fingerprint, refuses duplicate current-work PASSes and a
+    second canonical expensive PASS, and allows one retry after an observed timeout before
+    `RETRY_EXHAUSTED`. Item-file lifecycle does not count findings or resubmissions. Occupancy is
+    not output; something running for hours while nothing lands is a stall wearing a costume.
 28. **RULE — A blocked agent stops and says so.** `BLOCKED` and `NEEDS_CONTEXT` are legitimate
     terminal results with a recorded reason. Guessing under a no-questions rule is a defect
     generator. Bad work is worse than no work and you will not be penalised for escalating.

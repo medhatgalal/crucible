@@ -13,11 +13,12 @@
 #   crucible state                        regenerate managed STATE.md from STATE.tsv
 #   crucible ready SLUG                   validate and freeze a managed item contract
 #   crucible next                         what to do now, read from files not memory
+#   crucible attempt start|overdue|finish record observed process lifecycle
+#   crucible result ATTEMPT OUTCOME ...   write one immutable, evidence-bound result
 #   crucible phase SLUG [PHASE]           show or advance the lifecycle phase
 #   crucible dispatch SLUG ROLE AGENT     write the contract for a call, print its path
 #   crucible brief SLUG maker|judge NAME  build a brief directly (dispatch is usually better)
 #   crucible run  SLUG NAME -- CMD...     run CMD and record the result as evidence
-#   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
 #   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
 #   crucible check SLUG                   THE GATE. non-zero unless closeable
 #   crucible close SLUG "LESSON"          refuses unless check passes
@@ -240,6 +241,263 @@ cmd_lifecycle() {
     *) die "usage: crucible lifecycle status|enable --dry-run|--apply" ;;
   esac
 }
+
+attempt_dir() {
+  id=$1
+  case $id in ''|*[!A0-9.]*) die "invalid attempt id: $id" ;; esac
+  valid=$(printf '%s\n' "$id" | awk -F. '
+    NF == 3 && $1 ~ /^A[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ { print "yes" }
+  ')
+  [ "$valid" = yes ] || die "invalid attempt id: $id"
+  ad="$ROOT/attempts/$id"
+  [ -d "$ad" ] || die "no such attempt: $id"
+  printf '%s' "$ad"
+}
+
+attempt_meta() {
+  ad=$(attempt_dir "$1"); column=$2
+  awk -F '\t' -v c="$column" 'NR == 2 { print $c; exit }' "$ad/meta.tsv"
+}
+
+attempt_state() {
+  ad=$(attempt_dir "$1")
+  awk -F '\t' 'NR > 1 { state=$1 } END { print state }' "$ad/events.tsv"
+}
+
+attempt_pid() {
+  ad=$(attempt_dir "$1")
+  awk -F '\t' 'NR > 1 && $3 != "-" { pid=$3 } END { print (pid ? pid : "-") }' "$ad/events.tsv"
+}
+
+attempt_terminal() {
+  case $1 in RETURNED|TIMEOUT|STOPPED|ABANDONED|SUPERSEDED) return 0 ;; *) return 1 ;; esac
+}
+
+attempt_event() {
+  id=$1; new=$2; pid=$3; reason=$4; ad=$(attempt_dir "$id")
+  case "$reason" in *"$(printf '\t')"*|*'
+'*) die "attempt reason must be one line without tabs" ;; esac
+  lock="$ad/.event.lock"; tmp="$ad/.events.$$.tmp"
+  mkdir "$lock" 2>/dev/null || die "attempt update already in progress: $id"
+  trap 'rm -f "$tmp"; rmdir "$lock" 2>/dev/null || true' 0 1 2 15
+  old=$(attempt_state "$id")
+  attempt_terminal "$old" && die "attempt $id is terminal: $old"
+  cp "$ad/events.tsv" "$tmp"
+  printf '%s\t%s\t%s\t%s\n' "$new" "$(date +%s)" "$pid" "$reason" >> "$tmp"
+  mv "$tmp" "$ad/events.tsv"
+  rmdir "$lock"; trap - 0 1 2 15
+}
+
+state_attempt_update() {
+  slug=$1; status=$2; inflight=$3; block=$4
+  stage=$(state_value "$slug" 3); wid=$(state_value "$slug" 4); risk=$(state_value "$slug" 5)
+  state_update_item "$slug" "$status" "$stage" "$wid" "$risk" "$inflight" "$block"
+}
+
+attempt_live_for() (
+  slug=$1; role=$2; criterion=$3
+  [ -d "$ROOT/attempts" ] || return 1
+  for ad in "$ROOT"/attempts/*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    [ "$(attempt_meta "$id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$id" 5)" = "$role" ] || continue
+    [ "$(attempt_meta "$id" 8)" = "$criterion" ] || continue
+    st=$(attempt_state "$id")
+    attempt_terminal "$st" || { printf '%s' "$id"; return 0; }
+  done
+  return 1
+)
+
+attempt_pass_exists() (
+  slug=$1; wid=$2; role=$3; agent=$4; criterion=$5
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = "$role" ] || continue
+    [ "$(sed -n 's/^AGENT: //p' "$result_file" | head -1)" = "$agent" ] || continue
+    [ "$(sed -n 's/^CRITERION: //p' "$result_file" | head -1)" = "$criterion" ] || continue
+    return 0
+  done
+  return 1
+)
+
+canonical_pass_exists() (
+  slug=$1; wid=$2; class=$3
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^EVIDENCE-CLASS: //p' "$result_file" | head -1)" = "$class" ] || continue
+    return 0
+  done
+  return 1
+)
+
+maker_pass_exists() (
+  slug=$1; wid=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = maker ] || continue
+    return 0
+  done
+  return 1
+)
+
+cmd_attempt() {
+  uses_managed_lifecycle || die "attempt requires managed lifecycle behavior"
+  sub=${1:-}; shift 2>/dev/null || true
+  id=${1:-}; shift 2>/dev/null || true
+  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish ATTEMPT ..."
+  ad=$(attempt_dir "$id"); slug=$(attempt_meta "$id" 2)
+  case $sub in
+    start)
+      value=${1:-}; [ $# -eq 1 ] || die "usage: crucible attempt start ATTEMPT PID"
+      posint "$value" || die "attempt start requires a positive PID"
+      [ "$(attempt_state "$id")" = DISPATCHED ] || die "attempt start requires DISPATCHED"
+      attempt_event "$id" RUNNING "$value" observed-start
+      printf '%s RUNNING pid %s\n' "$id" "$value"
+      ;;
+    overdue)
+      [ $# -eq 0 ] || die "usage: crucible attempt overdue ATTEMPT"
+      [ "$(attempt_state "$id")" = RUNNING ] || die "attempt overdue requires RUNNING"
+      deadline=$(attempt_meta "$id" 12); now=$(date +%s)
+      [ "$now" -ge "$deadline" ] || die "refused: deadline $deadline has not passed"
+      attempt_event "$id" OVERDUE "$(attempt_pid "$id")" deadline-passed
+      printf '%s OVERDUE; process outcome is still unobserved\n' "$id"
+      ;;
+    finish)
+      value=${1:-}; shift 2>/dev/null || true; reason=${*:-}
+      case $value in RETURNED|TIMEOUT|STOPPED|ABANDONED) : ;; *) die "finish state must be RETURNED TIMEOUT STOPPED or ABANDONED" ;; esac
+      current=$(attempt_state "$id")
+      case $current in RUNNING|OVERDUE) : ;; *) die "attempt finish requires RUNNING or OVERDUE" ;; esac
+      [ -n "$reason" ] || reason=observed
+      attempt_event "$id" "$value" "$(attempt_pid "$id")" "$reason"
+      retry=$(attempt_meta "$id" 13)
+      case $value in
+        RETURNED) printf '%s RETURNED; record its result next\n' "$id" ;;
+        TIMEOUT)
+          if [ "$retry" = - ]; then
+            state_attempt_update "$slug" ACTIVE "$id" RETRY_AVAILABLE
+            printf '%s TIMEOUT; one retry is available\n' "$id"
+          else
+            state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
+            printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
+          fi ;;
+        STOPPED|ABANDONED)
+          state_attempt_update "$slug" BLOCKED - OPERATOR_DECISION
+          printf '%s %s; item blocked OPERATOR_DECISION\n' "$id" "$value" ;;
+      esac
+      ;;
+    *) die "usage: crucible attempt start|overdue|finish ATTEMPT ..." ;;
+  esac
+}
+
+result_finalize() (
+  id=$1; slug=$2; wid=$3; role=$4; agent=$5; outcome=$6; evidence=$7; fingerprint=$8
+  ad=$(attempt_dir "$id"); d=$(D "$slug")
+  if [ "$role" = judge ]; then
+    word=$outcome
+    case $outcome in NEEDS_CONTEXT|BLOCKED) word=INSUFFICIENT_EVIDENCE ;; esac
+    verdict_tmp="$d/verdicts/.$agent.$$.tmp"
+    printf 'VERDICT: %s\nWORK-ID: %s\nresult %s; see %s\n' \
+      "$word" "$wid" "$id" "$evidence" > "$verdict_tmp"
+    mv "$verdict_tmp" "$d/verdicts/$agent.md"
+  fi
+  repeated=0
+  if [ "$outcome" = REJECT ] && [ "$fingerprint" != - ]; then
+    for result_file in "$ROOT"/attempts/*/result.md; do
+      [ -f "$result_file" ] || continue; [ "$result_file" = "$ad/result.md" ] && continue
+      [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+      [ "$(sed -n 's/^FINDING-FINGERPRINT: //p' "$result_file" | head -1)" = "$fingerprint" ] || continue
+      repeated=1; break
+    done
+  fi
+  stage=$(state_value "$slug" 3); risk=$(state_value "$slug" 5)
+  if [ "$repeated" -eq 1 ]; then
+    result_status=BLOCKED; result_block=REPEATED_FINDING
+  else
+    case $outcome in
+      PASS|REJECT) result_status=ACTIVE; result_block=- ;;
+      BLOCKED) result_status=BLOCKED; result_block=RESULT_BLOCKED ;;
+      NEEDS_CONTEXT) result_status=BLOCKED; result_block=NEEDS_CONTEXT ;;
+      SCOPE_CONFLICT) result_status=BLOCKED; result_block=SCOPE_CONFLICT ;;
+    esac
+  fi
+  state_update_item "$slug" "$result_status" "$stage" "$wid" "$risk" - "$result_block"
+)
+
+cmd_result() {
+  uses_managed_lifecycle || die "result requires managed lifecycle behavior"
+  id=${1:-}; outcome=${2:-}; evidence=${3:-}; next=${4:-}; fingerprint=${5:--}
+  [ -n "$id" ] && [ -n "$outcome" ] && [ -n "$evidence" ] && [ -n "$next" ] \
+    || die "usage: crucible result ATTEMPT OUTCOME EVIDENCE NEXT [FINGERPRINT]"
+  case $outcome in PASS|REJECT|BLOCKED|NEEDS_CONTEXT|SCOPE_CONFLICT) : ;; *) die "invalid result outcome: $outcome" ;; esac
+  case $next in CLOSE|FIX|DECIDE|ESCALATE) : ;; *) die "invalid result next action: $next" ;; esac
+  case "$outcome:$next" in
+    PASS:CLOSE|REJECT:FIX|BLOCKED:DECIDE|BLOCKED:ESCALATE|NEEDS_CONTEXT:DECIDE|NEEDS_CONTEXT:ESCALATE|SCOPE_CONFLICT:DECIDE|SCOPE_CONFLICT:ESCALATE) : ;;
+    *) die "incompatible result: $outcome cannot request $next" ;;
+  esac
+  case $fingerprint in -|[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) : ;; *) die "fingerprint must be - or 12 alphanumeric characters" ;; esac
+  [ "$outcome" != REJECT ] || [ "$fingerprint" != - ] || die "REJECT requires a finding fingerprint"
+  ad=$(attempt_dir "$id"); [ "$(attempt_state "$id")" = RETURNED ] || die "result requires a RETURNED attempt"
+  slug=$(attempt_meta "$id" 2); task=$(attempt_meta "$id" 3); dispatch_wid=$(attempt_meta "$id" 4)
+  role=$(attempt_meta "$id" 5); agent=$(attempt_meta "$id" 6); kind=$(attempt_meta "$id" 7)
+  criterion=$(attempt_meta "$id" 8); class=$(attempt_meta "$id" 9); d=$(D "$slug")
+  current_wid=$(workid "$slug")
+  case $role in
+    maker)
+      [ "$current_wid" != EMPTY ] && [ "$current_wid" != NOBRANCH ] \
+        || die "maker result requires current work"
+      [ "$current_wid" != "$dispatch_wid" ] || die "maker result requires work to change after dispatch"
+      wid=$current_wid ;;
+    judge|adversary)
+      [ "$current_wid" = "$dispatch_wid" ] \
+        || die "work changed during $role attempt: dispatched $dispatch_wid, current $current_wid"
+      wid=$dispatch_wid ;;
+  esac
+  case $evidence in */*|*'..'*|'') die "evidence must be one filename from the item evidence directory" ;; esac
+  ef="$d/evidence/$evidence"
+  [ -f "$ef" ] && [ ! -L "$ef" ] || die "missing regular evidence file: $evidence"
+  [ "$(head -1 "$ef")" = "$MARK" ] || die "evidence was not recorded by crucible run"
+  [ "$(sed -n 's/^agent: //p' "$ef" | head -1)" = "$agent" ] || die "evidence agent does not match attempt"
+  [ "$(sed -n 's/^work-id: //p' "$ef" | head -1)" = "$wid" ] || die "evidence work id does not match attempt"
+  [ "$(sed -n 's/^attempt-id: //p' "$ef" | head -1)" = "$id" ] || die "evidence attempt id does not match attempt"
+  if [ -e "$ad/result.md" ]; then
+    [ -f "$ad/result.md" ] && [ ! -L "$ad/result.md" ] || die "attempt result is immutable: $id"
+    [ "$(sed -n 's/^OUTCOME: //p' "$ad/result.md" | head -1)" = "$outcome" ] \
+      && [ "$(sed -n 's/^WORK-ID: //p' "$ad/result.md" | head -1)" = "$wid" ] \
+      && [ "$(sed -n 's/^EVIDENCE: //p' "$ad/result.md" | head -1)" = "$evidence" ] \
+      && [ "$(sed -n 's/^FINDING-FINGERPRINT: //p' "$ad/result.md" | head -1)" = "$fingerprint" ] \
+      && [ "$(sed -n 's/^NEXT: //p' "$ad/result.md" | head -1)" = "$next" ] \
+      || die "attempt result is immutable: $id"
+    [ "$(state_value "$slug" 6)" = "$id" ] || die "attempt result is immutable: $id"
+    result_finalize "$id" "$slug" "$wid" "$role" "$agent" "$outcome" "$evidence" "$fingerprint"
+    printf '%s/result.md (reconciled publication)\n' "$ad"
+    return
+  fi
+  lock="$ad/.result.lock"; mkdir "$lock" 2>/dev/null || die "attempt result is immutable: $id"
+  tmp="$ad/.result.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
+  {
+    printf 'OUTCOME: %s\nITEM: %s\nWORK-ID: %s\nDISPATCH-WORK-ID: %s\nATTEMPT-ID: %s\n' \
+      "$outcome" "$slug" "$wid" "$dispatch_wid" "$id"
+    printf 'ROLE: %s\nAGENT: %s\nKIND: %s\nCRITERION: %s\n' "$role" "$agent" "$kind" "$criterion"
+    printf 'TASK-ID: %s\nEVIDENCE-CLASS: %s\nEVIDENCE: %s\n' "$task" "$class" "$evidence"
+    printf 'FINDING-FINGERPRINT: %s\nNEXT: %s\n\nRecorded result for %s.\n' "$fingerprint" "$next" "$id"
+  } > "$tmp"
+  mv "$tmp" "$ad/result.md"; trap - 0 1 2 15
+  result_finalize "$id" "$slug" "$wid" "$role" "$agent" "$outcome" "$evidence" "$fingerprint"
+  printf '%s/result.md\n' "$ad"
+}
 # agents.tsv: name <TAB> kind <TAB> model <TAB> effort <TAB> command
 # The command may contain {BRIEF} {MODEL} {EFFORT}. Only listed names may judge.
 col() {
@@ -274,8 +532,6 @@ faults() {
   b=$(find "$1" -type f -print | wc -l | tr -d ' ')
   [ "$a" = "$b" ] || printf 'a filename under %s contains a newline\n' "$1"
 }
-
-TARGET_HELP='target file format: three lines — repo: <path>  branch: <name>  base: <ref>'
 
 tgt() { sed -n "s/^$2: //p" "$(D "$1")/TARGET" 2>/dev/null | head -1; }
 
@@ -530,6 +786,17 @@ cmd_run() {
   [ "${1:-}" = "--" ] || die "usage: crucible run SLUG NAME -- CMD..."
   shift; [ $# -gt 0 ] || die "no command given"
   reg "$name"; d=$(D "$slug"); wid=$(workid "$slug")
+  run_attempt=-
+  if uses_managed_lifecycle; then
+    run_attempt=$(state_value "$slug" 6)
+    [ "$run_attempt" != - ] || die "managed evidence requires an in-flight attempt"
+    run_agent=$(attempt_meta "$run_attempt" 6)
+    [ "$run_agent" = "$name" ] || die "in-flight attempt belongs to $run_agent, not $name"
+    run_state=$(attempt_state "$run_attempt")
+    case $run_state in RUNNING|OVERDUE) : ;;
+      *) die "managed evidence requires a RUNNING or OVERDUE attempt" ;;
+    esac
+  fi
   # The name is unique by construction. Asking whether a name is free and then taking
   # it is a check-then-act race: two concurrent runs both see it free, both take it,
   # and one silently overwrites the other. The pid separates concurrent writers, the
@@ -538,6 +805,7 @@ cmd_run() {
   out="$d/evidence/$name.$tok.$wid.txt"
   tmp="$d/evidence/.partial.$name.$tok.$wid"
   { printf '%s\n' "$MARK"; printf 'agent: %s\n' "$name"; printf 'work-id: %s\n' "$wid"
+    [ "$run_attempt" = - ] || printf 'attempt-id: %s\n' "$run_attempt"
     printf 'when: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; printf 'command:'
     for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; printf -- '--- output ---\n'; } > "$tmp"
   rc=0; "$@" >> "$tmp" 2>&1 || rc=$?
@@ -610,9 +878,142 @@ cmd_dispatch_claim() {
     printf '%s\n' "$(invocation "$name" "$out")"; } >&2
 }
 
+cmd_dispatch_managed() (
+  slug=$1; role=${2:-}; agent=${3:-}; criterion=${4:-A1}; class=${5:-FOCUSED}; retry=${6:--}
+  need "$slug"
+  [ -n "$role" ] && [ -n "$agent" ] || die "usage: crucible dispatch ITEM ROLE AGENT [CRITERION] [EVIDENCE_CLASS] [RETRY_OF]"
+  case $criterion in *[!A-Za-z0-9._-]*|'') die "invalid criterion: $criterion" ;; esac
+  criterion_exists=$(awk -v c="$criterion" '
+    /^- \[[ xX]\] / {
+      line=$0; sub(/^- \[[ xX]\] /, "", line); split(line, part, /[:@ ]/)
+      if (part[1] == c) { print "yes"; exit }
+    }
+  ' "$(D "$slug")/ITEM.md")
+  [ "$criterion_exists" = yes ] || die "criterion is not declared by the item: $criterion"
+  case $class in FOCUSED|FULL_SUITE|EXTERNAL|MANUAL) : ;; *) die "invalid evidence class: $class" ;; esac
+  role_file="$ROOT/roles/$role.md"; [ -f "$role_file" ] || die "no such role: $role"
+  reg "$agent"
+  dispatch_lock="$ROOT/.dispatch.lock"; staging=
+  mkdir "$dispatch_lock" 2>/dev/null || die "managed dispatch already in progress"
+  # shellcheck disable=SC2329  # invoked by the EXIT trap below
+  dispatch_cleanup() {
+    dispatch_status=$?
+    if [ -n "$staging" ]; then
+      rm -f "$staging/meta.tsv" "$staging/events.tsv" "$staging/contract.md"
+      rmdir "$staging" 2>/dev/null || true
+    fi
+    rmdir "$dispatch_lock" 2>/dev/null || true
+    trap - 0
+    exit "$dispatch_status"
+  }
+  trap dispatch_cleanup 0
+  trap 'exit 130' 1 2 15
+  d=$(D "$slug"); stage=$(phase_of "$slug"); wid=$(workid "$slug")
+  case $role in
+    maker) [ "$stage" = BUILD ] || die "maker dispatch requires BUILD" ;;
+    judge|adversary) [ "$stage" = REVIEW ] || die "$role dispatch requires REVIEW"
+      maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER")
+      [ "$agent" != "$maker" ] || die "refused: $agent is the maker of $slug" ;;
+    *) die "managed lifecycle dispatch role must be maker, judge, or adversary" ;;
+  esac
+  if [ "$retry" != - ]; then
+    attempt_dir "$retry" >/dev/null
+    [ "$(attempt_state "$retry")" = TIMEOUT ] || die "retry source must be an observed TIMEOUT"
+    [ "$(attempt_meta "$retry" 13)" = - ] || die "refused: only one infrastructure retry is allowed"
+    [ "$(attempt_meta "$retry" 2)" = "$slug" ] && [ "$(attempt_meta "$retry" 5)" = "$role" ] \
+      && [ "$(attempt_meta "$retry" 6)" = "$agent" ] && [ "$(attempt_meta "$retry" 8)" = "$criterion" ] \
+      && [ "$(attempt_meta "$retry" 9)" = "$class" ] && [ "$(attempt_meta "$retry" 4)" = "$wid" ] \
+      || die "retry key does not match the prior attempt"
+  fi
+  [ "$(state_value "$slug" 2)" = ACTIVE ] || die "item is not active: $slug"
+  recorded_inflight=$(state_value "$slug" 6)
+  if [ "$retry" != - ] && [ "$recorded_inflight" = "$retry" ]; then
+    :
+  else
+    [ "$recorded_inflight" = - ] \
+      || die "refused: item already has in-flight attempt $recorded_inflight"
+  fi
+  live=$(attempt_live_for "$slug" "$role" "$criterion" 2>/dev/null || true)
+  [ -z "$live" ] || die "refused: live attempt $live already owns $slug/$role/$criterion"
+  attempt_pass_exists "$slug" "$wid" "$role" "$agent" "$criterion" \
+    && die "refused: $agent already has current-work PASS for $role/$criterion"
+  case $class in FULL_SUITE|EXTERNAL)
+    canonical_pass_exists "$slug" "$wid" "$class" \
+      && die "refused: canonical $class PASS already exists for $slug at $wid" ;;
+  esac
+  case $role in
+    maker) seconds=${CRUCIBLE_MAKER_SECONDS:-2700} ;;
+    judge|adversary) seconds=${CRUCIBLE_REVIEW_SECONDS:-1800} ;;
+  esac
+  posint "$seconds" || die "attempt budget must be a positive integer"
+  mkdir -p "$ROOT/attempts"
+  now=$(date +%s); n=1
+  while :; do
+    id="A$now.$$.${n}"
+    target_attempt="$ROOT/attempts/$id"
+    staging="$ROOT/attempts/.$id.$$.tmp"
+    [ ! -e "$target_attempt" ] && mkdir "$staging" 2>/dev/null && break
+    n=$((n+1))
+  done
+  ad=$staging
+  deadline=$((now + seconds)); kind=$(kind_of "$agent")
+  printf 'attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n' > "$ad/meta.tsv"
+  printf '%s\t%s\t-\t%s\t%s\t%s\t%s\t%s\t%s\tDISPATCHED\t%s\t%s\t%s\n' \
+    "$id" "$slug" "$wid" "$role" "$agent" "$kind" "$criterion" "$class" "$now" "$deadline" "$retry" >> "$ad/meta.tsv"
+  printf 'state\tepoch\tpid\treason\nDISPATCHED\t%s\t-\tdispatch-recorded\n' "$now" > "$ad/events.tsv"
+  self=$(self_path)
+  {
+    printf '# Attempt %s — %s — %s\n\n' "$id" "$role" "$slug"
+    printf 'This attempt is bound to item `%s`, work `%s`, criterion `%s`, and evidence class `%s`.\n\n' "$slug" "$wid" "$criterion" "$class"
+    printf 'Before launch, record the observed PID:\n\n    %s attempt start %s <PID>\n\n' "$self" "$id"
+    printf 'Record commands through:\n\n    %s run %s %s -- <command>\n\n' "$self" "$slug" "$agent"
+    printf 'When the process exits, record RETURNED, TIMEOUT, STOPPED, or ABANDONED:\n\n'
+    printf '    %s attempt finish %s <STATE> "<observation>"\n\n' "$self" "$id"
+    printf 'After RETURNED, record exactly one result:\n\n'
+    printf '    %s result %s <OUTCOME> <EVIDENCE-FILE> <NEXT> [FINGERPRINT]\n\n' "$self" "$id"
+    printf '## Role\n\n'; sed -n '/^## Instructions/,$p' "$role_file"
+    printf '\n## Item\n\n'; cat "$d/ITEM.md"
+    if [ "$role" = maker ]; then
+      printf '\n## Work location\n\n'
+      if [ -f "$d/TARGET" ]; then
+        printf 'Repository: `%s`\n\nBranch: `%s`\n\nBase: `%s`\n' \
+          "$(tgt "$slug" repo)" "$(tgt "$slug" branch)" "$(tgt "$slug" base)"
+      else
+        printf 'Write only under `%s/work/`.\n' "$d"
+      fi
+    else
+      printf '\n## Work — work id %s\n\n' "$wid"
+      emit_work "$slug" "$wid"
+      printf '\n## Recorded evidence\n\n'
+      if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
+        printf '(none. Absence of evidence is a finding, never a pass.)\n'
+      else
+        find "$d/evidence" -type f -print | LC_ALL=C sort | while IFS= read -r evidence_file; do
+          printf '### %s\n```\n' "${evidence_file##*/}"
+          cat "$evidence_file"
+          printf '```\n'
+        done
+      fi
+    fi
+    printf '\n## Rules\n\n'; cat "$ROOT/RULES.md" 2>/dev/null || true
+  } > "$ad/contract.md"
+  mv "$staging" "$target_attempt"
+  staging=
+  ad=$target_attempt
+  [ "$role" = maker ] && printf '%s\n' "$agent" > "$d/MAKER"
+  risk=$(state_value "$slug" 5)
+  (state_update_item "$slug" ACTIVE "$stage" "$wid" "$risk" "$id" -)
+  printf '%s/contract.md\n' "$ad"
+  { printf '\n# %s as %s. Run this:\n' "$agent" "$role"
+    printf '%s\n' "$(invocation "$agent" "$ad/contract.md")"; } >&2
+  rmdir "$dispatch_lock"; dispatch_lock=
+  trap - 0 1 2 15
+)
+
 cmd_dispatch() {
   slug=${1:-}; role=${2:-}; name=${3:-}
   case $slug in C[0-9]*) cmd_dispatch_claim "$@"; return $? ;; esac
+  if uses_managed_lifecycle; then cmd_dispatch_managed "$@"; return $?; fi
   need "$slug"
   [ -n "$role" ] && [ -n "$name" ] || die "usage: crucible dispatch SLUG ROLE AGENT"
   rf="$ROOT/roles/$role.md"; [ -f "$rf" ] || die "no such role: $role (see $ROOT/roles/)"
@@ -775,10 +1176,17 @@ cmd_phase() {
   [ -n "$new" ] || { phase_of "$slug"; echo; return; }
   if uses_managed_lifecycle; then
     old=$(phase_of "$slug")
+    inflight=$(state_value "$slug" 6)
+    [ "$inflight" = - ] || die "refused: attempt $inflight is still in flight"
     case "$old:$new" in
       READY:BUILD|BUILD:REVIEW) : ;;
       *) die "refused: invalid transition $old -> $new" ;;
     esac
+    if [ "$old:$new" = BUILD:REVIEW ]; then
+      current_wid=$(workid "$slug")
+      maker_pass_exists "$slug" "$current_wid" \
+        || die "refused: REVIEW requires a current-work maker PASS"
+    fi
     status=$(state_value "$slug" 2); risk=$(state_value "$slug" 5)
     state_update_item "$slug" "$status" "$new" "$(workid "$slug")" "$risk" - -
     printf '%s is now in %s\n' "$slug" "$new"
@@ -808,9 +1216,24 @@ cmd_next() {
     slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
     [ -n "$slug" ] || { printf 'DONE\n'; return; }
     status=$(state_value "$slug" 2); stage=$(state_value "$slug" 3)
-    block=$(state_value "$slug" 7); self=$(self_path)
+    inflight=$(state_value "$slug" 6); block=$(state_value "$slug" 7); self=$(self_path)
     if [ "$status" = BLOCKED ]; then
       printf 'BLOCKED %s %s see %s/items/%s/ITEM.md\n' "$slug" "$block" "$ROOT" "$slug"
+      return
+    fi
+    if [ "$inflight" != - ]; then
+      st=$(attempt_state "$inflight"); deadline=$(attempt_meta "$inflight" 12)
+      case $st in
+        DISPATCHED|RUNNING) printf 'WAIT %s %s\n' "$inflight" "$deadline" ;;
+        OVERDUE) printf 'BLOCKED %s OVERDUE_PROCESS record an observed finish for %s\n' "$slug" "$inflight" ;;
+        RETURNED) printf 'NEXT %s RESULT %s result %s <OUTCOME> <EVIDENCE-FILE> <NEXT> [FINGERPRINT]\n' "$slug" "$self" "$inflight" ;;
+        TIMEOUT)
+          printf 'NEXT %s RETRY %s dispatch %s %s %s %s %s %s\n' \
+            "$slug" "$self" "$slug" "$(attempt_meta "$inflight" 5)" \
+            "$(attempt_meta "$inflight" 6)" "$(attempt_meta "$inflight" 8)" \
+            "$(attempt_meta "$inflight" 9)" "$inflight" ;;
+        *) die "state points to terminal attempt $inflight ($st)" ;;
+      esac
       return
     fi
     case $stage in
@@ -1265,6 +1688,27 @@ cmd_check() {
     vwid=""; case $l2 in "WORK-ID: "*) vwid=${l2#"WORK-ID: "} ;; esac
     case $vwid in ''|*[!A-Za-z0-9]*) say "FAIL $nm: line 2 must be exactly 'WORK-ID: <id>'"; bad=1; continue ;; esac
     [ "$vwid" = "$wid" ] || { say "FAIL $nm judged $vwid but work is $wid (stale)"; bad=1; continue; }
+    if uses_managed_lifecycle; then
+      l3=$(sed -n '3p' "$v")
+      case $l3 in "result A"*"; see "*) : ;;
+        *) say "FAIL $nm: managed verdict is not bound to an attempt result"; bad=1; continue ;;
+      esac
+      result_id=${l3#result }; result_id=${result_id%%; see *}; result_evidence=${l3#*; see }
+      case $result_id in ''|*[!A0-9.]*)
+        say "FAIL $nm: managed verdict has an invalid attempt id"; bad=1; continue ;;
+      esac
+      result_file="$ROOT/attempts/$result_id/result.md"
+      [ -f "$result_file" ] && [ ! -L "$result_file" ] || {
+        say "FAIL $nm: managed attempt result $result_id is missing"; bad=1; continue; }
+      [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] \
+        && [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] \
+        && [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] \
+        && [ "$(sed -n 's/^ATTEMPT-ID: //p' "$result_file" | head -1)" = "$result_id" ] \
+        && [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = judge ] \
+        && [ "$(sed -n 's/^AGENT: //p' "$result_file" | head -1)" = "$nm" ] \
+        && [ "$(sed -n 's/^EVIDENCE: //p' "$result_file" | head -1)" = "$result_evidence" ] \
+        || { say "FAIL $nm: verdict and managed attempt result disagree"; bad=1; continue; }
+    fi
     case " $ok_agents " in *" $nm "*) : ;;
       *) say "FAIL $nm passed but recorded no evidence of its own"; bad=1; continue ;; esac
     cited=0
@@ -1333,11 +1777,12 @@ lifecycle) shift; cmd_lifecycle "$@" ;;
 state)    shift; cmd_state "$@" ;;
 ready)    shift; cmd_ready "$@" ;;
 next)     shift; cmd_next "$@" ;;
+attempt)  shift; cmd_attempt "$@" ;;
+result)   shift; cmd_result "$@" ;;
 phase)    shift; cmd_phase "$@" ;;
 dispatch) shift; cmd_dispatch "$@" ;;
 brief)    shift; cmd_brief "$@" ;;
 run)      shift; cmd_run "$@" ;;
-run-claim) shift; cmd_run_claim "$@" ;;
 run-claim) shift; cmd_run_claim "$@" ;;
 check)    shift; cmd_check "$@" ;;
 close)    shift; cmd_close "$@" ;;

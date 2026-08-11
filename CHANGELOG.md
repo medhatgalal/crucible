@@ -8,6 +8,12 @@ All notable changes to this project are documented here. This project follows
 - Added behavior-named managed lifecycle selection through `crucible lifecycle`, authoritative
   `STATE.tsv`, generated `STATE.md`, a focused verifier, and an operator guide. Existing programs
   retain item-file behavior unless explicitly enabled before their first item.
+- Added managed attempt records with immutable dispatch metadata, observed lifecycle events,
+  evidence-bound write-once results, typed outcome/next-action pairs, explicit maker and reviewer
+  deadlines, one infrastructure retry, repeated-finding stops, and unchanged-work reuse of
+  canonical `FULL_SUITE` and `EXTERNAL` PASS evidence. Maker results distinguish input work from
+  post-change work; review entry requires a current-work maker PASS, and managed closure rejects
+  compatibility verdicts not backed by an attempt result.
 
 ## [1.0.0] - 2026-08-07
 
