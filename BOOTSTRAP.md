@@ -103,6 +103,15 @@ cd <their repo root>
 <engine>/crucible adopt <program-name>
 ```
 
+If you want authoritative machine-readable state, enable [managed lifecycle](docs/managed-lifecycle.md)
+now, before admitting the first item:
+
+```sh
+CP=.crucible/<program-name>/crucible
+$CP lifecycle enable --dry-run
+$CP lifecycle enable --apply
+```
+
 Then write their answers into `.crucible/<program-name>/agents.tsv`, delete any role files they did
 not want, and check `.crucible/<program-name>/crucible agents` shows what they described.
 

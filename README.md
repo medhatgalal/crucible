@@ -60,6 +60,12 @@ Phases refuse without their artifacts, and closure refuses without evidence and 
 `crucible check` refuses; it never warns. Not every step is gated — the intake, triage and
 admission decisions are yours, informed by verdicts the gate does enforce.
 
+That seven-phase path is the compatibility behavior for existing programs. New programs may instead
+enable the behavior-named [managed lifecycle](docs/managed-lifecycle.md) before their first item. It
+uses authoritative `STATE.tsv`, generated `STATE.md`, and the smaller
+`DRAFT → READY → BUILD → REVIEW → CLOSED` path. The guide states what is implemented and what remains
+manual.
+
 ## What it refuses
 
 A missing or wrong file stops the run. Each of these is asserted in `scripts/selftest.sh`.
@@ -134,6 +140,9 @@ crucible adopt [PROGRAM]               install into the repo you are standing in
 crucible selftest                      prove the gate refuses what it claims to
 crucible claim add|verdict|scout|admit the outer loop: audit a problem document
 crucible triage                        evidence-grounded decision table for the operator
+crucible lifecycle status|enable       inspect or enable managed lifecycle behavior
+crucible state                         regenerate managed STATE.md from STATE.tsv
+crucible ready ITEM                    validate and freeze a managed item contract
 crucible next                          what to do now, read from files not memory
 crucible dispatch ITEM ROLE AGENT      write the contract for a call, print its path
 crucible run ITEM AGENT -- CMD...      run CMD and record the result as evidence

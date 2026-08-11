@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Added behavior-named managed lifecycle selection through `crucible lifecycle`, authoritative
+  `STATE.tsv`, generated `STATE.md`, a focused verifier, and an operator guide. Existing programs
+  retain item-file behavior unless explicitly enabled before their first item.
+
 ## [1.0.0] - 2026-08-07
 
 Initial release.

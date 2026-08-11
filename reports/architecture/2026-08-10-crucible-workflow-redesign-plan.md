@@ -12,7 +12,7 @@ The prerequisite `ci-on-push` work is closed at `a2097294669b`, squash-merged to
 
 ## Objective
 
-Deliver Crucible v2 as a file-only, POSIX-shell workflow that:
+Deliver Crucible managed lifecycle as a file-only, POSIX-shell workflow that:
 
 1. Preserves audited claim admission and strict work-ID freshness.
 2. Gives the CLI one authoritative machine-readable state record.
@@ -31,7 +31,7 @@ Success means an operator can resume from files, obtain exactly one next action,
 - Risk-based role and model-kind requirements.
 - Evidence classes and rules for canonical expensive evidence.
 - A bounded task DAG, isolated task worktrees, parallel maker dispatch, and an explicit integration barrier.
-- Migration of existing v1 programs through an opt-in compatibility path.
+- Migration of existing item-file lifecycle programs through an opt-in compatibility path.
 - Focused tests, full-suite compatibility, rollback, and operational diagnostics.
 
 ## Out of Scope
@@ -39,7 +39,7 @@ Success means an operator can resume from files, obtain exactly one next action,
 - A database, daemon, service, queue, web UI, or remote coordinator.
 - Cryptographic proof of which human/model authored a file.
 - Automatic killing of external agent processes; Crucible does not own their process groups.
-- Cross-work-ID evidence reuse in v2.0.
+- Cross-work-ID evidence reuse in managed lifecycle.
 - Automatic migration of active programs.
 - Fixing or closing the current `ci-on-push` item as part of this redesign.
 - Replacing Git, POSIX shell, Markdown contracts, or the existing evidence capture format.
@@ -47,7 +47,7 @@ Success means an operator can resume from files, obtain exactly one next action,
 ## Assumptions & Constraints
 
 - POSIX shell, Git, Markdown, `awk`, `sed`, and standard userland remain the only dependencies.
-- Existing adopted v1 programs must continue to run unchanged.
+- Existing adopted item-file lifecycle programs must continue to run unchanged.
 - Whole-work-ID evidence invalidation remains the closure boundary. A new commit invalidates every closure verdict.
 - The CLI can refuse dispatches and record deadlines, but cannot safely infer that an external process died merely because a deadline passed.
 - One program advances one current item at a time. Within that item's BUILD state, dependency-ready tasks may run concurrently in isolated worktrees when ownership sets are disjoint.
@@ -56,7 +56,7 @@ Success means an operator can resume from files, obtain exactly one next action,
 
 ## Architecture Recommendation
 
-### Chosen design: slim v2 state machine with immutable attempts
+### Chosen design: slim managed lifecycle state machine with immutable attempts
 
 Retain the outer loop:
 
@@ -106,11 +106,11 @@ READY -> BUILD -> task T1+                                      +-> INTEGRATE ->
 - Independent tasks may finish after a sibling blocks, but integration cannot start until every required task is PASS or the operator revises the frozen DAG by returning the item to DRAFT.
 - Task worktrees and branches are retained while an item is open or blocked. Cleanup is explicit after integration and final closure; no failure path deletes them automatically.
 
-### Legacy backlog disposition
+### Existing backlog disposition
 
-The self-hosting backlog is input to v2, not an automatically inherited implementation queue:
+The self-hosting backlog is input to managed lifecycle, not an automatically inherited implementation queue:
 
-| Existing item | Disposition | v2 destination / reason |
+| Existing item | Disposition | managed lifecycle destination / reason |
 | --- | --- | --- |
 | `ci-on-push` | CLOSED | Merged as `ccbcff0`; delivery baseline only. |
 | `feature-through-the-loop` | CLOSE WITHOUT NEW CODE | The completed CI item exercised maker, judges, adversary, integration, rejection, and closure. |
@@ -123,19 +123,19 @@ The self-hosting backlog is input to v2, not an automatically inherited implemen
 | `finding-identity` | MERGE | Repeated finding fingerprint and `REPEATED_FINDING` stop. |
 | `judge-isolation-worktree` | MERGE | Task/reviewer worktree contract and process adapter. |
 | `orchestration-harness` | MERGE | State, attempts, bounded launch metadata, and task DAG. |
-| `coldstart-gaps` | MERGE | One v2 cold-start/intake item. |
+| `coldstart-gaps` | MERGE | One managed lifecycle cold-start/intake item. |
 | `intake-any-source` | MERGE | Same cold-start item; add DOCUMENT, OPERATOR, and AGENT-PROPOSED provenance plus independent fidelity review. |
 | `scout-arg-in-docs` | SUPERSEDE BRANCH, RETAIN REQUIREMENT | Keep the required AGENT example, but do not merge the 241-line regex sweep; validate executable examples through focused fixtures. |
-| `transport-and-kinds` | SPLIT | Keep risk/kind policy in v2; defer experimental ACP/app-server transports. |
+| `transport-and-kinds` | SPLIT | Keep risk/kind policy in managed lifecycle; defer experimental ACP/app-server transports. |
 | `byte-identical-guard` | SUPERSEDE | Immutable attempt IDs prevent verdict overwrite; retain a focused duplicate-result refusal test. |
 | `lesson-injection-label` | RETAIN P1 | Either enforce lesson injection or relabel the documentation claim. |
 | `isolate-or-withdraw` | RETAIN P1 | Release assertion/mutation discipline. |
 | `inline-workflow-blocks-move-into-scripts` | DEFER P2 | Independent workflow cleanup after the state/attempt kernel. |
-| `workflow-form-completeness` | DOCUMENTED NON-GOAL FOR V2 | No dependency-free shell regex can parse every Actions/YAML form honestly. |
-| `a-transcription-inside-scripts-is-a-second-writer` | DOCUMENTED NON-GOAL FOR V2 | Treat `scripts/` as a trusted executable boundary; do not claim semantic duplicate detection. |
+| `workflow-form-completeness` | DOCUMENTED NON-GOAL FOR MANAGED LIFECYCLE | No dependency-free shell regex can parse every Actions/YAML form honestly. |
+| `a-transcription-inside-scripts-is-a-second-writer` | DOCUMENTED NON-GOAL FOR MANAGED LIFECYCLE | Treat `scripts/` as a trusted executable boundary; do not claim semantic duplicate detection. |
 | B10: empty `LESSONS.md` after `add` | RETAIN P0 | Seed the file with a header; mutation proves a fresh `add` no longer creates a false refusal. |
 
-`ai/scout-arg-in-docs` remains preserved and unmerged until the focused v2 cold-start item replaces its valid documentation delta. No commit from that branch is silently cherry-picked.
+`ai/scout-arg-in-docs` remains preserved and unmerged until the focused managed lifecycle cold-start item replaces its valid documentation delta. No commit from that branch is silently cherry-picked.
 
 ### Evidence policy
 
@@ -150,7 +150,7 @@ Every criterion declares one evidence class:
 
 A PASS still requires evidence recorded by its author. For `FULL_SUITE` and `EXTERNAL`, the reviewer’s evidence is the command that validates the canonical artifact plus its independently run focused falsifier; the reviewer does not repeat the expensive operation.
 
-Cross-work-ID reuse is rejected for v2.0. Splitting oversized items is the safe way to stop unrelated documentation edits from invalidating provider proof. Criterion fingerprints may be reconsidered only after measured v2 cost data shows that splitting is insufficient.
+Cross-work-ID reuse is rejected for managed lifecycle. Splitting oversized items is the safe way to stop unrelated documentation edits from invalidating provider proof. Criterion fingerprints may be reconsidered only after measured managed lifecycle cost data shows that splitting is insufficient.
 
 ### Risk and panel policy
 
@@ -188,7 +188,7 @@ The maker and a reviewer may use the same model only in separate contexts. That 
 | Process adapter | External launcher records PID/exit/deadline observations | Optional launcher-side data in attempt metadata | Inferring outcomes without observation |
 | Integrator | Apply passing task commits in stable topological order | Item integration branch and integration evidence | Editing task branches or auto-resolving conflicts |
 
-`STATE.tsv` is the machine source of truth. `STATE.md` is generated from it and is never hand-edited. `ITEM.md` no longer owns `PHASE` or `STATUS` in v2; those legacy headers are mirrored during compatibility mode only.
+`STATE.tsv` is the machine source of truth. `STATE.md` is generated from it and is never hand-edited. `ITEM.md` no longer owns `PHASE` or `STATUS` in managed lifecycle; those item-file headers are mirrored during compatibility mode only.
 
 ## Interface Contracts
 
@@ -197,10 +197,10 @@ The maker and a reviewer may use the same model only in separate contexts. That 
 Each program gains:
 
 ```text
-FORMAT_VERSION=2
+lifecycle: managed
 ```
 
-Absence means v1. Existing programs remain v1 until an explicit migration.
+Absence means item-file lifecycle. Existing programs remain item-file lifecycle until an explicit migration.
 
 ### `STATE.tsv`
 
@@ -254,7 +254,7 @@ The body contains concise findings and file/line locations. It must not contain 
 
 ### Item contract
 
-Every v2 `ITEM.md` contains these sections in order:
+Every managed lifecycle `ITEM.md` contains these sections in order:
 
 ```text
 ## Goal
@@ -291,7 +291,7 @@ T3\tT1\ttasks/T3.paths\ttasks/T3.verify.sh
 - `paths_file` contains one literal repository-relative path per line. Globs, absolute paths, `..`, tabs, newlines in Git paths, and the same path in two tasks refuse.
 - `verify_script` is a repository-relative executable POSIX shell file. It receives the task commit as `$1` and exits non-zero on failure.
 - `TASKS.md` and a ready-task view are generated from this contract; hand edits are overwritten.
-- The DAG is limited to 32 tasks and 128 dependency edges in v2.0. Larger work must split into items.
+- The DAG is limited to 32 tasks and 128 dependency edges in managed lifecycle. Larger work must split into items.
 
 ### CLI surface
 
@@ -299,6 +299,9 @@ Existing outer-loop and evidence verbs remain. Add or tighten:
 
 ```text
 crucible state                         render STATE.md from STATE.tsv
+crucible lifecycle status             report item-file or managed behavior
+crucible lifecycle enable --dry-run   report the exact fresh-program write set
+crucible lifecycle enable --apply     enable managed behavior before the first item
 crucible ready ITEM                    validate/freeze the item contract
 crucible task list ITEM                render DAG and derived task states
 crucible task ready ITEM               print dependency-ready tasks
@@ -309,8 +312,6 @@ crucible attempt finish ATTEMPT STATE  record observed terminal process state
 crucible result ATTEMPT OUTCOME ...    validate and write immutable result.md
 crucible integrate ITEM                apply passing task commits in stable topological order
 crucible block ITEM CODE "reason"     terminal-for-now stop with unblock condition
-crucible migrate-state --dry-run       report exact v1 -> v2 write set
-crucible migrate-state --apply         opt in after operator approval
 ```
 
 `next` remains the operator entry point but becomes read-only. It returns exactly one of:
@@ -332,7 +333,7 @@ DONE
 | --- | --- | --- | --- |
 | Preserve whole-work-ID freshness | Retains the strongest anti-staleness gate | Unrelated commits still invalidate evidence | Enforce narrow items and frozen contracts |
 | One canonical expensive check | Removes duplicated provider/full-suite cost | Reviewers rely on another agent’s capture | Each reviewer independently validates binding/completeness and runs a focused falsifier |
-| `STATE.tsv` plus generated Markdown | Deterministic resume and parsing | Adds a migration surface | Opt-in format version and dual-write compatibility |
+| `STATE.tsv` plus generated Markdown | Deterministic resume and parsing | Adds a migration surface | Behavior-named opt-in and compatibility readers |
 | Immutable attempt records | Prevents overwritten PASSes and reconstructs retries | More small files | Per-attempt directory is bounded and archiveable after closure |
 | Risk-based roles | Cuts ceremony for low-risk work | Requires correct risk classification | Operator confirms risk at READY; reviewers may escalate but not downgrade |
 | No automatic process killing | Avoids false timeout labels and orphaned children | Overdue work needs operator/launcher action | Refuse new duplicate work and expose exact PID/deadline condition |
@@ -346,7 +347,7 @@ Rejected because it leaves status duplicated across `ITEM.md`, prose `STATE.md`,
 
 ### Criterion fingerprints that reuse evidence across work IDs
 
-Rejected for v2.0 because relevant-file manifests and normalized criterion hashing introduce a second freshness model beside the current commit-boundary invariant. This is precisely the kind of cleverness likely to create another proof-parser dispute. Reconsider only from measured v2 evidence.
+Rejected for managed lifecycle because relevant-file manifests and normalized criterion hashing introduce a second freshness model beside the current commit-boundary invariant. This is precisely the kind of cleverness likely to create another proof-parser dispute. Reconsider only from measured managed lifecycle evidence.
 
 ### Database/service orchestrator
 
@@ -372,33 +373,33 @@ Rejected because file ownership alone does not prevent index, generated-file, or
 
 ### Preconditions
 
-1. `ci-on-push` is closed under v1; local and remote `main` agree at `ccbcff0`, and hosted CI is green.
+1. `ci-on-push` is closed under item-file lifecycle; local and remote `main` agree at `ccbcff0`, and hosted CI is green.
 2. `ai/crucible-workflow-redesign` is isolated from that exact baseline; planning artifacts are preserved at `44d9db3` and are not delivery evidence.
-3. `ai/scout-arg-in-docs` remains preserved and must not be merged as-is; its requirement is assigned to the v2 cold-start item.
-4. Before source edits, write the v2 implementation backlog from the disposition table and assign non-overlapping file ownership.
+3. `ai/scout-arg-in-docs` remains preserved and must not be merged as-is; its requirement is assigned to the managed lifecycle cold-start item.
+4. Before source edits, write the managed lifecycle implementation backlog from the disposition table and assign non-overlapping file ownership.
 
 ### Expand
 
-1. Add v2 parsers, state/attempt helpers, and focused fixtures without changing v1 default behavior.
-2. Add `FORMAT_VERSION`, `STATE.tsv`, generated `STATE.md`, immutable attempt/result contracts, and new CLI help.
-3. Make a v2 fixture program exercise READY through CLOSED while all existing v1 tests remain unchanged.
-4. Dual-write legacy `PHASE`/`STATUS` and verdict files in v2 compatibility mode.
+1. Add managed lifecycle parsers, state/attempt helpers, and focused fixtures without changing item-file lifecycle default behavior.
+2. Add the `lifecycle: managed` PROGRAM field, `STATE.tsv`, generated `STATE.md`, immutable attempt/result contracts, and new CLI help.
+3. Make a managed lifecycle fixture program exercise READY through CLOSED while all existing item-file lifecycle tests remain unchanged.
+4. Dual-write item-file `PHASE`/`STATUS` and verdict files in managed lifecycle compatibility mode.
 
 ### Migrate
 
-1. `migrate-state --dry-run` prints the exact paths and rows it would create; any ambiguous phase/status, active attempt, or unparseable item refuses.
-2. Migrate only a fresh fixture first, then a copied inactive real program.
+1. `lifecycle enable --dry-run` prints the exact fresh-program write set and changes nothing.
+2. Enable only a fresh fixture first. Active item-file conversion remains refused until a separately tested conversion behavior exists.
 3. Compare `next`, `check`, current work ID, panel requirements, and close refusal before/after.
-4. Opt in new `adopt` programs to v2 only after the fixture and copied-program gates pass.
-5. Existing programs remain v1 until separately approved.
+4. Opt in new `adopt` programs to managed lifecycle only after the fixture and copied-program gates pass.
+5. Existing programs remain item-file lifecycle until separately approved.
 
 ### Contract
 
-Do not remove legacy readers or dual writes in the first v2 release. Removal is a later versioned decision based on adoption evidence.
+Do not remove item-file readers in the first managed lifecycle release. Removal is a later compatibility decision based on adoption evidence.
 
 ### Rollback triggers
 
-- A v1 program changes behavior without opting in.
+- An item-file lifecycle program changes behavior without opting in.
 - Migration changes a work ID or loses a verdict/evidence reference.
 - `next` returns more than one action or an action inconsistent with state.
 - Duplicate dispatch is accepted in a focused concurrency fixture.
@@ -406,10 +407,10 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 
 ### Rollback order
 
-1. Stop new v2 dispatches; do not delete artifacts.
-2. Set the copied/fixture program back to `FORMAT_VERSION=1`.
-3. Verify legacy `ITEM.md`, evidence, and verdicts still drive `next`/`check`.
-4. Revert the redesign branch normally if source rollback is needed; preserve v2 state/attempt files as ignored audit artifacts.
+1. Stop new managed lifecycle dispatches; do not delete artifacts.
+2. Remove `lifecycle: managed` from the copied fixture's `PROGRAM` file.
+3. Verify item-file `ITEM.md`, evidence, and verdicts still drive `next`/`check`.
+4. Revert the redesign branch normally if source rollback is needed; preserve managed lifecycle state/attempt files as ignored audit artifacts.
 5. Do not migrate active programs until the defect is corrected and the full migration matrix passes again.
 
 ## Risks & Validation
@@ -424,14 +425,14 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 
 ### Focused test matrix
 
-1. v1 program behavior and all existing refusal fixtures remain byte-for-byte compatible.
+1. item-file lifecycle program behavior and all existing refusal fixtures remain byte-for-byte compatible.
 2. `ready` refuses missing risk, more than three criteria, missing focused falsifier, two expensive evidence classes, or overlapping maker ownership.
 3. State rewrite is atomic and concurrent writers cannot lose a row.
 4. `dispatch` refuses a second live attempt for the same item/role/criterion.
 5. `dispatch` refuses a current-work duplicate where that agent already has PASS.
 6. Exactly one canonical `FULL_SUITE`/`EXTERNAL` capture is accepted per work ID.
 7. A reviewer can PASS by recording validation of canonical expensive evidence plus an independent focused falsifier.
-8. A new commit makes all prior v2 closure results stale, preserving v1 semantics.
+8. A new commit makes all prior managed lifecycle closure results stale, preserving item-file lifecycle semantics.
 9. An expired live attempt becomes `OVERDUE`, never `TIMEOUT`, without an observed terminal state.
 10. One infrastructure retry is accepted; the second transitions to `RETRY_EXHAUSTED`.
 11. A repeated finding fingerprint transitions to `REPEATED_FINDING`.
@@ -439,7 +440,7 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 13. Same-family fresh-context review is labelled and does not satisfy kind diversity.
 14. `next` returns exactly one deterministic action and does not mutate files.
 15. Migration dry-run writes nothing; apply creates only the printed write set.
-16. Rolling an opted-in copied program back to v1 retains usable evidence and verdicts.
+16. Rolling an opted-in copied program back to item-file lifecycle retains usable evidence and verdicts.
 17. `ready` rejects missing dependencies, cycles, unknown task IDs, duplicate task IDs, path overlap, globs, and non-executable verification scripts.
 18. Dependency-ready tasks may dispatch concurrently up to the configured cap; a fourth maker refuses at the default cap of three.
 19. A dependent task cannot dispatch before every dependency has a PASS at its recorded task commit.
@@ -450,7 +451,7 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 
 ### Acceptance gates
 
-- Add a dedicated focused verifier for v2 state/attempt behavior that finishes in under 15 seconds on the development machine.
+- Add a dedicated focused verifier for managed lifecycle state/attempt behavior that finishes in under 15 seconds on the development machine.
 - Run the existing quickstart and full self-test once at final work ID; do not repeat them per reviewer.
 - Mutation proof: remove duplicate-dispatch refusal and observe the focused verifier fail; restore and pass.
 - Mutation proof: change `OVERDUE` to `TIMEOUT` inference and observe the focused verifier fail.
@@ -464,14 +465,14 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 | Decision | Recommendation | Why | Risk | Mitigation |
 | --- | --- | --- | --- | --- |
 | Lifecycle | Four item states; optional design/tasks/adversary artifacts | Removes ceremony not tied to risk | Under-specification | READY contract checks and risk escalation |
-| State | `STATE.tsv` SSOT, generated `STATE.md` | Deterministic resume | Migration/drift | Opt-in v2 and dual writes |
+| State | `STATE.tsv` SSOT, generated `STATE.md` | Deterministic resume | Migration/drift | Opt-in managed lifecycle and dual writes |
 | Freshness | Preserve whole-work-ID validity | Proven, understandable invariant | Rework after unrelated commits | Split items and freeze requirements |
 | Expensive evidence | One canonical capture per work ID | Removes dominant duplicated cost | Trusting capture | Independent artifact validation plus focused falsifier |
 | Attempts | Immutable per-dispatch records | Stops overwrites and reconstructs history | File growth | Archive only after closure |
 | Deadline | Report OVERDUE; never infer TIMEOUT | Prevents false terminal labels | Manual intervention | Refuse duplicates and expose unblock action |
 | Models | Risk-based kind diversity | Matches review cost to downside | Correlated blind spots at LOW | Explicit same-family label and escalation |
 | Collaboration | Frozen task DAG, isolated worktrees, one integrator | Enables bounded multi-agent implementation | Integration and task-state complexity | Literal ownership, stable order, final-work review |
-| Rollout | Additive opt-in v2 | Protects active programs | Temporary dual complexity | No legacy removal in first release |
+| Rollout | Additive opt-in managed lifecycle | Protects active programs | Temporary dual complexity | No item-file behavior removal in first release |
 
 ## Confidence
 

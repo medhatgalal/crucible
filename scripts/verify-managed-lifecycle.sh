@@ -1,5 +1,5 @@
 #!/bin/sh
-# Focused contract test for the opt-in v2 state kernel.
+# Focused contract test for managed lifecycle behavior.
 
 set -eu
 
@@ -38,13 +38,18 @@ mkdir -p "$repo"
 )
 
 P="$repo/.crucible/p"
-printf 'FORMAT_VERSION=2\n' > "$P/FORMAT_VERSION"
-printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$P/STATE.tsv"
-"$P/crucible" state >/dev/null
-[ "$(cat "$P/FORMAT_VERSION")" = 'FORMAT_VERSION=2' ] && ok || bad 'fixture did not activate format 2'
+[ -f "$P/docs/managed-lifecycle.md" ] && ok || bad 'adopt did not ship the managed lifecycle guide'
+expect 'item-file lifecycle is the compatibility default' '^lifecycle: item-file$' "$P/crucible" lifecycle status
+before_enable=$(find "$P" -type f -exec cksum {} \; | LC_ALL=C sort | cksum)
+expect 'managed lifecycle dry-run declares writes' '^CREATE .*STATE.tsv' "$P/crucible" lifecycle enable --dry-run
+after_enable=$(find "$P" -type f -exec cksum {} \; | LC_ALL=C sort | cksum)
+[ "$before_enable" = "$after_enable" ] && ok || bad 'lifecycle dry-run changed program files'
+expect 'managed lifecycle can be enabled' '^CREATE .*STATE.tsv' "$P/crucible" lifecycle enable --apply
+expect 'program records behavior by name' '^lifecycle: managed$' "$P/crucible" lifecycle status
+grep -q '^lifecycle: managed$' "$P/PROGRAM" && ok || bad 'PROGRAM does not declare managed lifecycle behavior'
 header=$(printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch')
 [ "$(sed -n '1p' "$P/STATE.tsv")" = "$header" ] \
-  && ok || bad 'STATE.tsv header differs from the v2 contract'
+  && ok || bad 'STATE.tsv header differs from the managed lifecycle contract'
 grep -q '^Generated from `STATE.tsv`' "$P/STATE.md" && ok || bad 'STATE.md is not visibly generated'
 state_inode_before=$(ls -i "$P/STATE.tsv" | awk '{print $1}')
 "$P/crucible" state >/dev/null
@@ -55,8 +60,8 @@ state_inode_after=$(ls -i "$P/STATE.tsv" | awk '{print $1}')
   cd "$repo"
   .crucible/p/crucible add alpha 'state kernel' >/dev/null
 )
-grep -q '^PHASE:' "$P/items/alpha/ITEM.md" && bad 'v2 ITEM.md retained a PHASE header' || ok
-grep -q '^STATUS:' "$P/items/alpha/ITEM.md" && bad 'v2 ITEM.md retained a STATUS header' || ok
+grep -q '^PHASE:' "$P/items/alpha/ITEM.md" && bad 'managed ITEM.md retained a PHASE header' || ok
+grep -q '^STATUS:' "$P/items/alpha/ITEM.md" && bad 'managed ITEM.md retained a STATUS header' || ok
 grep -q "^alpha\tACTIVE\tDRAFT\t" "$P/STATE.tsv" && ok || bad 'new item is not ACTIVE DRAFT'
 
 cp "$P/STATE.tsv" "$P/STATE.keep"
@@ -75,7 +80,7 @@ cat > "$P/items/alpha/ITEM.md" <<'EOF'
 
 ## Goal
 
-Create the v2 state kernel.
+Create the managed lifecycle state kernel.
 
 ## Non-goals
 
@@ -88,15 +93,15 @@ MEDIUM
 ## Owned files
 
 - crucible
-- scripts/verify-v2-state.sh
+- scripts/verify-managed-lifecycle.sh
 
 ## Acceptance criteria
 
-- [ ] A1: v2 state is authoritative.
+- [ ] A1: managed state is authoritative.
 
 ## Focused falsifier
 
-scripts/verify-v2-state.sh
+scripts/verify-managed-lifecycle.sh
 
 ## Expensive evidence
 
@@ -104,7 +109,7 @@ NONE
 
 ## Stop conditions
 
-Stop if v1 compatibility breaks.
+Stop if item-file compatibility breaks.
 EOF
 
 expect 'ready transition' 'alpha is now READY' "$P/crucible" ready alpha
@@ -133,21 +138,22 @@ expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
   printf 'VERDICT: PASS\nWORK-ID: %s\nindependent check: %s\n' "$wid" "$e2" \
     > .crucible/p/items/alpha/verdicts/j2.md
 )
-expect 'v2 check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
-expect 'v2 close' '^closed alpha at ' "$P/crucible" close alpha 'state is authoritative'
+expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
+expect 'managed close' '^closed alpha at ' "$P/crucible" close alpha 'state is authoritative'
 grep -q "^alpha\tCLOSED\tREVIEW\t" "$P/STATE.tsv" && ok || bad 'close did not update authoritative state'
 expect 'closed program is done' '^DONE$' "$P/crucible" next
 
-legacy="$tmp/legacy"
-mkdir -p "$legacy"
-cp "$C" "$legacy/crucible"
-chmod +x "$legacy/crucible"
+item_file="$tmp/item-file"
+mkdir -p "$item_file"
+cp "$C" "$item_file/crucible"
+chmod +x "$item_file/crucible"
 (
-  cd "$legacy"
-  ./crucible add old 'legacy item' >/dev/null
+  cd "$item_file"
+  ./crucible add old 'item-file item' >/dev/null
 )
-grep -q '^PHASE: SPEC$' "$legacy/items/old/ITEM.md" && ok || bad 'unmarked program lost v1 phase behavior'
-grep -q '^STATUS: OPEN$' "$legacy/items/old/ITEM.md" && ok || bad 'unmarked program lost v1 status behavior'
+grep -q '^PHASE: SPEC$' "$item_file/items/old/ITEM.md" && ok || bad 'item-file program lost phase behavior'
+grep -q '^STATUS: OPEN$' "$item_file/items/old/ITEM.md" && ok || bad 'item-file program lost status behavior'
+refuses 'cannot enable after first item' 'before the first item' "$item_file/crucible" lifecycle enable --apply
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

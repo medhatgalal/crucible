@@ -3,6 +3,9 @@
 How to set this up for a real repo, and what to actually decide. Read this once; after that
 `.crucible/<program>/crucible next` tells you what to do.
 
+Programs may select [managed lifecycle](docs/managed-lifecycle.md) before their first item. The
+selection is stored as `lifecycle: managed` in `PROGRAM`; absence preserves item-file behavior.
+
 ---
 
 ## 1. Where it lives — inside the target repo

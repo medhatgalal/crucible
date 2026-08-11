@@ -1,7 +1,9 @@
 # LOOP
 
 Two loops. The outer one converts a report into a backlog. The inner one walks one backlog item to
-merge. Both are driven by `.crucible/<program>/crucible next`, which reads `STATE.md` and tells you the one thing to do.
+merge. Both are driven by `.crucible/<program>/crucible next`, which reads authoritative program
+artifacts and tells you the one thing to do. With [managed lifecycle](docs/managed-lifecycle.md), that
+source is `STATE.tsv`; `STATE.md` is generated for people.
 
 What is gated, precisely — because an earlier version of this page overclaimed and a judge caught it.
 `crucible phase` refuses to enter a phase whose named artifact does not exist, and `crucible check`
@@ -64,6 +66,9 @@ dropped claim that leaves no trace comes back next quarter.
 ---
 
 ## Inner loop: one item → merged
+
+The seven phases below are the item-file compatibility workflow. Managed programs use the smaller
+behavior documented in [Managed lifecycle](docs/managed-lifecycle.md).
 
 ```
       ┌──────────────────────────────────────────────────────────────┐

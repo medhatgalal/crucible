@@ -63,10 +63,10 @@ a RULE into a CHECK, do it and say so in the lesson.
     verbally while the written record said otherwise; an automated reviewer read the record,
     correctly concluded the work was off-plan, and stopped it two minutes before it would have
     succeeded.
-19. **RULE — `STATE.md` is the resume point.** After a restart or a context compaction, re-read it
-    and `git log`, and never re-dispatch a phase it marks complete. `adopt` creates the file and
-    `next` reads the files rather than your memory, but nothing can force you to consult it — so
-    this is a rule, and it is labelled as one.
+19. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
+    and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained
+    resume summary. After a restart or compaction, re-read the recorded state and `git log`; never
+    re-dispatch work it marks complete. Nothing can force you to consult it, so this remains a rule.
 20. **CHECK — Every closed item appends exactly one lesson**, and `LESSONS.md` is concatenated into
     every later maker brief. A lesson nobody reads is theatre; this makes reading it structural.
 

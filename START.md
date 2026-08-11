@@ -39,6 +39,18 @@ That puts a self-contained copy in `<repo>/.crucible/<program-name>/`, records t
 branch, and gitignores `agents.tsv`. From then on the repo is the working directory and everything
 the program learns is stored and versioned in that repo. The engine clone can be deleted.
 
+For the smaller machine-readable workflow, enable [managed lifecycle](docs/managed-lifecycle.md)
+before adding the first item:
+
+```sh
+CP=.crucible/<program>/crucible
+$CP lifecycle enable --dry-run
+$CP lifecycle enable --apply
+```
+
+Programs without `lifecycle: managed` in `PROGRAM` continue to use the item-file workflow described
+below.
+
 Then ask the operator these, one at a time, waiting for each answer:
 
 1. **"Which agents can I use, and how is each invoked?"** Write them into `agents.tsv`: name, kind,

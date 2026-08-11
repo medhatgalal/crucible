@@ -9,8 +9,9 @@
 #   crucible add SLUG "TITLE"             create the item (also sets the run up)
 #   crucible agents                       list the panel: name, kind, model, effort
 #   crucible target SLUG REPO BRANCH BASE  point the item at a real git branch
-#   crucible state                        regenerate v2 STATE.md from STATE.tsv
-#   crucible ready SLUG                   validate and freeze a v2 item contract
+#   crucible lifecycle status|enable      select or inspect managed lifecycle behavior
+#   crucible state                        regenerate managed STATE.md from STATE.tsv
+#   crucible ready SLUG                   validate and freeze a managed item contract
 #   crucible next                         what to do now, read from files not memory
 #   crucible phase SLUG [PHASE]           show or advance the lifecycle phase
 #   crucible dispatch SLUG ROLE AGENT     write the contract for a call, print its path
@@ -96,13 +97,15 @@ self_path() {
 D() { printf '%s/items/%s' "$ROOT" "$1"; }
 need() { [ -n "${1:-}" ] || die "need a slug"; [ -d "$(D "$1")" ] || die "no such item: $1"; }
 
-program_format() {
-  [ -f "$ROOT/FORMAT_VERSION" ] || { printf '1'; return; }
-  v=$(cat "$ROOT/FORMAT_VERSION" 2>/dev/null || true)
-  [ "$v" = 'FORMAT_VERSION=2' ] || die "unsupported FORMAT_VERSION marker: ${v:-empty}"
-  printf '2'
+lifecycle_mode() {
+  mode=$(sed -n 's/^lifecycle: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1)
+  case $mode in
+    '') printf 'item-file' ;;
+    managed) printf 'managed' ;;
+    *) die "unsupported lifecycle behavior: $mode" ;;
+  esac
 }
-is_v2() { [ "$(program_format)" = 2 ]; }
+uses_managed_lifecycle() { [ "$(lifecycle_mode)" = managed ]; }
 
 state_validate_file() {
   sf=$1
@@ -153,9 +156,10 @@ state_render_file() {
 state_lock() {
   STATE_TMP="$ROOT/.STATE.tsv.$$.tmp"
   STATE_MD_TMP="$ROOT/.STATE.md.$$.tmp"
+  STATE_PROGRAM_TMP="$ROOT/.PROGRAM.$$.tmp"
   STATE_LOCK="$ROOT/.state.lock"
   mkdir "$STATE_LOCK" 2>/dev/null || die "state mutation already in progress"
-  trap 'rm -f "$STATE_TMP" "$STATE_MD_TMP"; rmdir "$STATE_LOCK" 2>/dev/null || true' 0 1 2 15
+  trap 'rm -f "$STATE_TMP" "$STATE_MD_TMP" "$STATE_PROGRAM_TMP"; rmdir "$STATE_LOCK" 2>/dev/null || true' 0 1 2 15
 }
 
 state_unlock() {
@@ -198,13 +202,43 @@ state_update_item() {
 }
 
 cmd_state() {
-  is_v2 || die "state is available only for FORMAT_VERSION=2 programs"
+  uses_managed_lifecycle || die "state requires managed lifecycle behavior — run: $(self_path) lifecycle enable --dry-run"
   state_lock
   state_validate_file "$ROOT/STATE.tsv"
   state_render_file "$STATE_MD_TMP" "$ROOT/STATE.tsv"
   mv "$STATE_MD_TMP" "$ROOT/STATE.md"
   state_unlock
   printf '%s/STATE.md\n' "$ROOT"
+}
+
+cmd_lifecycle() {
+  sub=${1:-status}; flag=${2:-}
+  case $sub in
+    status)
+      [ -z "$flag" ] || die "usage: crucible lifecycle status"
+      printf 'lifecycle: %s\n' "$(lifecycle_mode)"
+      ;;
+    enable)
+      case $flag in --dry-run|--apply) : ;; *) die "usage: crucible lifecycle enable --dry-run|--apply" ;; esac
+      uses_managed_lifecycle && { printf 'lifecycle: managed\n'; return; }
+      active=$(find "$ROOT/items" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+      [ -z "$active" ] || die "refused: managed lifecycle can only be enabled before the first item"
+      printf 'CREATE %s/STATE.tsv\nREPLACE %s/STATE.md\nUPDATE %s/PROGRAM lifecycle: managed\n' "$ROOT" "$ROOT" "$ROOT"
+      [ "$flag" = --apply ] || return 0
+      state_lock
+      printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$STATE_TMP"
+      state_validate_file "$STATE_TMP"
+      state_render_file "$STATE_MD_TMP" "$STATE_TMP"
+      awk '$0 !~ /^lifecycle: / { print }' "$ROOT/PROGRAM" > "$STATE_PROGRAM_TMP"
+      printf 'lifecycle: managed\n' >> "$STATE_PROGRAM_TMP"
+      mv "$STATE_TMP" "$ROOT/STATE.tsv"
+      mv "$STATE_MD_TMP" "$ROOT/STATE.md"
+      mv "$STATE_PROGRAM_TMP" "$ROOT/PROGRAM"
+      state_unlock
+      printf 'enabled managed lifecycle\n'
+      ;;
+    *) die "usage: crucible lifecycle status|enable --dry-run|--apply" ;;
+  esac
 }
 # agents.tsv: name <TAB> kind <TAB> model <TAB> effort <TAB> command
 # The command may contain {BRIEF} {MODEL} {EFFORT}. Only listed names may judge.
@@ -293,7 +327,7 @@ cmd_add() {
   slug=${1:-}; shift 2>/dev/null || true; title=${*:-}
   [ -n "$slug" ] || die 'usage: crucible add SLUG "TITLE"'
   case $slug in *[!A-Za-z0-9._-]*) die "slug may only contain A-Za-z0-9._-" ;; esac
-  if is_v2; then
+  if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
     current=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { n++ } END { print n+0 }' "$ROOT/STATE.tsv")
     [ "$current" -eq 0 ] || die "refused: another item is current"
@@ -313,7 +347,7 @@ cmd_add() {
   fi
   d=$(D "$slug"); [ -d "$d" ] && die "item exists: $slug"
   mkdir -p "$d/work" "$d/evidence" "$d/verdicts" "$d/briefs"
-  if is_v2; then
+  if uses_managed_lifecycle; then
     cat > "$d/ITEM.md" <<EOF
 # $slug — ${title:-untitled}
 
@@ -375,11 +409,11 @@ EOF
     b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM" | head -1)
     [ -n "$r" ] && cmd_target "$slug" "$r" "ai/$slug" "${b:-main}" >/dev/null 2>&1 || true
   fi
-  if is_v2; then
+  if uses_managed_lifecycle; then
     state_add_item "$slug" "$(workid "$slug")" LOW
   fi
   printf '%s/ITEM.md\n' "$d"
-  if is_v2; then
+  if uses_managed_lifecycle; then
     printf 'next: complete the frozen contract, then\n'
     printf '      %s ready %s\n' "$(self_path)" "$slug"
   else
@@ -691,7 +725,7 @@ item_section_body() {
   ' "$file"
 }
 
-validate_v2_item() {
+validate_managed_item() {
   slug=$1; file=$(D "$slug")/ITEM.md
   expected=$(printf '%s\n' '## Goal' '## Non-goals' '## Risk' '## Owned files' \
     '## Acceptance criteria' '## Focused falsifier' '## Expensive evidence' '## Stop conditions')
@@ -713,19 +747,19 @@ validate_v2_item() {
 }
 
 cmd_ready() {
-  is_v2 || die "ready is available only for FORMAT_VERSION=2 programs"
+  uses_managed_lifecycle || die "ready requires managed lifecycle behavior"
   need "${1:-}"; slug=$1
   state_validate_file "$ROOT/STATE.tsv"
   old=$(state_value "$slug" 3)
   [ "$old" = DRAFT ] || die "refused: ready requires DRAFT, found ${old:-missing}"
-  validate_v2_item "$slug"
+  validate_managed_item "$slug"
   risk=$(item_section_body "$(D "$slug")/ITEM.md" Risk)
   state_update_item "$slug" ACTIVE READY "$(workid "$slug")" "$risk" - -
   printf '%s is now READY\n' "$slug"
 }
 
 phase_of() {
-  if is_v2; then
+  if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
     p=$(state_value "$1" 3)
     printf '%s' "$p"
@@ -739,7 +773,7 @@ cmd_phase() {
   need "${1:-}"; slug=$1; new=${2:-}
   d=$(D "$slug")
   [ -n "$new" ] || { phase_of "$slug"; echo; return; }
-  if is_v2; then
+  if uses_managed_lifecycle; then
     old=$(phase_of "$slug")
     case "$old:$new" in
       READY:BUILD|BUILD:REVIEW) : ;;
@@ -769,7 +803,7 @@ cmd_phase() {
 
 # What to do now. Reads the files, not your memory.
 cmd_next() {
-  if is_v2; then
+  if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
     slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
     [ -n "$slug" ] || { printf 'DONE\n'; return; }
@@ -854,6 +888,8 @@ cmd_adopt() {
   for f in "$src"/scripts/*.sh; do
     [ -f "$f" ] && cp "$f" "$dst/scripts/"
   done
+  mkdir -p "$dst/docs"
+  [ -f "$src/docs/managed-lifecycle.md" ] && cp "$src/docs/managed-lifecycle.md" "$dst/docs/"
   chmod +x "$dst/crucible" "$dst/scripts/"*.sh 2>/dev/null || true
   base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
   printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
@@ -1135,9 +1171,9 @@ cmd_check() {
   done
   [ "$wid" = EMPTY ]    && { say "FAIL no work in $d/work/"; bad=1; }
   [ "$wid" = NOBRANCH ] && { say "FAIL branch $(tgt "$slug" branch) does not exist in $(tgt "$slug" repo)"; bad=1; }
-  if is_v2; then
-    validate_v2_item "$slug"
-    [ "$(phase_of "$slug")" = REVIEW ] || { say "FAIL v2 item must be in REVIEW"; bad=1; }
+  if uses_managed_lifecycle; then
+    validate_managed_item "$slug"
+    [ "$(phase_of "$slug")" = REVIEW ] || { say "FAIL managed item must be in REVIEW"; bad=1; }
   elif grep -q 'TEMPLATE-FALSIFIER-UNWRITTEN' "$d/ITEM.md" 2>/dev/null; then
     say "FAIL falsifier not written in ITEM.md"; bad=1
   else
@@ -1160,7 +1196,7 @@ cmd_check() {
 
   # The phase's prerequisite must exist even if PHASE was written by hand rather
   # than through `crucible phase`. A hand-edited phase is still a phase.
-  if ! is_v2; then
+  if ! uses_managed_lifecycle; then
     case $(phase_of "$slug") in
       TASKS)     [ -f "$d/DESIGN.md" ]    || { say "FAIL phase TASKS requires DESIGN.md"; bad=1; } ;;
       BUILD|VERIFY) for r in DESIGN.md TASKS.md; do
@@ -1256,7 +1292,7 @@ cmd_close() {
   need "${1:-}"; slug=$1; shift; lesson=${*:-}; d=$(D "$slug")
   [ -n "$lesson" ] || die 'usage: crucible close SLUG "one-line lesson, or NONE"'
   [ "$(printf '%s' "$lesson" | wc -l | tr -d ' ')" = 0 ] || die "lesson must be one line"
-  if is_v2; then
+  if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
     [ "$(state_value "$slug" 2)" != CLOSED ] || die "$slug is already closed"
   else
@@ -1272,7 +1308,7 @@ cmd_close() {
   [ "$before" = "$after" ] || { rmdir "$d/.closing" 2>/dev/null
     die "refused: work changed during check ($before -> $after)"; }
   printf -- '- [%s] %s (item %s, work %s)\n' "$(date +%Y-%m-%d)" "$lesson" "$slug" "$after" >> "$ROOT/LESSONS.md"
-  if is_v2; then
+  if uses_managed_lifecycle; then
     risk=$(state_value "$slug" 5)
     state_update_item "$slug" CLOSED REVIEW "$after" "$risk" - -
   else
@@ -1293,6 +1329,7 @@ selftest) shift
           exec "$ROOT/scripts/selftest.sh" "$@" ;;
 agents)   shift; cmd_agents "$@" ;;
 target)   shift; cmd_target "$@" ;;
+lifecycle) shift; cmd_lifecycle "$@" ;;
 state)    shift; cmd_state "$@" ;;
 ready)    shift; cmd_ready "$@" ;;
 next)     shift; cmd_next "$@" ;;
