@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+- Clarified that a fresh agent may bootstrap Crucible from either the public raw `BOOTSTRAP.md` URL or
+  an absolute local checkout/package path. Reworked the README around product value, the verified loop,
+  multi-agent role boundaries, durable evidence, and an original lightweight project mark.
+
 ## [1.1.0] - 2026-08-11
 
 - Simplified public usage to one fresh-agent prompt and one installed-cycle resume prompt. The
