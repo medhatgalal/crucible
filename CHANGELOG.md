@@ -14,6 +14,10 @@ All notable changes to this project are documented here. This project follows
   canonical `FULL_SUITE` and `EXTERNAL` PASS evidence. Maker results distinguish input work from
   post-change work; review entry requires a current-work maker PASS, and managed closure rejects
   compatibility verdicts not backed by an attempt result.
+- Added optional frozen `TASKS.tsv` validation and generated task views. Managed `ready` now refuses
+  unknown or cyclic dependencies, duplicate task IDs, unsafe or overlapping literal ownership,
+  and missing or non-executable task verifiers. Task-bound isolated dispatch and integration remain
+  explicitly unavailable rather than falling back to an unsafe item-wide maker dispatch.
 
 ## [1.0.0] - 2026-08-07
 

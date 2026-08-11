@@ -12,6 +12,7 @@
 #   crucible lifecycle status|enable      select or inspect managed lifecycle behavior
 #   crucible state                        regenerate managed STATE.md from STATE.tsv
 #   crucible ready SLUG                   validate and freeze a managed item contract
+#   crucible task list|ready SLUG         inspect a frozen managed task DAG
 #   crucible next                         what to do now, read from files not memory
 #   crucible attempt start|overdue|finish record observed process lifecycle
 #   crucible result ATTEMPT OUTCOME ...   write one immutable, evidence-bound result
@@ -910,7 +911,9 @@ cmd_dispatch_managed() (
   trap 'exit 130' 1 2 15
   d=$(D "$slug"); stage=$(phase_of "$slug"); wid=$(workid "$slug")
   case $role in
-    maker) [ "$stage" = BUILD ] || die "maker dispatch requires BUILD" ;;
+    maker) [ "$stage" = BUILD ] || die "maker dispatch requires BUILD"
+      [ ! -f "$d/TASKS.tsv" ] \
+        || die "item uses a task DAG; task-bound maker dispatch is not available yet" ;;
     judge|adversary) [ "$stage" = REVIEW ] || die "$role dispatch requires REVIEW"
       maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER")
       [ "$agent" != "$maker" ] || die "refused: $agent is the maker of $slug" ;;
@@ -1136,6 +1139,19 @@ validate_managed_item() {
   risk=$(item_section_body "$file" Risk)
   case $risk in LOW|MEDIUM|HIGH) : ;; *) die "refused: risk must be exactly LOW, MEDIUM, or HIGH" ;; esac
 
+  owned_error=$(item_section_body "$file" 'Owned files' | awk '
+    !/^- / { print "owned paths must be list items"; exit }
+    {
+      path=$0; sub(/^- /, "", path)
+      if (path == "" || path ~ /^\// || path ~ /(^|\/)\.\.($|\/)/ || path ~ /(^|\/)\.($|\/)/ || path ~ /\/\// || path ~ /[*?\[]/) {
+        print "unsafe owned path " path; exit
+      }
+      count++
+    }
+    END { if (!count) print "owned files are empty" }
+  ')
+  [ -z "$owned_error" ] || die "refused: $owned_error"
+
   criteria=$(item_section_body "$file" 'Acceptance criteria' | grep -Ec '^- \[[ xX]\] A[1-3]([:@ ]|$)' 2>/dev/null || true)
   criteria=${criteria:-0}
   [ "$criteria" -ge 1 ] && [ "$criteria" -le 3 ] || die "refused: need one to three A1-A3 acceptance criteria"
@@ -1147,6 +1163,200 @@ validate_managed_item() {
   [ "$lines" -eq 1 ] || die "refused: focused falsifier must be one bounded command or script"
 }
 
+validate_task_dag() {
+  slug=$1; d=$(D "$slug"); tasks="$d/TASKS.tsv"
+  [ -f "$tasks" ] && [ ! -L "$tasks" ] || die "invalid TASKS.tsv: missing regular file"
+  header=$(printf 'task_id\tdepends_on\tpaths_file\tverify_script')
+  [ "$(sed -n '1p' "$tasks")" = "$header" ] || die "invalid TASKS.tsv: header mismatch"
+  task_error=$(awk -F '\t' '
+    NR == 1 { next }
+    NF != 4 { print "row " NR " has " NF " fields, need 4"; exit }
+    $1 !~ /^T[1-9][0-9]*$/ { print "invalid task id at row " NR; exit }
+    seen[$1]++ { print "duplicate task id " $1; exit }
+    $2 !~ /^(-|T[1-9][0-9]*(,T[1-9][0-9]*)*)$/ { print "invalid dependencies for " $1; exit }
+    $3 !~ /^tasks\/[A-Za-z0-9._-]+\.paths$/ { print "invalid paths file for " $1; exit }
+    $4 !~ /^tasks\/[A-Za-z0-9._-]+\.verify\.sh$/ { print "invalid verify script for " $1; exit }
+    { count++ }
+    END { if (!count) print "no tasks"; else if (count > 32) print "more than 32 tasks" }
+  ' "$tasks")
+  [ -z "$task_error" ] || die "invalid TASKS.tsv: $task_error"
+
+  graph_error=$(awk -F '\t' '
+    NR == 1 { next }
+    { order[++n]=$1; deps[$1]=$2; exists[$1]=1 }
+    END {
+      edges=0
+      for (i=1; i<=n; i++) {
+        id=order[i]
+        if (deps[id] == "-") continue
+        count=split(deps[id], part, ",")
+        for (j=1; j<=count; j++) {
+          edges++
+          if (!exists[part[j]]) { print "unknown dependency " part[j] " for " id; exit }
+          if (part[j] == id) { print "dependency cycle at " id; exit }
+        }
+      }
+      if (edges > 128) { print "more than 128 dependency edges"; exit }
+      completed=0
+      for (round=1; round<=n; round++) {
+        progressed=0
+        for (i=1; i<=n; i++) {
+          id=order[i]; if (done[id]) continue
+          ready=1
+          if (deps[id] != "-") {
+            count=split(deps[id], part, ",")
+            for (j=1; j<=count; j++) if (!done[part[j]]) ready=0
+          }
+          if (ready) { done[id]=1; completed++; progressed=1 }
+        }
+        if (!progressed) break
+      }
+      if (completed != n) print "dependency cycle"
+    }
+  ' "$tasks")
+  [ -z "$graph_error" ] || die "invalid TASKS.tsv: $graph_error"
+
+  while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+    [ "$task" = task_id ] && continue
+    paths="$d/$paths_file"; verify="$d/$verify_script"
+    [ -f "$paths" ] && [ ! -L "$paths" ] || die "invalid task $task: missing regular $paths_file"
+    [ -s "$paths" ] || die "invalid task $task: empty $paths_file"
+    [ -f "$verify" ] && [ ! -L "$verify" ] || die "invalid task $task: missing regular $verify_script"
+    [ -x "$verify" ] || die "invalid task $task: $verify_script is not executable"
+    [ "$(sed -n '1p' "$verify")" = '#!/bin/sh' ] \
+      || die "invalid task $task: $verify_script must start with #!/bin/sh"
+  done < "$tasks"
+
+  path_error=$(
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      while IFS= read -r owned_path || [ -n "$owned_path" ]; do
+        printf '%s\t%s\n' "$task" "$owned_path"
+      done < "$d/$paths_file"
+    done < "$tasks" | awk -F '\t' '
+      NF != 2 || $2 == "" { print "blank or malformed owned path"; exit }
+      $2 ~ /^\// || $2 ~ /(^|\/)\.\.($|\/)/ || $2 ~ /(^|\/)\.($|\/)/ || $2 ~ /\/\// || $2 ~ /[*?\[]/ {
+        print "unsafe owned path " $2 " for " $1; exit
+      }
+      {
+        task[++n]=$1; path[n]=$2
+        for (i=1; i<n; i++) {
+          if (path[i] == path[n] || index(path[i], path[n] "/") == 1 || index(path[n], path[i] "/") == 1) {
+            print "ownership overlap " path[i] " (" task[i] ") and " path[n] " (" task[n] ")"; exit
+          }
+        }
+      }
+    '
+  )
+  [ -z "$path_error" ] || die "invalid TASKS.tsv: $path_error"
+
+  scope_error=$(
+    {
+      item_section_body "$d/ITEM.md" 'Owned files' | sed 's/^- /I\t/'
+      while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+        [ "$task" = task_id ] && continue
+        while IFS= read -r owned_path || [ -n "$owned_path" ]; do
+          printf 'T\t%s\t%s\n' "$task" "$owned_path"
+        done < "$d/$paths_file"
+      done < "$tasks"
+    } | awk -F '\t' '
+      $1 == "I" { item[++n]=$2; next }
+      $1 == "T" {
+        allowed=0
+        for (i=1; i<=n; i++) if ($3 == item[i] || index($3, item[i] "/") == 1) allowed=1
+        if (!allowed) { print "task " $2 " owns undeclared item path " $3; exit }
+      }
+    '
+  )
+  [ -z "$scope_error" ] || die "invalid TASKS.tsv: $scope_error"
+}
+
+task_contract_id() {
+  slug=$1; d=$(D "$slug"); tasks="$d/TASKS.tsv"
+  {
+    printf 'TASKS.tsv %s\n' "$(hashfile "$tasks")"
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      printf '%s %s %s %s\n' "$task" "$deps" "$paths_file" "$(hashfile "$d/$paths_file")"
+      mode=$(ls -l "$d/$verify_script" | cut -c1-10)
+      printf '%s %s %s\n' "$verify_script" "$mode" "$(hashfile "$d/$verify_script")"
+    done < "$tasks"
+  } | h12
+}
+
+task_assert_frozen() {
+  slug=$1; d=$(D "$slug")
+  [ -f "$d/TASKS.id" ] && [ ! -L "$d/TASKS.id" ] || die "task DAG is not frozen: $slug"
+  frozen=$(sed -n '1p' "$d/TASKS.id"); current=$(task_contract_id "$slug")
+  [ "$frozen" = "$current" ] || die "task DAG changed after READY: $frozen -> $current"
+}
+
+task_pass_exists() (
+  slug=$1; task=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^TASK-ID: //p' "$result_file" | head -1)" = "$task" ] || continue
+    return 0
+  done
+  return 1
+)
+
+task_dependencies_pass() {
+  slug=$1; deps=$2
+  [ "$deps" = - ] && return 0
+  old_ifs=$IFS; IFS=,
+  for dependency in $deps; do
+    task_pass_exists "$slug" "$dependency" || { IFS=$old_ifs; return 1; }
+  done
+  IFS=$old_ifs
+  return 0
+}
+
+task_render_file() {
+  slug=$1; out=$2; d=$(D "$slug")
+  {
+    printf '# TASKS — %s\n\n' "$slug"
+    printf 'Generated from frozen `TASKS.tsv`; do not edit this file by hand.\n\n'
+    printf '| Task | Dependencies | Owned paths | Verify script | Derived state |\n'
+    printf '| --- | --- | --- | --- | --- |\n'
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      owned=$(awk 'BEGIN { first=1 } { if (!first) printf "<br>"; printf "`%s`", $0; first=0 }' "$d/$paths_file")
+      if task_pass_exists "$slug" "$task"; then
+        derived=PASS
+      elif task_dependencies_pass "$slug" "$deps"; then
+        derived=READY
+      else
+        derived=WAITING
+      fi
+      printf '| %s | %s | %s | `%s` | %s |\n' "$task" "$deps" "$owned" "$verify_script" "$derived"
+    done < "$d/TASKS.tsv"
+  } > "$out"
+}
+
+cmd_task() {
+  uses_managed_lifecycle || die "task requires managed lifecycle behavior"
+  sub=${1:-}; slug=${2:-}; [ -n "$slug" ] || die "usage: crucible task list|ready ITEM"
+  need "$slug"; d=$(D "$slug"); [ -f "$d/TASKS.tsv" ] || die "item has no task DAG: $slug"
+  validate_task_dag "$slug"; task_assert_frozen "$slug"
+  case $sub in
+    list) task_render_file "$slug" /dev/stdout ;;
+    ready)
+      found=0
+      while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+        [ "$task" = task_id ] && continue
+        task_pass_exists "$slug" "$task" && continue
+        if task_dependencies_pass "$slug" "$deps"; then printf 'READY %s\n' "$task"; found=1; fi
+      done < "$d/TASKS.tsv"
+      [ "$found" -eq 1 ] || printf 'WAIT TASK_DEPENDENCIES\n'
+      ;;
+    *) die "usage: crucible task list|ready ITEM" ;;
+  esac
+}
+
 cmd_ready() {
   uses_managed_lifecycle || die "ready requires managed lifecycle behavior"
   need "${1:-}"; slug=$1
@@ -1154,6 +1364,19 @@ cmd_ready() {
   old=$(state_value "$slug" 3)
   [ "$old" = DRAFT ] || die "refused: ready requires DRAFT, found ${old:-missing}"
   validate_managed_item "$slug"
+  d=$(D "$slug")
+  if [ -f "$d/TASKS.tsv" ]; then
+    validate_task_dag "$slug"
+    task_view_tmp="$d/.TASKS.md.$$.tmp"; task_id_tmp="$d/.TASKS.id.$$.tmp"
+    trap 'rm -f "$task_view_tmp" "$task_id_tmp"' 0 1 2 15
+    task_render_file "$slug" "$task_view_tmp"
+    task_contract_id "$slug" > "$task_id_tmp"
+    mv "$task_view_tmp" "$d/TASKS.md"; mv "$task_id_tmp" "$d/TASKS.id"
+    trap - 0 1 2 15
+  else
+    [ ! -e "$d/TASKS.md" ] && [ ! -e "$d/TASKS.id" ] \
+      || die "refused: generated task artifacts exist without TASKS.tsv"
+  fi
   risk=$(item_section_body "$(D "$slug")/ITEM.md" Risk)
   state_update_item "$slug" ACTIVE READY "$(workid "$slug")" "$risk" - -
   printf '%s is now READY\n' "$slug"
@@ -1176,6 +1399,7 @@ cmd_phase() {
   [ -n "$new" ] || { phase_of "$slug"; echo; return; }
   if uses_managed_lifecycle; then
     old=$(phase_of "$slug")
+    [ ! -f "$d/TASKS.tsv" ] || { validate_task_dag "$slug"; task_assert_frozen "$slug"; }
     inflight=$(state_value "$slug" 6)
     [ "$inflight" = - ] || die "refused: attempt $inflight is still in flight"
     case "$old:$new" in
@@ -1239,7 +1463,13 @@ cmd_next() {
     case $stage in
       DRAFT)  printf 'NEXT %s READY %s ready %s\n' "$slug" "$self" "$slug" ;;
       READY)  printf 'NEXT %s BUILD %s phase %s BUILD\n' "$slug" "$self" "$slug" ;;
-      BUILD)  printf 'NEXT %s REVIEW %s phase %s REVIEW\n' "$slug" "$self" "$slug" ;;
+      BUILD)
+        if [ -f "$(D "$slug")/TASKS.tsv" ]; then
+          task_assert_frozen "$slug"
+          printf 'NEXT %s TASK_READY %s task ready %s\n' "$slug" "$self" "$slug"
+        else
+          printf 'NEXT %s REVIEW %s phase %s REVIEW\n' "$slug" "$self" "$slug"
+        fi ;;
       REVIEW) printf 'NEXT %s CHECK %s check %s\n' "$slug" "$self" "$slug" ;;
     esac
     return
@@ -1776,6 +2006,7 @@ target)   shift; cmd_target "$@" ;;
 lifecycle) shift; cmd_lifecycle "$@" ;;
 state)    shift; cmd_state "$@" ;;
 ready)    shift; cmd_ready "$@" ;;
+task)     shift; cmd_task "$@" ;;
 next)     shift; cmd_next "$@" ;;
 attempt)  shift; cmd_attempt "$@" ;;
 result)   shift; cmd_result "$@" ;;

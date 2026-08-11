@@ -68,6 +68,11 @@ manual. Its dispatches create bounded, immutable attempt identities; observed li
 write-once, evidence-bound results prevent silent redispatch and distinguish overdue work from an
 observed timeout.
 
+Managed items may also freeze an optional `TASKS.tsv` dependency graph. `ready` validates task IDs,
+cycles, literal path ownership, overlap, and executable per-task checks; `task list` and `task ready`
+expose the derived graph. Isolated task dispatch/integration is not implemented yet, so graph items
+refuse item-wide maker dispatch instead of pretending ownership is enforced at runtime.
+
 ## What it refuses
 
 A missing or wrong file stops the run. Each of these is asserted in `scripts/selftest.sh`.
@@ -118,7 +123,8 @@ invisible to every review it performs.
 **The item-file lifecycle does not enforce that a dispatch preceded a verdict**, that a finding is
 not resubmitted, or that file ownership in `TASKS.md` is respected. Managed lifecycle closes the
 first two gaps for its typed attempt results: it requires a dispatch identity and blocks a repeated
-finding fingerprint. Neither behavior enforces task-file ownership.
+finding fingerprint. Managed `TASKS.tsv` validates and freezes disjoint ownership, but task-bound
+runtime enforcement remains unfinished; item-file lifecycle does not enforce task ownership.
 
 **It cannot tell a hand-typed copy of a documented sequence inside `scripts/` from the real thing:**
 the workflow-form check refuses a new inline verification block in `.github/workflows/`
@@ -147,6 +153,7 @@ crucible triage                        evidence-grounded decision table for the 
 crucible lifecycle status|enable       inspect or enable managed lifecycle behavior
 crucible state                         regenerate managed STATE.md from STATE.tsv
 crucible ready ITEM                    validate and freeze a managed item contract
+crucible task list|ready ITEM          inspect a frozen managed task DAG
 crucible next                          what to do now, read from files not memory
 crucible dispatch ITEM ROLE AGENT ...  write the contract for a call, print its path
 crucible attempt start|overdue|finish  record observed managed process lifecycle
@@ -175,6 +182,7 @@ entire reason the views exist.
 ./scripts/selftest.sh                    # item-file compatibility refusals
 ./scripts/verify-managed-lifecycle.sh    # managed state and closure contract
 ./scripts/verify-attempt-ledger.sh       # managed dispatch, evidence, result and budget contract
+./scripts/verify-task-dag.sh             # frozen dependencies and ownership contract
 ```
 
 The focused verifier for each behavior owns its documented refusals. A claim in this README that is

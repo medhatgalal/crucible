@@ -154,6 +154,37 @@ Each dispatch is preserved under `attempts/<attempt-id>/`:
 - `contract.md` is the exact file given to the agent.
 - `result.md` is the write-once, evidence-bound outcome.
 
+## Optional task graph
+
+When one item genuinely needs disjoint maker ownership, add `TASKS.tsv` and its task files before
+`ready`:
+
+```text
+task_id	depends_on	paths_file	verify_script
+T1	-	tasks/T1.paths	tasks/T1.verify.sh
+T2	T1	tasks/T2.paths	tasks/T2.verify.sh
+T3	T1	tasks/T3.paths	tasks/T3.verify.sh
+```
+
+Each `.paths` file contains one literal repository-relative owned path per line. Each verifier is
+an executable POSIX shell script beginning with `#!/bin/sh`; it will receive the task commit as
+`$1` when task execution is enabled. `ready` refuses malformed rows, duplicate or unknown task IDs,
+dependency cycles, more than 32 tasks or 128 edges, unsafe/glob paths, prefix ownership overlap,
+task paths outside the item's declared Owned files, missing files, symlinks, and non-executable
+verifiers. It then freezes the graph as `TASKS.id` and generates `TASKS.md`.
+
+Inspect the frozen graph without editing it:
+
+```sh
+$CP task list fix-report-flow
+$CP task ready fix-report-flow
+```
+
+`task ready` exposes only tasks whose dependencies have PASS results. Any edit to the TSV, path
+sets, verifier contents, or verifier mode after READY refuses. The current implementation
+deliberately refuses item-wide maker dispatch for a task-graph item; task-bound isolated worktree
+dispatch and integration are the next execution slice, not an implied capability of validation.
+
 ## Refusals that matter
 
 Managed lifecycle refuses:
@@ -170,9 +201,9 @@ Managed lifecycle refuses:
 
 ## What this behavior does not yet provide
 
-Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops, and
-economical reuse of unchanged expensive evidence. It does not yet provide task-DAG parallelism,
-conversion of active item-file programs, automatic agent launching or cancellation, cryptographic
-proof of who authored an artifact, or proof that a recorded command is a discriminating test.
-Those remain separate work; do not describe them as available merely because managed lifecycle is
-enabled.
+Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops,
+economical reuse of unchanged expensive evidence, and frozen task-graph validation. It does not yet
+provide task-bound isolated worktree dispatch and integration, conversion of active item-file
+programs, automatic agent launching or cancellation, cryptographic proof of who authored an
+artifact, or proof that a recorded command is a discriminating test. Those remain separate work;
+do not describe them as available merely because managed lifecycle is enabled.
