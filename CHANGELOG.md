@@ -10,6 +10,9 @@ All notable changes to this project are documented here. This project follows
   protocol instead of making the operator learn them.
 - Added deterministic `crucible-<version>.tar.gz` packaging, SHA-256 checksums, archive-content and
   cold-start verification, and Linux/BSD release-package CI gates.
+- Fixed zero-argument command parsing under POSIX `dash`. The public `cycle` resume command and other
+  missing-argument paths could previously exit silently on Linux because a failed `shift` terminates
+  a non-interactive shell before `|| true` can recover.
 
 - Replaced command-driven onboarding with one fresh-agent entrypoint and one durable `cycle` resume
   behavior. The coordinator now owns protocol mechanics, proposes a minimal agent/persona panel,

@@ -368,8 +368,8 @@ maker_pass_exists() (
 
 cmd_attempt() {
   uses_managed_lifecycle || die "attempt requires managed lifecycle behavior"
-  sub=${1:-}; shift 2>/dev/null || true
-  id=${1:-}; shift 2>/dev/null || true
+  sub=${1:-}; [ $# -eq 0 ] || shift
+  id=${1:-}; [ $# -eq 0 ] || shift
   [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish ATTEMPT ..."
   ad=$(attempt_dir "$id"); slug=$(attempt_meta "$id" 2)
   case $sub in
@@ -389,7 +389,7 @@ cmd_attempt() {
       printf '%s OVERDUE; process outcome is still unobserved\n' "$id"
       ;;
     finish)
-      value=${1:-}; shift 2>/dev/null || true; reason=${*:-}
+      value=${1:-}; [ $# -eq 0 ] || shift; reason=${*:-}
       case $value in RETURNED|TIMEOUT|STOPPED|ABANDONED) : ;; *) die "finish state must be RETURNED TIMEOUT STOPPED or ABANDONED" ;; esac
       current=$(attempt_state "$id")
       case $current in RUNNING|OVERDUE) : ;; *) die "attempt finish requires RUNNING or OVERDUE" ;; esac
@@ -675,7 +675,7 @@ emit_work() {
 }
 
 cmd_add() {
-  slug=${1:-}; shift 2>/dev/null || true; title=${*:-}
+  slug=${1:-}; [ $# -eq 0 ] || shift; title=${*:-}
   [ -n "$slug" ] || die 'usage: crucible add SLUG "TITLE"'
   case $slug in *[!A-Za-z0-9._-]*) die "slug may only contain A-Za-z0-9._-" ;; esac
   if uses_managed_lifecycle; then
@@ -1964,7 +1964,7 @@ EOF
 }
 
 cmd_cycle() {
-  sub=${1:-status}; shift 2>/dev/null || true
+  sub=${1:-status}; [ $# -eq 0 ] || shift
   case $sub in
     status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; cmd_cycle_status ;;
     problem)
@@ -2242,7 +2242,7 @@ EOF
 # Claims: the outer loop. The script keeps the ledger honest; the agent supplies meaning.
 claims_file() { printf '%s/CLAIMS.md' "$ROOT"; }
 cmd_claim() {
-  sub=${1:-}; shift 2>/dev/null || true
+  sub=${1:-}; [ $# -eq 0 ] || shift
   f=$(claims_file)
   # The ledger creates itself. Requiring `adopt` first meant a program that was set up
   # any other way could not audit anything, which blocked the outer loop entirely.
