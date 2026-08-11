@@ -5,9 +5,13 @@ unverified claim.** If you add a refusal, add the assertion that proves it refus
 document that names a verb, the docs check will require the verb to exist.
 
 ```sh
-./scripts/selftest.sh -v     # every assertion, named
-/bin/sh -n crucible          # it must stay POSIX sh
+./scripts/selftest.sh --fast       # bounded development gate
+./scripts/verify-agent-cycle.sh    # cold problem-to-done behavior
+./scripts/verify-package.sh        # reproducible release archive
+/bin/sh -n crucible                # it must stay POSIX sh
 ```
+
+Run `./scripts/selftest.sh -v` before release or whenever a refusal changes.
 
 Constraints that are not negotiable, because the project is worthless without them:
 
@@ -22,5 +26,4 @@ Constraints that are not negotiable, because the project is worthless without th
 
 When you fix a bug, say in `CHANGELOG.md` what the bug let through, not just what changed. The
 changelog is the record of how the gate was wrong before, which is the most useful thing in it.
-
 

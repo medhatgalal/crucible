@@ -292,6 +292,10 @@ ok "every watch.sh view renders without error"
   && ok "the workids view names what it shows" || bad "workids view rendered nothing recognisable"
 [ -f "$ct/.crucible/p/scripts/watch.sh" ] && ok "adopt ships the live views into the program" \
   || bad "adopt did not ship watch.sh"
+[ ! -e "$ct/.crucible/p/scripts/package-release.sh" ] \
+  && [ ! -e "$ct/.crucible/p/scripts/verify-package.sh" ] \
+  && ok "adopt excludes release-maintainer scripts" \
+  || bad "adopt copied release-maintainer scripts into the target repository"
 
 
 printf '\npane overlay\n'

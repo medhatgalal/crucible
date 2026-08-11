@@ -1,59 +1,52 @@
 # Release procedure
 
-Run these commands from a clean checkout on the branch to release. Replace `0.1.1` with the intended version.
+Prepare the version and changelog on a review branch. Publish only the reviewed commit after it is
+merged to a clean, synchronized `main`.
 
-## 1. Bump `VERSION`
-
-```sh
-version=0.1.1
-printf '%s\n' "$version" > VERSION
-test "$(cat VERSION)" = "$version"
-```
-
-## 2. Update `CHANGELOG.md` with a dated release entry
+## Release candidate
 
 ```sh
-"${EDITOR:-vi}" CHANGELOG.md
+version=$(cat VERSION)
 grep -q "^## \[$version\] - $(date +%F)$" CHANGELOG.md
 git diff --check
-git add VERSION CHANGELOG.md
-git commit -m "Release $version"
+./scripts/selftest.sh -v
+./scripts/verify-agent-cycle.sh
+./scripts/verify-package.sh
 ```
 
-## 3. Tag the release
+Open a pull request, wait for its exact-head checks, and merge it. Do not tag a branch commit or a
+locally different tree.
+
+## Publish the merged commit
+
+From a clean, synchronized `main`:
 
 ```sh
-git tag -a "v$version" -m "Release $version"
-```
-
-## 4. Push the commit and tag
-
-```sh
-git push origin HEAD
+version=$(cat VERSION)
+test "$(git branch --show-current)" = main
+test -z "$(git status --porcelain)"
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+git tag -a "v$version" -m "Crucible $version"
+test "$(git show "v$version:VERSION")" = "$version"
 git push origin "v$version"
 ```
 
-## 5. Verify the tag contains the same version as `VERSION`
+Wait for both Linux and macOS tag jobs at that exact SHA. Then build from the immutable tag and publish
+the two assets:
 
 ```sh
-test "$(git show "v$version:VERSION")" = "$version"
-printf 'verified v%s contains VERSION=%s\n' "$version" "$version"
+./scripts/package-release.sh "$version" "v$version" dist
+gh release create "v$version" \
+  "dist/crucible-$version.tar.gz" \
+  "dist/crucible-$version.tar.gz.sha256" \
+  --title "Crucible $version" --generate-notes --verify-tag
 ```
 
-## Mutation checks before a release
+Download the published assets into a temporary directory and verify their checksum before calling the
+release complete.
 
-Two properties cannot be asserted reliably by the suite, because two guards overlap and which one
-fires is a race. Verify them by hand, on a copy, and restore afterwards:
+## Manual mutation evidence
 
-1. **The close-time work-id comparator.** Remove the `[ "$before" = "$after" ]` guard in `cmd_close`.
-   Then build an item with valid work, evidence and two passing verdicts, mutate the work while
-   `close` is running, and confirm it **closes at the new work id**. Restore, and confirm it refuses.
-   If the mutated build still refuses, the comparator is redundant and the claim in `README.md`
-   should be rewritten rather than kept.
-
-2. **The verdict archive.** Remove the `mv "$old" "$a"` in the judge branch of `cmd_dispatch`, then
-   dispatch a judge onto changed work and confirm the superseded verdict is lost. Restore, and
-   confirm it lands under `verdicts/history/`.
-
-Record both results in the release commit message. A release whose mutation checks were not run is
-a release whose two weakest assertions are unverified.
+When a release changes `cmd_close` or judge-verdict archival, test the changed guard on a disposable
+copy by removing it and proving the expected refusal fails. Record the exact mutation and result in the
+pull request. These targeted checks are not required when neither mechanism changed.

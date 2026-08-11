@@ -1,97 +1,64 @@
 # Crucible
 
-Crucible teaches a fresh coordinating agent how to take one problem from allegation to verified,
-reviewed, done work. The human describes the problem and approves the refined proposal. The agent
-handles the protocol, coordination, evidence, review loops, and resumability.
+Crucible teaches a fresh coordinating agent to take one reported problem through investigation,
+human-approved scope, implementation, independent review, and evidence-backed closure.
 
-There is no service, database, permanent agent, or hidden memory. Crucible is POSIX shell, role prompts,
-and repository files. When an agent session ends, the work and evidence remain; the next fresh agent
-relearns the process from the repository.
+It is a self-contained POSIX shell protocol: no service, database, package manager, or permanent agent
+memory. The repository keeps the work and evidence; a later agent relearns the process from files.
 
-## Start
+## Start a cycle
 
-Stand in the repository you want to change and tell a fresh agent:
+Open the repository you want to change and tell a fresh agent:
 
-> Read Crucible's `BOOTSTRAP.md` and run a complete cycle for this problem: `<problem or path>`.
+> Read `/absolute/path/to/crucible/BOOTSTRAP.md`. You are already in the target repository. Run a
+> complete Crucible cycle for this problem: `<problem or report path>`.
 
-That is the operator interface. You do not need to learn the internal commands.
+The path may point to a checkout or an extracted release package. The agent installs Crucible into the
+target repository, configures the available agents/personas, investigates the report, and returns one
+refined proposal for approval. The operator does not drive lifecycle commands.
 
-The agent has one durable resume behavior, `crucible cycle`; all other commands are protocol details.
-
-If Crucible is already installed in the repository, point the agent directly at:
+If a cycle is already installed, say:
 
 > Read `.crucible/<program>/START.md` and continue this cycle.
+
+The agent resumes from repository evidence with `crucible cycle`; it does not rely on chat memory.
 
 ## The loop
 
 ```text
-onboard/configure
-       ↓
-problem ⇄ investigate ⇄ falsify claims ⇄ scout existing behavior
-       ↓
-refined proposal ───────────────→ human approval
-                                      ↓
-validated breakdown → make → verify → independent review
-                         ↑                  │
-                         └──── fix issues ──┘
-                                      ↓
-                              integrate → done
+onboard → investigate ⇄ challenge → proposal → human approval
+                                                   ↓
+             done ← integrate ← review ⇄ fix ← make ← validated plan
 ```
 
-The loop is deliberately asymmetric:
+- Nothing is built before the current proposal is explicitly approved.
+- False, stale, duplicated, or already-implemented findings do not become backlog work.
+- Review findings return to the maker until fixed, disproved with evidence, or bounded escalation.
+- `DONE` requires current evidence for every approved outcome—not an agent self-report or clean diff.
 
-- Before approval, agents may inspect, challenge, narrow, and propose. They may not build.
-- After approval, only approved bounded work enters execution.
-- A review rejection goes back into the work loop with a concrete finding.
-- Repeated findings, exhausted retries, unresolved product decisions, or ownership conflicts escalate
-  instead of consuming unbounded tokens.
-- `DONE` requires current evidence for the approved outcome and no unresolved approved work.
+The same model may perform several roles in fresh isolated contexts; those reviews are labelled
+**same-family**. Different model families are used selectively for behavioral, security, data,
+migration, irreversible, or repeatedly disputed work.
 
-## Agents and personas
+## What remains after shutdown
 
-Crucible supports one or many agents. Roles describe responsibilities, not products:
+Code, approved decisions, reviews, and evidence remain in the repository. Machine-only agent
+configuration and isolated worktrees can be previewed and cleaned after `DONE`. Crucible does not write
+project knowledge into global agent memory.
 
-- A coordinator schedules and persists state.
-- Investigators establish facts and search for existing behavior.
-- Makers change narrowly owned files.
-- Reviewers independently attack the acceptance contract.
-- Adversaries are reserved for higher-risk or disputed work.
+## Reference
 
-The same agent class or model may fill multiple roles in fresh isolated contexts. Those reviews are
-labelled **same-family**, because isolation removes conversational anchoring but not correlated model
-blind spots. Different model families are used selectively for behavioral, security, data, migration,
-irreversible, or repeatedly disputed work—not as ceremony on every edit.
+- [START.md](START.md) — self-contained fresh-agent operating prompt
+- [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria
+- [RULES.md](RULES.md) — enforced checks versus instructional rules
+- [CONFIGURE.md](CONFIGURE.md) — agent/model/persona policy
+- [Managed lifecycle protocol](docs/managed-lifecycle.md) — low-level agent-facing commands
+- [CONTRIBUTING.md](CONTRIBUTING.md) and [RELEASE.md](RELEASE.md) — maintainer gates
 
-## What is durable
-
-The repository stores the problem, claim evidence, approved proposal, bounded items, changes, reviews,
-and closure evidence. `agents.tsv`, running processes, isolated worktrees, and live agent contexts are
-machine/session state. They can be cleaned after a completed cycle with an exact preview and explicit
-approval. Crucible does not write project knowledge into global agent memory.
-
-## What the gate proves
-
-The shell refuses missing or stale work evidence, stale work ids, maker self-review, unregistered
-reviewers, mutable managed results, unsupported lifecycle transitions, unapproved proposal admission,
-unsafe task ownership, duplicate expensive checks on unchanged work, and unsupported closure.
-
-It cannot cryptographically prove which human or model wrote a file under one operating-system user,
-nor can it prove a test is meaningful merely because the command exited zero. Independent contexts,
-discriminating falsifiers, and selective cross-family review remain operational responsibilities and
-are stated honestly as such.
-
-## Agent protocol and development
-
-Fresh coordinating agents read [START.md](START.md). The behavioral loop is in [LOOP.md](LOOP.md),
-rules and enforcement boundaries are in [RULES.md](RULES.md), and panel guidance is in
-[CONFIGURE.md](CONFIGURE.md). Low-level managed-state primitives are documented in
-[docs/managed-lifecycle.md](docs/managed-lifecycle.md); they are an agent protocol, not the human UX.
-
-Developers can verify the engine with:
+Developer verification:
 
 ```sh
 ./scripts/selftest.sh --fast
 ./scripts/verify-agent-cycle.sh
+./scripts/verify-package.sh
 ```
-
-The full suite is intentionally separate because external agent/terminal fixtures may be slow.

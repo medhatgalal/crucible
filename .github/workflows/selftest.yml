@@ -57,6 +57,9 @@ jobs:
           grep -q "\[$v\]" CHANGELOG.md || { echo "CHANGELOG has no entry for $v"; exit 1; }
           echo "ok  CHANGELOG documents $v"
 
+      - name: release package is reproducible and cold-start capable
+        run: ./scripts/verify-package.sh
+
   refusals-bsd:
     # BSD userland differs from GNU in sed -i, grep -E and find, which is exactly where
     # a portability defect would hide. Gate releases on it rather than every push.
@@ -68,3 +71,5 @@ jobs:
         run: for f in crucible scripts/*.sh; do /bin/sh -n "$f" || exit 1; done
       - name: the gate refuses what it claims
         run: ./scripts/selftest.sh
+      - name: release package is reproducible and cold-start capable
+        run: ./scripts/verify-package.sh

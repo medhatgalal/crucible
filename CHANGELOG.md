@@ -3,7 +3,13 @@
 All notable changes to this project are documented here. This project follows
 [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## [1.1.0] - 2026-08-11
+
+- Simplified public usage to one fresh-agent prompt and one installed-cycle resume prompt. The
+  installed `START.md` is now self-contained and keeps low-level commands behind the agent-facing
+  protocol instead of making the operator learn them.
+- Added deterministic `crucible-<version>.tar.gz` packaging, SHA-256 checksums, archive-content and
+  cold-start verification, and Linux/BSD release-package CI gates.
 
 - Replaced command-driven onboarding with one fresh-agent entrypoint and one durable `cycle` resume
   behavior. The coordinator now owns protocol mechanics, proposes a minimal agent/persona panel,

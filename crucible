@@ -2163,6 +2163,7 @@ cmd_adopt() {
   [ -d "$src/roles" ] && cp -r "$src/roles" "$dst/"
   mkdir -p "$dst/scripts"
   for f in "$src"/scripts/*.sh; do
+    case ${f##*/} in package-release.sh|verify-package.sh) continue ;; esac
     [ -f "$f" ] && cp "$f" "$dst/scripts/"
   done
   mkdir -p "$dst/docs"
