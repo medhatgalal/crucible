@@ -6,7 +6,9 @@ Crucible has two valuable properties: it fact-checks a problem report before adm
 
 The failure is architectural rather than cosmetic. The executable owns evidence and closure checks, while orchestration discipline—duplicate dispatch prevention, retry limits, role budgets, repeated-finding escalation, and authoritative resume state—remains in prose or out-of-band run files. Expensive provider and full-suite checks are repeated by reviewers even when independent review only requires validation of their provenance plus a focused falsifier.
 
-Current implementation work on `ai/ci-on-push` remains active at `a2097294669b`. This document does not change that branch or its run state.
+The prerequisite `ci-on-push` work is closed at `a2097294669b`, squash-merged to `main` as
+`ccbcff0`, and green in hosted CI on that exact merged SHA. The redesign is isolated on
+`ai/crucible-workflow-redesign`; no active agent run owns overlapping source.
 
 ## Objective
 
@@ -18,6 +20,7 @@ Deliver Crucible v2 as a file-only, POSIX-shell workflow that:
 4. Makes review cost proportional to risk.
 5. Separates product failure, verification failure, infrastructure failure, and unresolved human decisions.
 6. Lets the same model fill different roles in fresh contexts without mislabelling same-family review as independent diversity.
+7. Lets several makers work concurrently only when a validated task DAG proves their dependencies and file ownership do not overlap.
 
 Success means an operator can resume from files, obtain exactly one next action, and either close or explicitly block a narrow item without revising its proof contract during review.
 
@@ -27,6 +30,7 @@ Success means an operator can resume from files, obtain exactly one next action,
 - Authoritative state, immutable attempt records, dispatch refusal, outcomes, retry accounting, and resume behavior.
 - Risk-based role and model-kind requirements.
 - Evidence classes and rules for canonical expensive evidence.
+- A bounded task DAG, isolated task worktrees, parallel maker dispatch, and an explicit integration barrier.
 - Migration of existing v1 programs through an opt-in compatibility path.
 - Focused tests, full-suite compatibility, rollback, and operational diagnostics.
 
@@ -46,8 +50,8 @@ Success means an operator can resume from files, obtain exactly one next action,
 - Existing adopted v1 programs must continue to run unchanged.
 - Whole-work-ID evidence invalidation remains the closure boundary. A new commit invalidates every closure verdict.
 - The CLI can refuse dispatches and record deadlines, but cannot safely infer that an external process died merely because a deadline passed.
-- One program advances one current item at a time. Parallel work belongs in separate programs or independently owned item branches.
-- The current active item must finish, be preserved, or be explicitly abandoned before implementation starts. The redesign branch will be created from the resulting `main`, not from the active feature branch.
+- One program advances one current item at a time. Within that item's BUILD state, dependency-ready tasks may run concurrently in isolated worktrees when ownership sets are disjoint.
+- The implementation baseline is merged `main` at `ccbcff0`; planning artifacts begin at `44d9db3` on the isolated redesign branch.
 - Default budgets are metadata and refusal thresholds, not permission to kill processes: low-risk reviewer 10 minutes; medium/high reviewer or adversary 30 minutes; maker 45 minutes; planner/specifier 15 minutes; canonical external check 15 minutes.
 
 ## Architecture Recommendation
@@ -70,16 +74,68 @@ DRAFT -> READY -> BUILD -> REVIEW -> CLOSED
 
 - `DRAFT`: the item contract is incomplete or not operator-approved.
 - `READY`: goal, non-goals, risk, owned files, acceptance criteria, focused falsifier, and evidence classes are frozen.
-- `BUILD`: exactly one maker attempt owns the item.
+- `BUILD`: one maker attempt may own each dependency-ready task; makers never write the integration branch directly.
 - `REVIEW`: focused review is active; expensive evidence has one canonical capture for the current work ID.
 - `CLOSED`: current-work evidence and the risk-required panel pass.
 - `BLOCKED`: a terminal-for-now state with a typed reason and an explicit unblock condition.
 
-`DESIGN.md`, `TASKS.md`, and `ADVERSARY.md` become risk-triggered artifacts, not mandatory lifecycle phases:
+`DESIGN.md`, `TASKS.tsv`, generated `TASKS.md`, and `ADVERSARY.md` become risk-triggered artifacts, not mandatory lifecycle phases:
 
 - Require `DESIGN.md` only when the item changes a public interface, architecture boundary, persistence, security boundary, or rollback behavior.
-- Require `TASKS.md` only when more than one maker or more than one disjoint file-ownership set is necessary.
+- Require `TASKS.tsv` only when more than one maker or more than one disjoint file-ownership set is necessary. `TASKS.md` is generated from it and is never authoritative.
 - Require adversary review only for high-risk work or a disputed behavioral finding.
+
+### Multi-agent task DAG
+
+Parallelism is a property of an approved task graph, not a permission granted to agents ad hoc.
+
+```text
+                         +-> task T2 / maker A / worktree A -+
+READY -> BUILD -> task T1+                                      +-> INTEGRATE -> REVIEW
+                         +-> task T3 / maker B / worktree B -+
+```
+
+- `ready` validates the entire DAG before BUILD: unique task IDs, existing dependencies, no cycles, literal owned paths, no ownership overlap, and at least one verification script per task.
+- A task is dispatchable only when every dependency has a current PASS result at its task commit.
+- Each maker receives one task, one immutable base commit, and one isolated worktree. The task branch is `ai/<program>-<item>-<task>-<attempt>`; no task branch shares a ref prefix that conflicts with the item branch.
+- Makers may not dispatch peers, edit another task's worktree, or write the item integration branch. Coordination occurs through frozen contracts and immutable results, not direct chat.
+- `CRUCIBLE_MAX_PARALLEL_MAKERS` defaults to `3`. A fourth live maker dispatch refuses even when another task is ready.
+- An integrator is the only role that advances the item branch. It applies passing task commits in stable topological order and records the source task commit for every integration step.
+- Any textual or semantic conflict sets `INTEGRATION_CONFLICT`; Crucible never auto-resolves it. The affected task returns to READY with a new base and all prior task review results remain historical, not closure evidence.
+- Task evidence proves the task commit only. After integration changes the item work ID, the final review panel runs the item's focused falsifier against the integrated work ID. Only final-work results may close the item.
+- Independent tasks may finish after a sibling blocks, but integration cannot start until every required task is PASS or the operator revises the frozen DAG by returning the item to DRAFT.
+- Task worktrees and branches are retained while an item is open or blocked. Cleanup is explicit after integration and final closure; no failure path deletes them automatically.
+
+### Legacy backlog disposition
+
+The self-hosting backlog is input to v2, not an automatically inherited implementation queue:
+
+| Existing item | Disposition | v2 destination / reason |
+| --- | --- | --- |
+| `ci-on-push` | CLOSED | Merged as `ccbcff0`; delivery baseline only. |
+| `feature-through-the-loop` | CLOSE WITHOUT NEW CODE | The completed CI item exercised maker, judges, adversary, integration, rejection, and closure. |
+| `atomic-publish-assert` | RETAIN P0 | State/evidence atomicity mutation test. |
+| `close-write-window` | RETAIN P0 | Atomic close and state-lock test. |
+| `falsifier-must-discriminate` | RETAIN P0 | READY must prove the focused falsifier distinguishes changed from restored behavior. |
+| `dispatch-contradicts-role` | RETAIN P0 | Generated contracts must obey role read/write boundaries. |
+| `dispatch-lifecycle` | MERGE | Immutable attempt ledger and deterministic `next`. |
+| `evidence-retire-verb` | MERGE | Attempt/result history and explicit archival after closure. |
+| `finding-identity` | MERGE | Repeated finding fingerprint and `REPEATED_FINDING` stop. |
+| `judge-isolation-worktree` | MERGE | Task/reviewer worktree contract and process adapter. |
+| `orchestration-harness` | MERGE | State, attempts, bounded launch metadata, and task DAG. |
+| `coldstart-gaps` | MERGE | One v2 cold-start/intake item. |
+| `intake-any-source` | MERGE | Same cold-start item; add DOCUMENT, OPERATOR, and AGENT-PROPOSED provenance plus independent fidelity review. |
+| `scout-arg-in-docs` | SUPERSEDE BRANCH, RETAIN REQUIREMENT | Keep the required AGENT example, but do not merge the 241-line regex sweep; validate executable examples through focused fixtures. |
+| `transport-and-kinds` | SPLIT | Keep risk/kind policy in v2; defer experimental ACP/app-server transports. |
+| `byte-identical-guard` | SUPERSEDE | Immutable attempt IDs prevent verdict overwrite; retain a focused duplicate-result refusal test. |
+| `lesson-injection-label` | RETAIN P1 | Either enforce lesson injection or relabel the documentation claim. |
+| `isolate-or-withdraw` | RETAIN P1 | Release assertion/mutation discipline. |
+| `inline-workflow-blocks-move-into-scripts` | DEFER P2 | Independent workflow cleanup after the state/attempt kernel. |
+| `workflow-form-completeness` | DOCUMENTED NON-GOAL FOR V2 | No dependency-free shell regex can parse every Actions/YAML form honestly. |
+| `a-transcription-inside-scripts-is-a-second-writer` | DOCUMENTED NON-GOAL FOR V2 | Treat `scripts/` as a trusted executable boundary; do not claim semantic duplicate detection. |
+| B10: empty `LESSONS.md` after `add` | RETAIN P0 | Seed the file with a header; mutation proves a fresh `add` no longer creates a false refusal. |
+
+`ai/scout-arg-in-docs` remains preserved and unmerged until the focused v2 cold-start item replaces its valid documentation delta. No commit from that branch is silently cherry-picked.
 
 ### Evidence policy
 
@@ -124,11 +180,13 @@ The maker and a reviewer may use the same model only in separate contexts. That 
 | --- | --- | --- | --- |
 | Claim admission | Audit, scout, triage, admission | `CLAIMS.md`, claim evidence/verdicts | Item implementation |
 | State kernel | One authoritative lifecycle and in-flight view | `STATE.tsv`; generated `STATE.md` | Agent process execution |
-| Item contract | Frozen goal and proof boundary | `ITEM.md`, optional `DESIGN.md`/`TASKS.md` | Runtime status |
+| Item contract | Frozen goal and proof boundary | `ITEM.md`, optional `DESIGN.md` | Runtime status |
+| Task DAG kernel | Validate dependencies/ownership and expose ready tasks | `TASKS.tsv`, generated `TASKS.md`, `tasks/*.paths`, task verification scripts | Launching agents or resolving conflicts |
 | Attempt ledger | Immutable dispatch and outcome facts | `attempts/<id>/meta.tsv`, `contract.md`, `result.md` | Mutable item requirements |
 | Evidence recorder | Atomic command capture bound to work/agent/class | Existing `evidence/*.txt` headers plus evidence class | Deciding PASS |
 | Gate evaluator | Risk panel, evidence freshness, duplicate and retry rules | `check`, `next`, dispatch refusal | Repairing work |
 | Process adapter | External launcher records PID/exit/deadline observations | Optional launcher-side data in attempt metadata | Inferring outcomes without observation |
+| Integrator | Apply passing task commits in stable topological order | Item integration branch and integration evidence | Editing task branches or auto-resolving conflicts |
 
 `STATE.tsv` is the machine source of truth. `STATE.md` is generated from it and is never hand-edited. `ITEM.md` no longer owns `PHASE` or `STATUS` in v2; those legacy headers are mirrored during compatibility mode only.
 
@@ -164,8 +222,8 @@ State mutations acquire an atomic `mkdir` lock, rewrite through a same-directory
 `dispatch` allocates `attempts/<attempt-id>/` using an atomic directory claim. `meta.tsv` contains:
 
 ```text
-attempt_id\titem\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
-A1786399200.12345\titem\ta2097294669b\tjudge\tj1\tkiro\tA1\tFOCUSED\tDISPATCHED\t1786399200\t1786401000\t-
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+A1786399200.12345\titem\tT1\ta2097294669b\tjudge\tj1\tkiro\tA1\tFOCUSED\tDISPATCHED\t1786399200\t1786401000\t-
 ```
 
 Attempt states: `DISPATCHED`, `RUNNING`, `OVERDUE`, `RETURNED`, `TIMEOUT`, `STOPPED`, `ABANDONED`, `SUPERSEDED`.
@@ -185,6 +243,7 @@ ROLE: <role>
 AGENT: <name>
 KIND: <kind>
 CRITERION: <id>
+TASK-ID: <id or ->
 EVIDENCE-CLASS: FOCUSED|FULL_SUITE|EXTERNAL|MANUAL
 EVIDENCE: <relative path>
 FINDING-FINGERPRINT: <12-char digest or ->
@@ -217,6 +276,23 @@ Hard intake checks:
 - Owned files are declared before BUILD.
 - Requirements freeze at READY. A material requirement change returns to DRAFT and archives current attempts; a wording-only clarification must not change the property or falsifier.
 
+### Task DAG contract
+
+When an item needs multiple makers, `TASKS.tsv` is frozen at READY:
+
+```text
+task_id\tdepends_on\tpaths_file\tverify_script
+T1\t-\ttasks/T1.paths\ttasks/T1.verify.sh
+T2\tT1\ttasks/T2.paths\ttasks/T2.verify.sh
+T3\tT1\ttasks/T3.paths\ttasks/T3.verify.sh
+```
+
+- `depends_on` is `-` or a comma-separated set of earlier task IDs.
+- `paths_file` contains one literal repository-relative path per line. Globs, absolute paths, `..`, tabs, newlines in Git paths, and the same path in two tasks refuse.
+- `verify_script` is a repository-relative executable POSIX shell file. It receives the task commit as `$1` and exits non-zero on failure.
+- `TASKS.md` and a ready-task view are generated from this contract; hand edits are overwritten.
+- The DAG is limited to 32 tasks and 128 dependency edges in v2.0. Larger work must split into items.
+
 ### CLI surface
 
 Existing outer-loop and evidence verbs remain. Add or tighten:
@@ -224,11 +300,14 @@ Existing outer-loop and evidence verbs remain. Add or tighten:
 ```text
 crucible state                         render STATE.md from STATE.tsv
 crucible ready ITEM                    validate/freeze the item contract
+crucible task list ITEM                render DAG and derived task states
+crucible task ready ITEM               print dependency-ready tasks
 crucible dispatch ITEM ROLE AGENT [CRITERION]
 crucible attempt start ATTEMPT PID     record observed launch and deadline
 crucible attempt overdue ATTEMPT       mark overdue only if deadline passed
 crucible attempt finish ATTEMPT STATE  record observed terminal process state
 crucible result ATTEMPT OUTCOME ...    validate and write immutable result.md
+crucible integrate ITEM                apply passing task commits in stable topological order
 crucible block ITEM CODE "reason"     terminal-for-now stop with unblock condition
 crucible migrate-state --dry-run       report exact v1 -> v2 write set
 crucible migrate-state --apply         opt in after operator approval
@@ -245,7 +324,7 @@ DONE
 
 ### Block codes
 
-`REPEATED_FINDING`, `RETRY_EXHAUSTED`, `OVERDUE_PROCESS`, `SCOPE_CONFLICT`, `MISSING_CONTEXT`, `OPERATOR_DECISION`, `EXTERNAL_UNAVAILABLE`.
+`REPEATED_FINDING`, `RETRY_EXHAUSTED`, `OVERDUE_PROCESS`, `SCOPE_CONFLICT`, `MISSING_CONTEXT`, `OPERATOR_DECISION`, `EXTERNAL_UNAVAILABLE`, `DEPENDENCY_CYCLE`, `OWNERSHIP_OVERLAP`, `TASK_BLOCKED`, `INTEGRATION_CONFLICT`.
 
 ## Trade-offs
 
@@ -257,6 +336,7 @@ DONE
 | Immutable attempt records | Prevents overwritten PASSes and reconstructs retries | More small files | Per-attempt directory is bounded and archiveable after closure |
 | Risk-based roles | Cuts ceremony for low-risk work | Requires correct risk classification | Operator confirms risk at READY; reviewers may escalate but not downgrade |
 | No automatic process killing | Avoids false timeout labels and orphaned children | Overdue work needs operator/launcher action | Refuse new duplicate work and expose exact PID/deadline condition |
+| Parallel makers only through a frozen DAG | Gains safe concurrency without shared mutable work | Adds task and integration contracts | Literal ownership, dependency validation, isolated worktrees, one integrator |
 
 ## Rejected Alternatives
 
@@ -280,15 +360,22 @@ Rejected because it makes low-risk work needlessly expensive and can block envir
 
 Rejected because a deadline is not evidence that a process died. The current run already recorded judges as timed out before they delivered valid PASSes. `next` must remain read-only and report what is known.
 
+### Free-form peer-to-peer agent collaboration
+
+Rejected because direct agent messaging creates unrecorded authority, hidden dependencies, and mutable scope. Makers collaborate through the frozen DAG and immutable result artifacts; only the coordinator schedules and only the integrator changes the item branch.
+
+### Multiple makers on the integration branch
+
+Rejected because file ownership alone does not prevent index, generated-file, or semantic conflicts in one working tree. Each maker receives an isolated task worktree and the integration barrier is explicit.
+
 ## Migration / Rollback Plan
 
 ### Preconditions
 
-1. Let the active `ci-on-push` specifier return; do not interrupt or edit its run state.
-2. Decide and record the current item outcome under v1.
-3. Merge or deliberately preserve the accepted current branch, then verify local and remote `main` agree.
-4. Create `AI/crucible-workflow-redesign` in an isolated worktree from that exact `main` SHA.
-5. Preserve the forensic report and this plan as planning artifacts; they are not delivery evidence.
+1. `ci-on-push` is closed under v1; local and remote `main` agree at `ccbcff0`, and hosted CI is green.
+2. `ai/crucible-workflow-redesign` is isolated from that exact baseline; planning artifacts are preserved at `44d9db3` and are not delivery evidence.
+3. `ai/scout-arg-in-docs` remains preserved and must not be merged as-is; its requirement is assigned to the v2 cold-start item.
+4. Before source edits, write the v2 implementation backlog from the disposition table and assign non-overlapping file ownership.
 
 ### Expand
 
@@ -353,6 +440,13 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 14. `next` returns exactly one deterministic action and does not mutate files.
 15. Migration dry-run writes nothing; apply creates only the printed write set.
 16. Rolling an opted-in copied program back to v1 retains usable evidence and verdicts.
+17. `ready` rejects missing dependencies, cycles, unknown task IDs, duplicate task IDs, path overlap, globs, and non-executable verification scripts.
+18. Dependency-ready tasks may dispatch concurrently up to the configured cap; a fourth maker refuses at the default cap of three.
+19. A dependent task cannot dispatch before every dependency has a PASS at its recorded task commit.
+20. Makers cannot write the integration branch; each attempt is bound to its own task worktree and commit.
+21. Integration applies task commits in stable topological order and blocks on any conflict without modifying the unresolved item branch.
+22. Task evidence cannot close the item after integration changes the work ID; final-work review evidence is required.
+23. A blocked task prevents integration while independent tasks may finish and remain preserved.
 
 ### Acceptance gates
 
@@ -362,6 +456,7 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 - Mutation proof: change `OVERDUE` to `TIMEOUT` inference and observe the focused verifier fail.
 - Migration proof on a copied inactive program, including rollback.
 - Independent medium-risk review across two kinds, each running focused falsifiers; one canonical full-suite/CI capture at final work ID.
+- Parallel collaboration pilot with at least three tasks, two concurrently runnable makers, one dependency barrier, and one deliberate ownership-overlap refusal.
 - CI green on the exact merged SHA before release.
 
 ## Decision Log
@@ -375,13 +470,14 @@ Do not remove legacy readers or dual writes in the first v2 release. Removal is 
 | Attempts | Immutable per-dispatch records | Stops overwrites and reconstructs history | File growth | Archive only after closure |
 | Deadline | Report OVERDUE; never infer TIMEOUT | Prevents false terminal labels | Manual intervention | Refuse duplicates and expose unblock action |
 | Models | Risk-based kind diversity | Matches review cost to downside | Correlated blind spots at LOW | Explicit same-family label and escalation |
+| Collaboration | Frozen task DAG, isolated worktrees, one integrator | Enables bounded multi-agent implementation | Integration and task-state complexity | Literal ownership, stable order, final-work review |
 | Rollout | Additive opt-in v2 | Protects active programs | Temporary dual complexity | No legacy removal in first release |
 
 ## Confidence
 
-Confidence: **88/100**.
+Confidence: **91/100**.
 
-High confidence in the failure diagnosis and the recommendation to preserve strict freshness while shrinking work and making attempts immutable. Moderate uncertainty remains around the external launcher contract because the core repository does not currently own agent processes; the design deliberately limits itself to recording observed lifecycle facts rather than claiming process authority.
+High confidence in the failure diagnosis, strict-freshness boundary, backlog disposition, and bounded task-DAG contract. Moderate uncertainty remains around the external launcher contract and measured integration cost because neither has been implemented or piloted; the design deliberately records observed process facts rather than claiming process authority.
 
 ## Architecture Quality Scorecard
 
@@ -394,4 +490,4 @@ High confidence in the failure diagnosis and the recommendation to preserve stri
 - Benchmark Fit: 2
 - Overall Score: 14
 - Pass: true
-- Rationale: The recommendation preserves current constraints, defines parseable contracts, rejects weaker freshness models, and includes opt-in migration, rollback, and focused proof gates.
+- Rationale: The recommendation preserves current constraints, defines parseable state/attempt/task contracts, rejects weaker freshness and free-form collaboration models, and includes opt-in migration, rollback, concurrency, and focused proof gates.
