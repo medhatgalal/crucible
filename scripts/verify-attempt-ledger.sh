@@ -142,11 +142,15 @@ jcontract=$($P/crucible dispatch alpha judge j1 A1 FOCUSED 2>/dev/null)
 jid=$(basename "$(dirname "$jcontract")")
 grep -q '^## Work — work id ' "$jcontract" && grep -q '^## Recorded evidence$' "$jcontract" \
   && ok || bad 'judge contract does not contain the work and recorded evidence'
+grep -q 'Relation to recorded maker families: `SAME-FAMILY`' "$jcontract" \
+  && ok || bad 'same-family review is not labelled in the judge contract'
 $P/crucible attempt start "$jid" "$$" >/dev/null
 jeout=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo judge-focused')
 jevidence=$(basename "$(printf '%s' "$jeout" | awk '{print $1}')")
 $P/crucible attempt finish "$jid" RETURNED observed-exit-zero >/dev/null
 $P/crucible result "$jid" PASS "$jevidence" CLOSE - >/dev/null
+grep -q '^REVIEW-RELATION: SAME-FAMILY$' "$P/attempts/$jid/result.md" \
+  && ok || bad 'same-family correlation risk is missing from the result'
 grep -q '^VERDICT: PASS$' "$P/items/alpha/verdicts/j1.md" && ok || bad 'judge result did not publish the compatibility verdict'
 refuses 'judge current-work pass refuses duplicate' 'current-work PASS' "$P/crucible" dispatch alpha judge j1 A1 FOCUSED
 
@@ -157,6 +161,8 @@ feout=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo canonical
 fevidence=$(basename "$(printf '%s' "$feout" | awk '{print $1}')")
 $P/crucible attempt finish "$fid" RETURNED observed-exit-zero >/dev/null
 $P/crucible result "$fid" PASS "$fevidence" CLOSE - >/dev/null
+grep -q '^REVIEW-RELATION: CROSS-FAMILY$' "$P/attempts/$fid/result.md" \
+  && ok || bad 'cross-family review is not labelled in the result'
 refuses 'canonical expensive pass refuses duplicate' 'canonical FULL_SUITE PASS' "$P/crucible" dispatch alpha judge j1 A3 FULL_SUITE
 
 r1contract=$($P/crucible dispatch alpha judge j1 A3 FOCUSED 2>/dev/null)

@@ -1,7 +1,10 @@
-# Managed lifecycle
+# Managed lifecycle protocol
 
-Managed lifecycle makes program state machine-readable and gives the operator one deterministic
-resume command. It is selected by behavior in `PROGRAM`:
+This is the coordinating agent's low-level protocol reference. Operators use the conversational cycle
+described in `START.md`; they do not advance attempts, tasks, or phases themselves.
+
+Managed lifecycle makes program state machine-readable and gives the agent one deterministic resume
+behavior. It is selected by behavior in `PROGRAM`:
 
 ```text
 lifecycle: managed
@@ -10,17 +13,17 @@ lifecycle: managed
 There is no product version name. Programs without that field keep the item-file lifecycle so an
 existing program does not change underneath active work.
 
-## Enable it
+## Install it for a new cycle
 
-Enable managed lifecycle immediately after `adopt`, before adding the first item:
+New cycles select the behavior during adoption:
 
 ```sh
-CP=.crucible/<program>/crucible
-$CP lifecycle status
-$CP lifecycle enable --dry-run
-$CP lifecycle enable --apply
-$CP lifecycle status
+<engine>/crucible adopt <program> --managed
 ```
+
+That creates `STATE.tsv` and its generated `STATE.md` atomically with the installed program. The
+`lifecycle enable` primitive remains only for converting an empty older installation before its first
+item; it is not an onboarding step.
 
 The dry-run changes nothing and prints the exact write set. Apply creates authoritative `STATE.tsv`,
 generates `STATE.md`, and records `lifecycle: managed` in `PROGRAM` last. Enabling refuses after the
@@ -107,6 +110,10 @@ $CP check fix-report-flow
 $CP close fix-report-flow "one durable lesson, or NONE"
 ```
 
+Managed maker dispatch records every maker in `MAKERS.tsv`. Reviewer contracts and results label their
+relation to those maker families as `SAME-FAMILY`, `CROSS-FAMILY`, or `MIXED-FAMILY`; every recorded maker
+is barred from reviewing the integrated item.
+
 ## Deadlines, retries, and evidence reuse
 
 Maker attempts default to 45 minutes and reviewer/adversary attempts to 30 minutes. Override the
@@ -154,6 +161,11 @@ Each dispatch is preserved under `attempts/<attempt-id>/`:
 - `contract.md` is the exact file given to the agent.
 - `result.md` is the write-once, evidence-bound outcome.
 
+After the guided cycle reports `DONE`, the coordinator can preview session cleanup with
+`cycle clean --dry-run`. `--apply` is allowed only after DONE and refuses while any attempt is live.
+It safely removes registered isolated worktrees and the machine-only `agents.tsv`, while preserving task
+branches and all durable problem, proposal, work, review, and evidence artifacts.
+
 ## Optional task graph
 
 When one item genuinely needs disjoint maker ownership, add `TASKS.tsv` and its task files before
@@ -173,17 +185,23 @@ dependency cycles, more than 32 tasks or 128 edges, unsafe/glob paths, prefix ow
 task paths outside the item's declared Owned files, missing files, symlinks, and non-executable
 verifiers. It then freezes the graph as `TASKS.id` and generates `TASKS.md`.
 
-Inspect the frozen graph without editing it:
+Inspect the frozen graph without editing it. The coordinator may then dispatch dependency-ready tasks
+to isolated Git worktrees and integrate their passing commits in stable graph order:
 
 ```sh
 $CP task list fix-report-flow
 $CP task ready fix-report-flow
+$CP task dispatch fix-report-flow T1 <maker-name> A1 FOCUSED
+$CP task integrate fix-report-flow
 ```
 
 `task ready` exposes only tasks whose dependencies have PASS results. Any edit to the TSV, path
 sets, verifier contents, or verifier mode after READY refuses. The current implementation
-deliberately refuses item-wide maker dispatch for a task-graph item; task-bound isolated worktree
-dispatch and integration are the next execution slice, not an implied capability of validation.
+refuses item-wide maker dispatch for a task-graph item. Task dispatch creates an isolated worktree,
+binds its base and owned paths into the attempt, caps live makers at three by default, runs the frozen
+task verifier against the returned commit, and refuses changes outside task ownership. Integration
+requires every task PASS, applies commits in stable dependency order, records `INTEGRATION.tsv`, and
+blocks on ancestry or cherry-pick conflict. These are agent protocol primitives, not operator steps.
 
 ## Refusals that matter
 
@@ -202,8 +220,10 @@ Managed lifecycle refuses:
 ## What this behavior does not yet provide
 
 Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops,
-economical reuse of unchanged expensive evidence, and frozen task-graph validation. It does not yet
-provide task-bound isolated worktree dispatch and integration, conversion of active item-file
-programs, automatic agent launching or cancellation, cryptographic proof of who authored an
-artifact, or proof that a recorded command is a discriminating test. Those remain separate work;
-do not describe them as available merely because managed lifecycle is enabled.
+economical reuse of unchanged expensive evidence, frozen task graphs, isolated task worktrees, owned
+path enforcement, and stable integration. It does not provide conversion of active item-file programs,
+automatic agent launching or cancellation, cryptographic proof of who authored an artifact, or proof
+that a recorded command is a discriminating test. Task dispatch currently refuses a task with more than
+one direct dependency; broader fan-in remains a separate integration behavior. The coordinating agent
+supplies orchestration and human interaction; do not describe those as shell-enforced merely because
+managed lifecycle is enabled.

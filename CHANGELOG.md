@@ -5,19 +5,29 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+- Replaced command-driven onboarding with one fresh-agent entrypoint and one durable `cycle` resume
+  behavior. The coordinator now owns protocol mechanics, proposes a minimal agent/persona panel,
+  interrogates the problem, obtains approval of a refined proposal, and iterates work through review
+  findings until current evidence supports closure or a bounded escalation stops the run.
+- Added content-bound proposal approval. A managed claim cannot become work before the operator has
+  approved the current `PROPOSAL.md`, and any proposal edit invalidates that approval.
 - Added behavior-named managed lifecycle selection through `crucible lifecycle`, authoritative
-  `STATE.tsv`, generated `STATE.md`, a focused verifier, and an operator guide. Existing programs
-  retain item-file behavior unless explicitly enabled before their first item.
+  `STATE.tsv`, generated `STATE.md`, a focused verifier, and an internal protocol guide. New cycles
+  can select managed behavior atomically with `adopt --managed`; existing programs retain item-file
+  behavior unless explicitly enabled before their first item.
 - Added managed attempt records with immutable dispatch metadata, observed lifecycle events,
   evidence-bound write-once results, typed outcome/next-action pairs, explicit maker and reviewer
   deadlines, one infrastructure retry, repeated-finding stops, and unchanged-work reuse of
   canonical `FULL_SUITE` and `EXTERNAL` PASS evidence. Maker results distinguish input work from
   post-change work; review entry requires a current-work maker PASS, and managed closure rejects
   compatibility verdicts not backed by an attempt result.
-- Added optional frozen `TASKS.tsv` validation and generated task views. Managed `ready` now refuses
+- Added optional frozen `TASKS.tsv` validation and generated task views. Managed `ready` refuses
   unknown or cyclic dependencies, duplicate task IDs, unsafe or overlapping literal ownership,
-  and missing or non-executable task verifiers. Task-bound isolated dispatch and integration remain
-  explicitly unavailable rather than falling back to an unsafe item-wide maker dispatch.
+  and missing or non-executable task verifiers. Dependency-ready tasks can run in isolated Git
+  worktrees with a three-maker default cap, literal path ownership, frozen task verification, one
+  bounded retry, and stable integration that blocks on ancestry or cherry-pick conflict. All task
+  makers remain in a durable maker set, cannot review the integrated item, and reviewer results label
+  same-family, cross-family, or mixed-family correlation.
 
 ## [1.0.0] - 2026-08-07
 
