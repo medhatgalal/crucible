@@ -1,25 +1,11 @@
 #!/bin/sh
 # crucible - a file-only refusal gate for maker/judge work. No dependencies.
 #
-#   crucible adopt [PROGRAM]               install into the repo you are standing in
-#   crucible claim add|list|verdict|scout|admit  the outer loop: audit a problem document
-#   crucible triage                        evidence-grounded decision table for the operator
-#   crucible panes [VIEW...]               overlay live views onto the tmux window you are in
-#   crucible selftest                      verify the gate refuses what it claims to
-#   crucible add SLUG "TITLE"             create the item (also sets the run up)
-#   crucible agents                       list the panel: name, kind, model, effort
-#   crucible target SLUG REPO BRANCH BASE  point the item at a real git branch
-#   crucible next                         what to do now, read from files not memory
-#   crucible phase SLUG [PHASE]           show or advance the lifecycle phase
-#   crucible dispatch SLUG ROLE AGENT     write the contract for a call, print its path
-#   crucible brief SLUG maker|judge NAME  build a brief directly (dispatch is usually better)
-#   crucible run  SLUG NAME -- CMD...     run CMD and record the result as evidence
-#   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
-#   crucible run-claim CN NAME -- CMD...  the same, for an auditor working on a claim
-#   crucible check SLUG                   THE GATE. non-zero unless closeable
-#   crucible close SLUG "LESSON"          refuses unless check passes
-#   crucible workid SLUG                  print the current work id
-#   crucible help                         this list
+#   crucible adopt [PROGRAM] --managed     install one self-contained cycle in this repo
+#   crucible cycle [status]                resume the durable problem-to-done loop
+#   crucible cycle problem FILE            bind the cycle to a problem report
+#   crucible cycle approve                 record approval of the current proposal
+#   crucible help protocol                 show the agent-facing protocol primitives
 #
 # Roles come from the brief an agent receives, never from which agent it is. Any CLI
 # can be maker; any 1+ CLIs can be judges, same kind or mixed. agents.tsv is two
@@ -53,7 +39,35 @@ MIN_KINDS=${CRUCIBLE_MIN_KINDS:-1}
 MARK='crucible-run/1'
 
 die() { printf 'crucible: %s\n' "$*" >&2; exit 2; }
-usage() { sed -n '/^#   crucible adopt/,/^# Environment/p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() {
+  cat <<'EOF'
+Crucible runs one durable problem-to-done cycle for a coordinating agent.
+
+  crucible adopt [PROGRAM] --managed   install the cycle in the current repository
+  crucible cycle [status]              resume from repository evidence
+  crucible cycle problem FILE          bind a problem report to the cycle
+  crucible cycle approve               record approval of the current proposal
+  crucible help protocol               show internal agent protocol primitives
+
+Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
+EOF
+}
+protocol_usage() {
+  cat <<'EOF'
+Agent protocol primitives. These are implementation details used by START.md; the operator does
+not drive the cycle with them.
+
+  claim add|list|verdict|scout|admit   verify a report before it becomes work
+  triage                              render the evidence-grounded proposal input
+  add / ready / phase / task          create and advance bounded work
+  dispatch / attempt / result         coordinate isolated agent attempts
+  run / run-claim                     record work-bound evidence
+  check / close                       refuse unsupported completion
+  agents / target / state / workid    inspect supporting state
+  lifecycle status|enable             compatibility setup for older programs
+  panes / selftest                    optional observation and engine verification
+EOF
+}
 have() { command -v "$1" >/dev/null 2>&1; }
 posint() { case $1 in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ]; }
 posint "$MIN_JUDGES" || die "CRUCIBLE_MIN_JUDGES must be a positive integer"
@@ -93,6 +107,457 @@ self_path() {
 
 D() { printf '%s/items/%s' "$ROOT" "$1"; }
 need() { [ -n "${1:-}" ] || die "need a slug"; [ -d "$(D "$1")" ] || die "no such item: $1"; }
+
+lifecycle_mode() {
+  mode=$(sed -n 's/^lifecycle: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1)
+  case $mode in
+    '') printf 'item-file' ;;
+    managed) printf 'managed' ;;
+    *) die "unsupported lifecycle behavior: $mode" ;;
+  esac
+}
+uses_managed_lifecycle() { [ "$(lifecycle_mode)" = managed ]; }
+uses_guided_cycle() { grep -q '^cycle: guided$' "$ROOT/PROGRAM" 2>/dev/null; }
+
+state_validate_file() {
+  sf=$1
+  [ -f "$sf" ] && [ ! -L "$sf" ] || die "invalid STATE.tsv: missing regular file"
+  err=$(awk -F '\t' '
+    BEGIN { want="item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch" }
+    NR == 1 {
+      if ($0 != want) { print "header mismatch"; exit 1 }
+      next
+    }
+    {
+      if (NF != 8) { print "row " NR " has " NF " fields, need 8"; exit 1 }
+      if ($1 !~ /^[A-Za-z0-9._-]+$/) { print "invalid item at row " NR; exit 1 }
+      if (seen[$1]++) { print "duplicate item " $1; exit 1 }
+      if ($2 !~ /^(ACTIVE|BLOCKED|CLOSED|DROPPED)$/) { print "invalid status for " $1; exit 1 }
+      if ($3 !~ /^(DRAFT|READY|BUILD|REVIEW)$/) { print "invalid stage for " $1; exit 1 }
+      if ($4 !~ /^[A-Za-z0-9._-]+$/) { print "invalid work_id for " $1; exit 1 }
+      if ($5 !~ /^(-|LOW|MEDIUM|HIGH)$/) { print "invalid risk for " $1; exit 1 }
+      if ($6 !~ /^[A-Za-z0-9._-]+$/) { print "invalid inflight_attempt for " $1; exit 1 }
+      if ($7 !~ /^[A-Za-z0-9._-]+$/) { print "invalid block_code for " $1; exit 1 }
+      if ($8 !~ /^[0-9]+$/) { print "invalid updated_epoch for " $1; exit 1 }
+      if ($2 == "ACTIVE" || $2 == "BLOCKED") current++
+    }
+    END {
+      if (NR == 0) { print "empty file"; exit 1 }
+      if (current > 1) { print "more than one current item"; exit 1 }
+    }
+  ' "$sf" 2>&1) || die "invalid STATE.tsv: $err"
+}
+
+state_value() {
+  slug=$1; column=$2
+  awk -F '\t' -v s="$slug" -v c="$column" 'NR > 1 && $1 == s { print $c; exit }' "$ROOT/STATE.tsv"
+}
+
+state_render_file() {
+  out=$1; source=${2:-$ROOT/STATE.tsv}
+  prog=$(sed -n 's/^program: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1)
+  {
+    printf '# STATE — %s\n\n' "${prog:-program}"
+    printf 'Generated from `STATE.tsv`; do not edit this file by hand.\n\n'
+    printf '| Item | Status | Stage | Work ID | Risk | In-flight attempt | Block code | Updated epoch |\n'
+    printf '| --- | --- | --- | --- | --- | --- | --- | --- |\n'
+    awk -F '\t' 'NR > 1 { printf "| %s | %s | %s | %s | %s | %s | %s | %s |\n", $1,$2,$3,$4,$5,$6,$7,$8 }' "$source"
+  } > "$out"
+}
+
+state_lock() {
+  STATE_TMP="$ROOT/.STATE.tsv.$$.tmp"
+  STATE_MD_TMP="$ROOT/.STATE.md.$$.tmp"
+  STATE_PROGRAM_TMP="$ROOT/.PROGRAM.$$.tmp"
+  STATE_LOCK="$ROOT/.state.lock"
+  mkdir "$STATE_LOCK" 2>/dev/null || die "state mutation already in progress"
+  trap 'rm -f "$STATE_TMP" "$STATE_MD_TMP" "$STATE_PROGRAM_TMP"; rmdir "$STATE_LOCK" 2>/dev/null || true' 0 1 2 15
+}
+
+state_unlock() {
+  rmdir "$STATE_LOCK" 2>/dev/null || die "could not release state lock"
+  trap - 0 1 2 15
+}
+
+state_commit() {
+  state_validate_file "$STATE_TMP"
+  state_render_file "$STATE_MD_TMP" "$STATE_TMP"
+  mv "$STATE_TMP" "$ROOT/STATE.tsv"
+  mv "$STATE_MD_TMP" "$ROOT/STATE.md"
+  state_unlock
+}
+
+state_add_item() {
+  slug=$1; wid=$2; risk=$3
+  state_lock
+  state_validate_file "$ROOT/STATE.tsv"
+  [ -z "$(state_value "$slug" 1)" ] || die "item already exists in STATE.tsv: $slug"
+  current=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { n++ } END { print n+0 }' "$ROOT/STATE.tsv")
+  [ "$current" -eq 0 ] || die "refused: another item is current"
+  cp "$ROOT/STATE.tsv" "$STATE_TMP"
+  printf '%s\tACTIVE\tDRAFT\t%s\t%s\t-\t-\t%s\n' "$slug" "$wid" "$risk" "$(date +%s)" >> "$STATE_TMP"
+  state_commit
+}
+
+state_update_item() {
+  slug=$1; status=$2; stage=$3; wid=$4; risk=$5; inflight=$6; block=$7
+  state_lock
+  state_validate_file "$ROOT/STATE.tsv"
+  awk -F '\t' -v OFS='\t' -v s="$slug" -v st="$status" -v g="$stage" \
+    -v w="$wid" -v r="$risk" -v i="$inflight" -v b="$block" -v now="$(date +%s)" '
+    NR == 1 { print; next }
+    $1 == s { print $1,st,g,w,r,i,b,now; found=1; next }
+    { print }
+    END { if (!found) exit 4 }
+  ' "$ROOT/STATE.tsv" > "$STATE_TMP" || die "item missing from STATE.tsv: $slug"
+  state_commit
+}
+
+cmd_state() {
+  uses_managed_lifecycle || die "state requires managed lifecycle behavior — run: $(self_path) lifecycle enable --dry-run"
+  state_lock
+  state_validate_file "$ROOT/STATE.tsv"
+  state_render_file "$STATE_MD_TMP" "$ROOT/STATE.tsv"
+  mv "$STATE_MD_TMP" "$ROOT/STATE.md"
+  state_unlock
+  printf '%s/STATE.md\n' "$ROOT"
+}
+
+cmd_lifecycle() {
+  sub=${1:-status}; flag=${2:-}
+  case $sub in
+    status)
+      [ -z "$flag" ] || die "usage: crucible lifecycle status"
+      printf 'lifecycle: %s\n' "$(lifecycle_mode)"
+      ;;
+    enable)
+      case $flag in --dry-run|--apply) : ;; *) die "usage: crucible lifecycle enable --dry-run|--apply" ;; esac
+      uses_managed_lifecycle && { printf 'lifecycle: managed\n'; return; }
+      active=$(find "$ROOT/items" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -1)
+      [ -z "$active" ] || die "refused: managed lifecycle can only be enabled before the first item"
+      printf 'CREATE %s/STATE.tsv\nREPLACE %s/STATE.md\nUPDATE %s/PROGRAM lifecycle: managed\n' "$ROOT" "$ROOT" "$ROOT"
+      [ "$flag" = --apply ] || return 0
+      state_lock
+      printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$STATE_TMP"
+      state_validate_file "$STATE_TMP"
+      state_render_file "$STATE_MD_TMP" "$STATE_TMP"
+      awk '$0 !~ /^lifecycle: / { print }' "$ROOT/PROGRAM" > "$STATE_PROGRAM_TMP"
+      printf 'lifecycle: managed\n' >> "$STATE_PROGRAM_TMP"
+      mv "$STATE_TMP" "$ROOT/STATE.tsv"
+      mv "$STATE_MD_TMP" "$ROOT/STATE.md"
+      mv "$STATE_PROGRAM_TMP" "$ROOT/PROGRAM"
+      state_unlock
+      printf 'enabled managed lifecycle\n'
+      ;;
+    *) die "usage: crucible lifecycle status|enable --dry-run|--apply" ;;
+  esac
+}
+
+attempt_dir() {
+  id=$1
+  case $id in ''|*[!A0-9.]*) die "invalid attempt id: $id" ;; esac
+  valid=$(printf '%s\n' "$id" | awk -F. '
+    NF == 3 && $1 ~ /^A[0-9]+$/ && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ { print "yes" }
+  ')
+  [ "$valid" = yes ] || die "invalid attempt id: $id"
+  ad="$ROOT/attempts/$id"
+  [ -d "$ad" ] || die "no such attempt: $id"
+  printf '%s' "$ad"
+}
+
+attempt_meta() {
+  ad=$(attempt_dir "$1"); column=$2
+  awk -F '\t' -v c="$column" 'NR == 2 { print $c; exit }' "$ad/meta.tsv"
+}
+
+attempt_state() {
+  ad=$(attempt_dir "$1")
+  awk -F '\t' 'NR > 1 { state=$1 } END { print state }' "$ad/events.tsv"
+}
+
+attempt_pid() {
+  ad=$(attempt_dir "$1")
+  awk -F '\t' 'NR > 1 && $3 != "-" { pid=$3 } END { print (pid ? pid : "-") }' "$ad/events.tsv"
+}
+
+attempt_terminal() {
+  case $1 in RETURNED|TIMEOUT|STOPPED|ABANDONED|SUPERSEDED) return 0 ;; *) return 1 ;; esac
+}
+
+attempt_event() {
+  id=$1; new=$2; pid=$3; reason=$4; ad=$(attempt_dir "$id")
+  case "$reason" in *"$(printf '\t')"*|*'
+'*) die "attempt reason must be one line without tabs" ;; esac
+  lock="$ad/.event.lock"; tmp="$ad/.events.$$.tmp"
+  mkdir "$lock" 2>/dev/null || die "attempt update already in progress: $id"
+  trap 'rm -f "$tmp"; rmdir "$lock" 2>/dev/null || true' 0 1 2 15
+  old=$(attempt_state "$id")
+  attempt_terminal "$old" && die "attempt $id is terminal: $old"
+  cp "$ad/events.tsv" "$tmp"
+  printf '%s\t%s\t%s\t%s\n' "$new" "$(date +%s)" "$pid" "$reason" >> "$tmp"
+  mv "$tmp" "$ad/events.tsv"
+  rmdir "$lock"; trap - 0 1 2 15
+}
+
+state_attempt_update() {
+  slug=$1; status=$2; inflight=$3; block=$4
+  stage=$(state_value "$slug" 3); wid=$(state_value "$slug" 4); risk=$(state_value "$slug" 5)
+  state_update_item "$slug" "$status" "$stage" "$wid" "$risk" "$inflight" "$block"
+}
+
+attempt_live_for() (
+  slug=$1; role=$2; criterion=$3; task=${4:--}
+  [ -d "$ROOT/attempts" ] || return 1
+  for ad in "$ROOT"/attempts/*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    [ "$(attempt_meta "$id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$id" 5)" = "$role" ] || continue
+    [ "$(attempt_meta "$id" 8)" = "$criterion" ] || continue
+    [ "$(attempt_meta "$id" 3)" = "$task" ] || continue
+    st=$(attempt_state "$id")
+    attempt_terminal "$st" || { printf '%s' "$id"; return 0; }
+  done
+  return 1
+)
+
+attempt_pass_exists() (
+  slug=$1; wid=$2; role=$3; agent=$4; criterion=$5; task=${6:--}
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = "$role" ] || continue
+    [ "$(sed -n 's/^AGENT: //p' "$result_file" | head -1)" = "$agent" ] || continue
+    [ "$(sed -n 's/^CRITERION: //p' "$result_file" | head -1)" = "$criterion" ] || continue
+    [ "$(sed -n 's/^TASK-ID: //p' "$result_file" | head -1)" = "$task" ] || continue
+    return 0
+  done
+  return 1
+)
+
+canonical_pass_exists() (
+  slug=$1; wid=$2; class=$3
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^EVIDENCE-CLASS: //p' "$result_file" | head -1)" = "$class" ] || continue
+    return 0
+  done
+  return 1
+)
+
+maker_pass_exists() (
+  slug=$1; wid=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] || continue
+    [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = maker ] || continue
+    return 0
+  done
+  return 1
+)
+
+cmd_attempt() {
+  uses_managed_lifecycle || die "attempt requires managed lifecycle behavior"
+  sub=${1:-}; [ $# -eq 0 ] || shift
+  id=${1:-}; [ $# -eq 0 ] || shift
+  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish ATTEMPT ..."
+  ad=$(attempt_dir "$id"); slug=$(attempt_meta "$id" 2)
+  case $sub in
+    start)
+      value=${1:-}; [ $# -eq 1 ] || die "usage: crucible attempt start ATTEMPT PID"
+      posint "$value" || die "attempt start requires a positive PID"
+      [ "$(attempt_state "$id")" = DISPATCHED ] || die "attempt start requires DISPATCHED"
+      attempt_event "$id" RUNNING "$value" observed-start
+      printf '%s RUNNING pid %s\n' "$id" "$value"
+      ;;
+    overdue)
+      [ $# -eq 0 ] || die "usage: crucible attempt overdue ATTEMPT"
+      [ "$(attempt_state "$id")" = RUNNING ] || die "attempt overdue requires RUNNING"
+      deadline=$(attempt_meta "$id" 12); now=$(date +%s)
+      [ "$now" -ge "$deadline" ] || die "refused: deadline $deadline has not passed"
+      attempt_event "$id" OVERDUE "$(attempt_pid "$id")" deadline-passed
+      printf '%s OVERDUE; process outcome is still unobserved\n' "$id"
+      ;;
+    finish)
+      value=${1:-}; [ $# -eq 0 ] || shift; reason=${*:-}
+      case $value in RETURNED|TIMEOUT|STOPPED|ABANDONED) : ;; *) die "finish state must be RETURNED TIMEOUT STOPPED or ABANDONED" ;; esac
+      current=$(attempt_state "$id")
+      case $current in RUNNING|OVERDUE) : ;; *) die "attempt finish requires RUNNING or OVERDUE" ;; esac
+      [ -n "$reason" ] || reason=observed
+      attempt_event "$id" "$value" "$(attempt_pid "$id")" "$reason"
+      retry=$(attempt_meta "$id" 13); task=$(attempt_meta "$id" 3)
+      case $value in
+        RETURNED) printf '%s RETURNED; record its result next\n' "$id" ;;
+        TIMEOUT)
+          if [ "$task" != - ] && [ "$retry" = - ]; then
+            state_attempt_update "$slug" ACTIVE TASKS RETRY_AVAILABLE
+            printf '%s TIMEOUT; one task retry is available\n' "$id"
+          elif [ "$task" != - ]; then
+            state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
+            printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
+          elif [ "$retry" = - ]; then
+            state_attempt_update "$slug" ACTIVE "$id" RETRY_AVAILABLE
+            printf '%s TIMEOUT; one retry is available\n' "$id"
+          else
+            state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
+            printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
+          fi ;;
+        STOPPED|ABANDONED)
+          if [ "$task" != - ]; then block_code=TASK_BLOCKED; else block_code=OPERATOR_DECISION; fi
+          state_attempt_update "$slug" BLOCKED - "$block_code"
+          printf '%s %s; item blocked %s\n' "$id" "$value" "$block_code" ;;
+      esac
+      ;;
+    *) die "usage: crucible attempt start|overdue|finish ATTEMPT ..." ;;
+  esac
+}
+
+result_finalize() (
+  id=$1; slug=$2; wid=$3; role=$4; agent=$5; outcome=$6; evidence=$7; fingerprint=$8; task=${9:--}
+  ad=$(attempt_dir "$id"); d=$(D "$slug")
+  if [ "$role" = judge ]; then
+    word=$outcome
+    case $outcome in NEEDS_CONTEXT|BLOCKED) word=INSUFFICIENT_EVIDENCE ;; esac
+    verdict_tmp="$d/verdicts/.$agent.$$.tmp"
+    printf 'VERDICT: %s\nWORK-ID: %s\nresult %s; see %s\n' \
+      "$word" "$wid" "$id" "$evidence" > "$verdict_tmp"
+    mv "$verdict_tmp" "$d/verdicts/$agent.md"
+  fi
+  repeated=0
+  if [ "$outcome" = REJECT ] && [ "$fingerprint" != - ]; then
+    for result_file in "$ROOT"/attempts/*/result.md; do
+      [ -f "$result_file" ] || continue; [ "$result_file" = "$ad/result.md" ] && continue
+      [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+      [ "$(sed -n 's/^FINDING-FINGERPRINT: //p' "$result_file" | head -1)" = "$fingerprint" ] || continue
+      repeated=1; break
+    done
+  fi
+  stage=$(state_value "$slug" 3); risk=$(state_value "$slug" 5)
+  if [ "$repeated" -eq 1 ]; then
+    result_status=BLOCKED; result_block=REPEATED_FINDING
+  else
+    case $outcome in
+      PASS|REJECT) result_status=ACTIVE; result_block=- ;;
+      BLOCKED) result_status=BLOCKED; result_block=RESULT_BLOCKED ;;
+      NEEDS_CONTEXT) result_status=BLOCKED; result_block=NEEDS_CONTEXT ;;
+      SCOPE_CONFLICT) result_status=BLOCKED; result_block=SCOPE_CONFLICT ;;
+    esac
+  fi
+  if [ "$task" != - ]; then
+    item_wid=$(workid "$slug")
+    remaining=$(task_live_count "$slug")
+    [ "$remaining" -eq 0 ] && task_inflight=- || task_inflight=TASKS
+    state_update_item "$slug" "$result_status" "$stage" "$item_wid" "$risk" "$task_inflight" "$result_block"
+  else
+    state_update_item "$slug" "$result_status" "$stage" "$wid" "$risk" - "$result_block"
+  fi
+)
+
+cmd_result() {
+  uses_managed_lifecycle || die "result requires managed lifecycle behavior"
+  id=${1:-}; outcome=${2:-}; evidence=${3:-}; next=${4:-}; fingerprint=${5:--}
+  [ -n "$id" ] && [ -n "$outcome" ] && [ -n "$evidence" ] && [ -n "$next" ] \
+    || die "usage: crucible result ATTEMPT OUTCOME EVIDENCE NEXT [FINGERPRINT]"
+  case $outcome in PASS|REJECT|BLOCKED|NEEDS_CONTEXT|SCOPE_CONFLICT) : ;; *) die "invalid result outcome: $outcome" ;; esac
+  case $next in CLOSE|FIX|DECIDE|ESCALATE) : ;; *) die "invalid result next action: $next" ;; esac
+  case "$outcome:$next" in
+    PASS:CLOSE|REJECT:FIX|BLOCKED:DECIDE|BLOCKED:ESCALATE|NEEDS_CONTEXT:DECIDE|NEEDS_CONTEXT:ESCALATE|SCOPE_CONFLICT:DECIDE|SCOPE_CONFLICT:ESCALATE) : ;;
+    *) die "incompatible result: $outcome cannot request $next" ;;
+  esac
+  case $fingerprint in -|[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) : ;; *) die "fingerprint must be - or 12 alphanumeric characters" ;; esac
+  [ "$outcome" != REJECT ] || [ "$fingerprint" != - ] || die "REJECT requires a finding fingerprint"
+  ad=$(attempt_dir "$id"); [ "$(attempt_state "$id")" = RETURNED ] || die "result requires a RETURNED attempt"
+  slug=$(attempt_meta "$id" 2); task=$(attempt_meta "$id" 3); dispatch_wid=$(attempt_meta "$id" 4)
+  role=$(attempt_meta "$id" 5); agent=$(attempt_meta "$id" 6); kind=$(attempt_meta "$id" 7)
+  criterion=$(attempt_meta "$id" 8); class=$(attempt_meta "$id" 9); d=$(D "$slug")
+  relation=-; case $role in judge|adversary) relation=$(review_relation "$slug" "$agent") ;; esac
+  current_wid=$(workid "$slug")
+  case $role in
+    maker)
+      if [ "$task" != - ]; then
+        [ -f "$ad/task.tsv" ] || die "task attempt is missing task.tsv"
+        task_repo=$(awk -F '\t' 'NR == 2 { print $1 }' "$ad/task.tsv")
+        task_branch=$(awk -F '\t' 'NR == 2 { print $2 }' "$ad/task.tsv")
+        wid=$(git -C "$task_repo" rev-parse --verify "$task_branch" | cut -c1-12)
+        [ "$wid" != "$dispatch_wid" ] || die "task result requires work to change after dispatch"
+        changed_count=0
+        changed_paths=$(git -C "$task_repo" diff --name-only "$dispatch_wid..$wid")
+        [ -n "$changed_paths" ] || die "task result has no changed paths"
+        newline_count=$(git -C "$task_repo" diff --name-only -z "$dispatch_wid..$wid" | tr -cd '\000' | wc -c | tr -d ' ')
+        line_count=$(printf '%s\n' "$changed_paths" | wc -l | tr -d ' ')
+        [ "$newline_count" = "$line_count" ] || die "task result contains a newline in a Git path"
+        while IFS= read -r changed_path; do
+          task_owns_path "$slug" "$task" "$changed_path" \
+            || die "task $task changed unowned path: $changed_path"
+          changed_count=$((changed_count + 1))
+        done <<EOF
+$changed_paths
+EOF
+        [ "$changed_count" -gt 0 ] || die "task result has no changed paths"
+      else
+        [ "$current_wid" != EMPTY ] && [ "$current_wid" != NOBRANCH ] \
+          || die "maker result requires current work"
+        [ "$current_wid" != "$dispatch_wid" ] || die "maker result requires work to change after dispatch"
+        wid=$current_wid
+      fi ;;
+    judge|adversary)
+      [ "$current_wid" = "$dispatch_wid" ] \
+        || die "work changed during $role attempt: dispatched $dispatch_wid, current $current_wid"
+      wid=$dispatch_wid ;;
+  esac
+  case $evidence in */*|*'..'*|'') die "evidence must be one filename from the item evidence directory" ;; esac
+  ef="$d/evidence/$evidence"
+  [ -f "$ef" ] && [ ! -L "$ef" ] || die "missing regular evidence file: $evidence"
+  [ "$(head -1 "$ef")" = "$MARK" ] || die "evidence was not recorded by crucible run"
+  [ "$(sed -n 's/^agent: //p' "$ef" | head -1)" = "$agent" ] || die "evidence agent does not match attempt"
+  [ "$(sed -n 's/^work-id: //p' "$ef" | head -1)" = "$wid" ] || die "evidence work id does not match attempt"
+  [ "$(sed -n 's/^attempt-id: //p' "$ef" | head -1)" = "$id" ] || die "evidence attempt id does not match attempt"
+  if [ -e "$ad/result.md" ]; then
+    [ -f "$ad/result.md" ] && [ ! -L "$ad/result.md" ] || die "attempt result is immutable: $id"
+    [ "$(sed -n 's/^OUTCOME: //p' "$ad/result.md" | head -1)" = "$outcome" ] \
+      && [ "$(sed -n 's/^WORK-ID: //p' "$ad/result.md" | head -1)" = "$wid" ] \
+      && [ "$(sed -n 's/^EVIDENCE: //p' "$ad/result.md" | head -1)" = "$evidence" ] \
+      && [ "$(sed -n 's/^FINDING-FINGERPRINT: //p' "$ad/result.md" | head -1)" = "$fingerprint" ] \
+      && [ "$(sed -n 's/^NEXT: //p' "$ad/result.md" | head -1)" = "$next" ] \
+      || die "attempt result is immutable: $id"
+    [ "$(state_value "$slug" 6)" = "$id" ] || die "attempt result is immutable: $id"
+    result_finalize "$id" "$slug" "$wid" "$role" "$agent" "$outcome" "$evidence" "$fingerprint" "$task"
+    printf '%s/result.md (reconciled publication)\n' "$ad"
+    return
+  fi
+  if [ "$task" != - ]; then
+    verify_script=$(awk -F '\t' 'NR == 2 { print $6 }' "$ad/task.tsv")
+    verify_tmp="$ad/.task-verification.$$.tmp"
+    verify_rc=0
+    "$(D "$slug")/$verify_script" "$wid" > "$verify_tmp" 2>&1 || verify_rc=$?
+    printf '\nexit: %s\n' "$verify_rc" >> "$verify_tmp"
+    mv "$verify_tmp" "$ad/task-verification.txt"
+    [ "$verify_rc" -eq 0 ] || die "task verifier failed for $task; see $ad/task-verification.txt"
+  fi
+  lock="$ad/.result.lock"; mkdir "$lock" 2>/dev/null || die "attempt result is immutable: $id"
+  tmp="$ad/.result.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
+  {
+    printf 'OUTCOME: %s\nITEM: %s\nWORK-ID: %s\nDISPATCH-WORK-ID: %s\nATTEMPT-ID: %s\n' \
+      "$outcome" "$slug" "$wid" "$dispatch_wid" "$id"
+    printf 'ROLE: %s\nAGENT: %s\nKIND: %s\nREVIEW-RELATION: %s\nCRITERION: %s\n' \
+      "$role" "$agent" "$kind" "$relation" "$criterion"
+    printf 'TASK-ID: %s\nEVIDENCE-CLASS: %s\nEVIDENCE: %s\n' "$task" "$class" "$evidence"
+    printf 'FINDING-FINGERPRINT: %s\nNEXT: %s\n\nRecorded result for %s.\n' "$fingerprint" "$next" "$id"
+  } > "$tmp"
+  mv "$tmp" "$ad/result.md"; trap - 0 1 2 15
+  result_finalize "$id" "$slug" "$wid" "$role" "$agent" "$outcome" "$evidence" "$fingerprint" "$task"
+  printf '%s/result.md\n' "$ad"
+}
 # agents.tsv: name <TAB> kind <TAB> model <TAB> effort <TAB> command
 # The command may contain {BRIEF} {MODEL} {EFFORT}. Only listed names may judge.
 col() {
@@ -100,6 +565,41 @@ col() {
   grep -v '^#' "$ROOT/agents.tsv" 2>/dev/null | awk -F'\t' -v n="$1" -v c="$2" '$1==n{print $c; exit}'
 }
 kind_of() { col "$1" 2; }
+
+record_maker() {
+  slug=$1; agent=$2; d=$(D "$slug"); kind=$(kind_of "$agent")
+  [ -s "$d/MAKER" ] || printf '%s\n' "$agent" > "$d/MAKER"
+  [ -f "$d/MAKERS.tsv" ] || printf 'agent\tkind\n' > "$d/MAKERS.tsv"
+  awk -F '\t' -v a="$agent" 'NR > 1 && $1 == a { found=1 } END { exit !found }' "$d/MAKERS.tsv" \
+    || printf '%s\t%s\n' "$agent" "$kind" >> "$d/MAKERS.tsv"
+}
+
+is_maker() {
+  slug=$1; agent=$2; d=$(D "$slug")
+  if [ -f "$d/MAKERS.tsv" ]; then
+    awk -F '\t' -v a="$agent" 'NR > 1 && $1 == a { found=1 } END { exit !found }' "$d/MAKERS.tsv"
+    return
+  fi
+  [ -f "$d/MAKER" ] && [ "$(head -1 "$d/MAKER")" = "$agent" ]
+}
+
+review_relation() {
+  slug=$1; reviewer=$2; d=$(D "$slug"); reviewer_kind=$(kind_of "$reviewer"); same=0; different=0
+  if [ -f "$d/MAKERS.tsv" ]; then
+    maker_names=$(awk -F '\t' 'NR > 1 { print $1 }' "$d/MAKERS.tsv")
+  elif [ -s "$d/MAKER" ]; then
+    maker_names=$(head -1 "$d/MAKER")
+  else
+    printf 'UNPROVEN'; return
+  fi
+  for maker_name in $maker_names; do
+    maker_kind=$(kind_of "$maker_name")
+    if [ -n "$maker_kind" ] && [ "$maker_kind" = "$reviewer_kind" ]; then same=1; else different=1; fi
+  done
+  if [ "$same" -eq 1 ] && [ "$different" -eq 1 ]; then printf 'MIXED-FAMILY'
+  elif [ "$same" -eq 1 ]; then printf 'SAME-FAMILY'
+  else printf 'CROSS-FAMILY'; fi
+}
 
 cmd_agents() {
   [ -f "$ROOT/agents.tsv" ] || die "no agents.tsv here"
@@ -127,8 +627,6 @@ faults() {
   b=$(find "$1" -type f -print | wc -l | tr -d ' ')
   [ "$a" = "$b" ] || printf 'a filename under %s contains a newline\n' "$1"
 }
-
-TARGET_HELP='target file format: three lines — repo: <path>  branch: <name>  base: <ref>'
 
 tgt() { sed -n "s/^$2: //p" "$(D "$1")/TARGET" 2>/dev/null | head -1; }
 
@@ -177,9 +675,17 @@ emit_work() {
 }
 
 cmd_add() {
-  slug=${1:-}; shift 2>/dev/null || true; title=${*:-}
+  slug=${1:-}; [ $# -eq 0 ] || shift; title=${*:-}
   [ -n "$slug" ] || die 'usage: crucible add SLUG "TITLE"'
   case $slug in *[!A-Za-z0-9._-]*) die "slug may only contain A-Za-z0-9._-" ;; esac
+  if uses_managed_lifecycle; then
+    state_validate_file "$ROOT/STATE.tsv"
+    current=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { n++ } END { print n+0 }' "$ROOT/STATE.tsv")
+    [ "$current" -eq 0 ] || die "refused: another item is current"
+    if uses_guided_cycle; then
+      approval_current || die 'refused: the current PROPOSAL.md is not operator-approved'
+    fi
+  fi
   mkdir -p "$ROOT/items"
   [ -f "$ROOT/LESSONS.md" ] || : > "$ROOT/LESSONS.md"
   if [ ! -f "$ROOT/agents.tsv" ]; then
@@ -195,7 +701,44 @@ cmd_add() {
   fi
   d=$(D "$slug"); [ -d "$d" ] && die "item exists: $slug"
   mkdir -p "$d/work" "$d/evidence" "$d/verdicts" "$d/briefs"
-  cat > "$d/ITEM.md" <<EOF
+  if uses_managed_lifecycle; then
+    cat > "$d/ITEM.md" <<EOF
+# $slug — ${title:-untitled}
+
+## Goal
+
+${title:-Describe the work, and quote the report sentence that caused this item.}
+
+## Non-goals
+
+State what this item will not change.
+
+## Risk
+
+LOW
+
+## Owned files
+
+- List literal repository-relative paths before READY.
+
+## Acceptance criteria
+
+- [ ] A1
+
+## Focused falsifier
+
+TEMPLATE-FALSIFIER-UNWRITTEN. Replace this line with one bounded command or script.
+
+## Expensive evidence
+
+NONE
+
+## Stop conditions
+
+Stop and escalate if the frozen contract must change.
+EOF
+  else
+    cat > "$d/ITEM.md" <<EOF
 # $slug — ${title:-untitled}
 
 PHASE: SPEC
@@ -214,14 +757,23 @@ ${title:-Describe the work, and quote the report sentence that caused this item.
 TEMPLATE-FALSIFIER-UNWRITTEN. Replace this line: name the change to undo and the check
 that must then fail. The gate refuses closure while this marker is present.
 EOF
+  fi
   if [ -f "$ROOT/PROGRAM" ]; then
     r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM" | head -1)
     b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM" | head -1)
     [ -n "$r" ] && cmd_target "$slug" "$r" "ai/$slug" "${b:-main}" >/dev/null 2>&1 || true
   fi
+  if uses_managed_lifecycle; then
+    state_add_item "$slug" "$(workid "$slug")" LOW
+  fi
   printf '%s/ITEM.md\n' "$d"
-  printf 'next: write the ask, criteria and falsifier into that file, then\n'
-  printf '      crucible brief %s maker <name>\n' "$slug"
+  if uses_managed_lifecycle; then
+    printf 'next: complete the frozen contract, then\n'
+    printf '      %s ready %s\n' "$(self_path)" "$slug"
+  else
+    printf 'next: write the ask, criteria and falsifier into that file, then\n'
+    printf '      crucible brief %s maker <name>\n' "$slug"
+  fi
 }
 
 cmd_brief() {
@@ -332,6 +884,28 @@ cmd_run() {
   [ "${1:-}" = "--" ] || die "usage: crucible run SLUG NAME -- CMD..."
   shift; [ $# -gt 0 ] || die "no command given"
   reg "$name"; d=$(D "$slug"); wid=$(workid "$slug")
+  run_attempt=-
+  if uses_managed_lifecycle; then
+    run_attempt=$(state_value "$slug" 6)
+    [ "$run_attempt" != - ] || die "managed evidence requires an in-flight attempt"
+    if [ "$run_attempt" = TASKS ]; then
+      run_cwd=$(pwd -P)
+      run_attempt=$(task_attempt_for_run "$slug" "$name" "$run_cwd" 2>/dev/null || true)
+      [ -n "$run_attempt" ] || die "no live task attempt for $name in $run_cwd"
+    fi
+    run_agent=$(attempt_meta "$run_attempt" 6)
+    [ "$run_agent" = "$name" ] || die "in-flight attempt belongs to $run_agent, not $name"
+    run_state=$(attempt_state "$run_attempt")
+    case $run_state in RUNNING|OVERDUE) : ;;
+      *) die "managed evidence requires a RUNNING or OVERDUE attempt" ;;
+    esac
+    run_task=$(attempt_meta "$run_attempt" 3)
+    if [ "$run_task" != - ]; then
+      task_repo=$(awk -F '\t' 'NR == 2 { print $1 }' "$ROOT/attempts/$run_attempt/task.tsv")
+      task_branch=$(awk -F '\t' 'NR == 2 { print $2 }' "$ROOT/attempts/$run_attempt/task.tsv")
+      wid=$(git -C "$task_repo" rev-parse --verify "$task_branch" | cut -c1-12)
+    fi
+  fi
   # The name is unique by construction. Asking whether a name is free and then taking
   # it is a check-then-act race: two concurrent runs both see it free, both take it,
   # and one silently overwrites the other. The pid separates concurrent writers, the
@@ -340,6 +914,7 @@ cmd_run() {
   out="$d/evidence/$name.$tok.$wid.txt"
   tmp="$d/evidence/.partial.$name.$tok.$wid"
   { printf '%s\n' "$MARK"; printf 'agent: %s\n' "$name"; printf 'work-id: %s\n' "$wid"
+    [ "$run_attempt" = - ] || printf 'attempt-id: %s\n' "$run_attempt"
     printf 'when: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; printf 'command:'
     for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; printf -- '--- output ---\n'; } > "$tmp"
   rc=0; "$@" >> "$tmp" 2>&1 || rc=$?
@@ -412,9 +987,206 @@ cmd_dispatch_claim() {
     printf '%s\n' "$(invocation "$name" "$out")"; } >&2
 }
 
+cmd_dispatch_managed() (
+  slug=$1; role=${2:-}; agent=${3:-}; criterion=${4:-A1}; class=${5:-FOCUSED}; retry=${6:--}; task=${7:--}
+  need "$slug"
+  [ -n "$role" ] && [ -n "$agent" ] || die "usage: crucible dispatch ITEM ROLE AGENT [CRITERION] [EVIDENCE_CLASS] [RETRY_OF]"
+  case $criterion in *[!A-Za-z0-9._-]*|'') die "invalid criterion: $criterion" ;; esac
+  criterion_exists=$(awk -v c="$criterion" '
+    /^- \[[ xX]\] / {
+      line=$0; sub(/^- \[[ xX]\] /, "", line); split(line, part, /[:@ ]/)
+      if (part[1] == c) { print "yes"; exit }
+    }
+  ' "$(D "$slug")/ITEM.md")
+  [ "$criterion_exists" = yes ] || die "criterion is not declared by the item: $criterion"
+  case $class in FOCUSED|FULL_SUITE|EXTERNAL|MANUAL) : ;; *) die "invalid evidence class: $class" ;; esac
+  role_file="$ROOT/roles/$role.md"; [ -f "$role_file" ] || die "no such role: $role"
+  reg "$agent"
+  dispatch_lock="$ROOT/.dispatch.lock"; staging=
+  mkdir "$dispatch_lock" 2>/dev/null || die "managed dispatch already in progress"
+  # shellcheck disable=SC2329  # invoked by the EXIT trap below
+  dispatch_cleanup() {
+    dispatch_status=$?
+    if [ -n "$staging" ]; then
+      rm -f "$staging/meta.tsv" "$staging/events.tsv" "$staging/contract.md" "$staging/task.tsv"
+      rmdir "$staging" 2>/dev/null || true
+    fi
+    rmdir "$dispatch_lock" 2>/dev/null || true
+    trap - 0
+    exit "$dispatch_status"
+  }
+  trap dispatch_cleanup 0
+  trap 'exit 130' 1 2 15
+  d=$(D "$slug"); stage=$(phase_of "$slug"); wid=$(workid "$slug")
+  case $role in
+    maker) [ "$stage" = BUILD ] || die "maker dispatch requires BUILD"
+      if [ -f "$d/TASKS.tsv" ]; then
+        [ "$task" != - ] || die "item uses a task DAG; dispatch through: $(self_path) task dispatch"
+        [ -n "$(task_field "$slug" "$task" 1)" ] || die "no such task: $task"
+        deps=$(task_field "$slug" "$task" 2)
+        case $deps in *,*) die "task execution with multiple direct dependencies is not available: $task" ;; esac
+        task_dependencies_pass "$slug" "$deps" || die "task dependencies have not passed: $task"
+        task_pass_exists "$slug" "$task" && die "task already has PASS: $task"
+        live_task=$(task_live_attempt "$slug" "$task" 2>/dev/null || true)
+        [ -z "$live_task" ] || die "task already has live attempt $live_task"
+        pending_retry=$(task_retry_available "$slug" "$task" 2>/dev/null || true)
+        if [ -n "$pending_retry" ] && [ "$retry" = - ]; then
+          die "task $task requires retry of $pending_retry"
+        fi
+        max_parallel=${CRUCIBLE_MAX_PARALLEL_MAKERS:-3}; posint "$max_parallel" \
+          || die "CRUCIBLE_MAX_PARALLEL_MAKERS must be a positive integer"
+        live_count=$(task_live_count "$slug")
+        [ "$live_count" -lt "$max_parallel" ] \
+          || die "parallel maker limit reached: $live_count/$max_parallel"
+        [ -f "$d/TARGET" ] || die "task dispatch requires a Git target"
+      else
+        [ "$task" = - ] || die "item has no task DAG: $slug"
+      fi ;;
+    judge|adversary) [ "$stage" = REVIEW ] || die "$role dispatch requires REVIEW"
+      is_maker "$slug" "$agent" && die "refused: $agent is a maker of $slug" ;;
+    *) die "managed lifecycle dispatch role must be maker, judge, or adversary" ;;
+  esac
+  if [ "$task" != - ]; then
+    task_repo=$(tgt "$slug" repo); item_branch=$(tgt "$slug" branch); item_base=$(tgt "$slug" base)
+    if ! git -C "$task_repo" rev-parse --verify --quiet "$item_branch" >/dev/null; then
+      git -C "$task_repo" branch "$item_branch" "$item_base" >/dev/null \
+        || die "could not create item integration branch $item_branch from $item_base"
+    fi
+    if [ "$deps" = - ]; then
+      wid=$(git -C "$task_repo" rev-parse --verify "$item_branch" | cut -c1-12)
+    else
+      dependency_result=$(task_result_file "$slug" "$deps")
+      wid=$(sed -n 's/^WORK-ID: //p' "$dependency_result" | head -1)
+    fi
+  fi
+  if [ "$retry" != - ]; then
+    attempt_dir "$retry" >/dev/null
+    [ "$(attempt_state "$retry")" = TIMEOUT ] || die "retry source must be an observed TIMEOUT"
+    [ "$(attempt_meta "$retry" 13)" = - ] || die "refused: only one infrastructure retry is allowed"
+    [ "$(attempt_meta "$retry" 2)" = "$slug" ] && [ "$(attempt_meta "$retry" 3)" = "$task" ] \
+      && [ "$(attempt_meta "$retry" 5)" = "$role" ] \
+      && [ "$(attempt_meta "$retry" 6)" = "$agent" ] && [ "$(attempt_meta "$retry" 8)" = "$criterion" ] \
+      && [ "$(attempt_meta "$retry" 9)" = "$class" ] && [ "$(attempt_meta "$retry" 4)" = "$wid" ] \
+      || die "retry key does not match the prior attempt"
+  fi
+  [ "$(state_value "$slug" 2)" = ACTIVE ] || die "item is not active: $slug"
+  recorded_inflight=$(state_value "$slug" 6)
+  if [ "$task" != - ] && { [ "$recorded_inflight" = - ] || [ "$recorded_inflight" = TASKS ]; }; then
+    :
+  elif [ "$retry" != - ] && [ "$recorded_inflight" = "$retry" ]; then
+    :
+  else
+    [ "$recorded_inflight" = - ] \
+      || die "refused: item already has in-flight attempt $recorded_inflight"
+  fi
+  live=$(attempt_live_for "$slug" "$role" "$criterion" "$task" 2>/dev/null || true)
+  [ -z "$live" ] || die "refused: live attempt $live already owns $slug/$role/$criterion"
+  attempt_pass_exists "$slug" "$wid" "$role" "$agent" "$criterion" "$task" \
+    && die "refused: $agent already has current-work PASS for $role/$criterion"
+  case $class in FULL_SUITE|EXTERNAL)
+    canonical_pass_exists "$slug" "$wid" "$class" \
+      && die "refused: canonical $class PASS already exists for $slug at $wid" ;;
+  esac
+  case $role in
+    maker) seconds=${CRUCIBLE_MAKER_SECONDS:-2700} ;;
+    judge|adversary) seconds=${CRUCIBLE_REVIEW_SECONDS:-1800} ;;
+  esac
+  posint "$seconds" || die "attempt budget must be a positive integer"
+  mkdir -p "$ROOT/attempts"
+  now=$(date +%s); n=1
+  while :; do
+    id="A$now.$$.${n}"
+    target_attempt="$ROOT/attempts/$id"
+    staging="$ROOT/attempts/.$id.$$.tmp"
+    [ ! -e "$target_attempt" ] && mkdir "$staging" 2>/dev/null && break
+    n=$((n+1))
+  done
+  if [ "$task" != - ]; then
+    program=$(sed -n 's/^program: //p' "$ROOT/PROGRAM" | head -1)
+    task_branch="ai/${program}-${slug}-${task}-${id}"
+    task_worktree="$ROOT/worktrees/$id"
+    mkdir -p "$ROOT/worktrees"
+    git -C "$task_repo" worktree add -q -b "$task_branch" "$task_worktree" "$wid" \
+      || die "could not create isolated worktree for $task"
+  fi
+  ad=$staging
+  deadline=$((now + seconds)); kind=$(kind_of "$agent")
+  printf 'attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n' > "$ad/meta.tsv"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\tDISPATCHED\t%s\t%s\t%s\n' \
+    "$id" "$slug" "$task" "$wid" "$role" "$agent" "$kind" "$criterion" "$class" "$now" "$deadline" "$retry" >> "$ad/meta.tsv"
+  printf 'state\tepoch\tpid\treason\nDISPATCHED\t%s\t-\tdispatch-recorded\n' "$now" > "$ad/events.tsv"
+  if [ "$task" != - ]; then
+    printf 'repo\tbranch\tworktree\titem_branch\tpaths_file\tverify_script\n' > "$ad/task.tsv"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$task_repo" "$task_branch" "$task_worktree" "$item_branch" \
+      "$(task_field "$slug" "$task" 3)" "$(task_field "$slug" "$task" 4)" >> "$ad/task.tsv"
+  fi
+  self=$(self_path)
+  [ "$task" = - ] || self="$ROOT/crucible"
+  {
+    printf '# Attempt %s — %s — %s\n\n' "$id" "$role" "$slug"
+    printf 'This attempt is bound to item `%s`, task `%s`, work `%s`, criterion `%s`, and evidence class `%s`.\n\n' "$slug" "$task" "$wid" "$criterion" "$class"
+    printf 'Before launch, record the observed PID:\n\n    %s attempt start %s <PID>\n\n' "$self" "$id"
+    printf 'Record commands through:\n\n    %s run %s %s -- <command>\n\n' "$self" "$slug" "$agent"
+    printf 'When the process exits, record RETURNED, TIMEOUT, STOPPED, or ABANDONED:\n\n'
+    printf '    %s attempt finish %s <STATE> "<observation>"\n\n' "$self" "$id"
+    printf 'After RETURNED, record exactly one result:\n\n'
+    printf '    %s result %s <OUTCOME> <EVIDENCE-FILE> <NEXT> [FINGERPRINT]\n\n' "$self" "$id"
+    printf '## Role\n\n'; sed -n '/^## Instructions/,$p' "$role_file"
+    printf '\n## Item\n\n'; cat "$d/ITEM.md"
+    if [ "$role" = maker ]; then
+      printf '\n## Work location\n\n'
+      if [ "$task" != - ]; then
+        printf 'Work only in isolated worktree `%s` on branch `%s`.\n\n' "$task_worktree" "$task_branch"
+        printf 'Owned paths:\n\n'
+        while IFS= read -r owned_path; do printf -- '- `%s`\n' "$owned_path"; done < "$d/$(task_field "$slug" "$task" 3)"
+        printf '\nBefore returning, commit your changes and run the task verifier through `crucible run`:\n\n'
+        printf '    %s run %s %s -- %s/%s <task-commit>\n' "$self" "$slug" "$agent" "$d" "$(task_field "$slug" "$task" 4)"
+      elif [ -f "$d/TARGET" ]; then
+        printf 'Repository: `%s`\n\nBranch: `%s`\n\nBase: `%s`\n' \
+          "$(tgt "$slug" repo)" "$(tgt "$slug" branch)" "$(tgt "$slug" base)"
+      else
+        printf 'Write only under `%s/work/`.\n' "$d"
+      fi
+    else
+      printf '\n## Review independence\n\nRelation to recorded maker families: `%s`.\n' \
+        "$(review_relation "$slug" "$agent")"
+      printf '\n## Work — work id %s\n\n' "$wid"
+      emit_work "$slug" "$wid"
+      printf '\n## Recorded evidence\n\n'
+      if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
+        printf '(none. Absence of evidence is a finding, never a pass.)\n'
+      else
+        find "$d/evidence" -type f -print | LC_ALL=C sort | while IFS= read -r evidence_file; do
+          printf '### %s\n```\n' "${evidence_file##*/}"
+          cat "$evidence_file"
+          printf '```\n'
+        done
+      fi
+    fi
+    printf '\n## Rules\n\n'; cat "$ROOT/RULES.md" 2>/dev/null || true
+  } > "$ad/contract.md"
+  mv "$staging" "$target_attempt"
+  staging=
+  ad=$target_attempt
+  [ "$role" = maker ] && record_maker "$slug" "$agent"
+  risk=$(state_value "$slug" 5)
+  if [ "$task" != - ]; then
+    item_wid=$(workid "$slug")
+    (state_update_item "$slug" ACTIVE "$stage" "$item_wid" "$risk" TASKS -)
+  else
+    (state_update_item "$slug" ACTIVE "$stage" "$wid" "$risk" "$id" -)
+  fi
+  printf '%s/contract.md\n' "$ad"
+  { printf '\n# %s as %s. Run this:\n' "$agent" "$role"
+    printf '%s\n' "$(invocation "$agent" "$ad/contract.md")"; } >&2
+  rmdir "$dispatch_lock"; dispatch_lock=
+  trap - 0 1 2 15
+)
+
 cmd_dispatch() {
   slug=${1:-}; role=${2:-}; name=${3:-}
   case $slug in C[0-9]*) cmd_dispatch_claim "$@"; return $? ;; esac
+  if uses_managed_lifecycle; then cmd_dispatch_managed "$@"; return $?; fi
   need "$slug"
   [ -n "$role" ] && [ -n "$name" ] || die "usage: crucible dispatch SLUG ROLE AGENT"
   rf="$ROOT/roles/$role.md"; [ -f "$rf" ] || die "no such role: $role (see $ROOT/roles/)"
@@ -518,12 +1290,740 @@ cmd_dispatch() {
   } >&2
 }
 
-phase_of() { p=$(sed -n 's/^PHASE: //p' "$(D "$1")/ITEM.md" 2>/dev/null | head -1); printf '%s' "${p:-SPEC}"; }
+item_section_body() {
+  file=$1; heading=$2
+  awk -v h="## $heading" '
+    $0 == h { in_section=1; next }
+    in_section && /^## / { exit }
+    in_section && $0 !~ /^[[:space:]]*$/ { print }
+  ' "$file"
+}
+
+validate_managed_item() {
+  slug=$1; file=$(D "$slug")/ITEM.md
+  expected=$(printf '%s\n' '## Goal' '## Non-goals' '## Risk' '## Owned files' \
+    '## Acceptance criteria' '## Focused falsifier' '## Expensive evidence' '## Stop conditions')
+  actual=$(grep '^## ' "$file" 2>/dev/null || true)
+  [ "$actual" = "$expected" ] || die "refused: ITEM.md sections are missing, duplicated, or out of order"
+
+  risk=$(item_section_body "$file" Risk)
+  case $risk in LOW|MEDIUM|HIGH) : ;; *) die "refused: risk must be exactly LOW, MEDIUM, or HIGH" ;; esac
+
+  owned_error=$(item_section_body "$file" 'Owned files' | awk '
+    !/^- / { print "owned paths must be list items"; exit }
+    {
+      path=$0; sub(/^- /, "", path)
+      if (path == "" || path ~ /^\// || path ~ /(^|\/)\.\.($|\/)/ || path ~ /(^|\/)\.($|\/)/ || path ~ /\/\// || path ~ /[*?\[]/) {
+        print "unsafe owned path " path; exit
+      }
+      count++
+    }
+    END { if (!count) print "owned files are empty" }
+  ')
+  [ -z "$owned_error" ] || die "refused: $owned_error"
+
+  criteria=$(item_section_body "$file" 'Acceptance criteria' | grep -Ec '^- \[[ xX]\] A[1-3]([:@ ]|$)' 2>/dev/null || true)
+  criteria=${criteria:-0}
+  [ "$criteria" -ge 1 ] && [ "$criteria" -le 3 ] || die "refused: need one to three A1-A3 acceptance criteria"
+
+  falsifier=$(item_section_body "$file" 'Focused falsifier')
+  [ -n "$falsifier" ] || die "refused: focused falsifier is empty"
+  case $falsifier in *TEMPLATE-FALSIFIER-UNWRITTEN*) die "refused: focused falsifier is not written" ;; esac
+  lines=$(printf '%s\n' "$falsifier" | wc -l | tr -d ' ')
+  [ "$lines" -eq 1 ] || die "refused: focused falsifier must be one bounded command or script"
+}
+
+validate_task_dag() {
+  slug=$1; d=$(D "$slug"); tasks="$d/TASKS.tsv"
+  [ -f "$tasks" ] && [ ! -L "$tasks" ] || die "invalid TASKS.tsv: missing regular file"
+  header=$(printf 'task_id\tdepends_on\tpaths_file\tverify_script')
+  [ "$(sed -n '1p' "$tasks")" = "$header" ] || die "invalid TASKS.tsv: header mismatch"
+  task_error=$(awk -F '\t' '
+    NR == 1 { next }
+    NF != 4 { print "row " NR " has " NF " fields, need 4"; exit }
+    $1 !~ /^T[1-9][0-9]*$/ { print "invalid task id at row " NR; exit }
+    seen[$1]++ { print "duplicate task id " $1; exit }
+    $2 !~ /^(-|T[1-9][0-9]*(,T[1-9][0-9]*)*)$/ { print "invalid dependencies for " $1; exit }
+    $3 !~ /^tasks\/[A-Za-z0-9._-]+\.paths$/ { print "invalid paths file for " $1; exit }
+    $4 !~ /^tasks\/[A-Za-z0-9._-]+\.verify\.sh$/ { print "invalid verify script for " $1; exit }
+    { count++ }
+    END { if (!count) print "no tasks"; else if (count > 32) print "more than 32 tasks" }
+  ' "$tasks")
+  [ -z "$task_error" ] || die "invalid TASKS.tsv: $task_error"
+
+  graph_error=$(awk -F '\t' '
+    NR == 1 { next }
+    { order[++n]=$1; deps[$1]=$2; exists[$1]=1 }
+    END {
+      edges=0
+      for (i=1; i<=n; i++) {
+        id=order[i]
+        if (deps[id] == "-") continue
+        count=split(deps[id], part, ",")
+        for (j=1; j<=count; j++) {
+          edges++
+          if (!exists[part[j]]) { print "unknown dependency " part[j] " for " id; exit }
+          if (part[j] == id) { print "dependency cycle at " id; exit }
+        }
+      }
+      if (edges > 128) { print "more than 128 dependency edges"; exit }
+      completed=0
+      for (round=1; round<=n; round++) {
+        progressed=0
+        for (i=1; i<=n; i++) {
+          id=order[i]; if (done[id]) continue
+          ready=1
+          if (deps[id] != "-") {
+            count=split(deps[id], part, ",")
+            for (j=1; j<=count; j++) if (!done[part[j]]) ready=0
+          }
+          if (ready) { done[id]=1; completed++; progressed=1 }
+        }
+        if (!progressed) break
+      }
+      if (completed != n) print "dependency cycle"
+    }
+  ' "$tasks")
+  [ -z "$graph_error" ] || die "invalid TASKS.tsv: $graph_error"
+
+  while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+    [ "$task" = task_id ] && continue
+    paths="$d/$paths_file"; verify="$d/$verify_script"
+    [ -f "$paths" ] && [ ! -L "$paths" ] || die "invalid task $task: missing regular $paths_file"
+    [ -s "$paths" ] || die "invalid task $task: empty $paths_file"
+    [ -f "$verify" ] && [ ! -L "$verify" ] || die "invalid task $task: missing regular $verify_script"
+    [ -x "$verify" ] || die "invalid task $task: $verify_script is not executable"
+    [ "$(sed -n '1p' "$verify")" = '#!/bin/sh' ] \
+      || die "invalid task $task: $verify_script must start with #!/bin/sh"
+  done < "$tasks"
+
+  path_error=$(
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      while IFS= read -r owned_path || [ -n "$owned_path" ]; do
+        printf '%s\t%s\n' "$task" "$owned_path"
+      done < "$d/$paths_file"
+    done < "$tasks" | awk -F '\t' '
+      NF != 2 || $2 == "" { print "blank or malformed owned path"; exit }
+      $2 ~ /^\// || $2 ~ /(^|\/)\.\.($|\/)/ || $2 ~ /(^|\/)\.($|\/)/ || $2 ~ /\/\// || $2 ~ /[*?\[]/ {
+        print "unsafe owned path " $2 " for " $1; exit
+      }
+      {
+        task[++n]=$1; path[n]=$2
+        for (i=1; i<n; i++) {
+          if (path[i] == path[n] || index(path[i], path[n] "/") == 1 || index(path[n], path[i] "/") == 1) {
+            print "ownership overlap " path[i] " (" task[i] ") and " path[n] " (" task[n] ")"; exit
+          }
+        }
+      }
+    '
+  )
+  [ -z "$path_error" ] || die "invalid TASKS.tsv: $path_error"
+
+  scope_error=$(
+    {
+      item_section_body "$d/ITEM.md" 'Owned files' | sed 's/^- /I\t/'
+      while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+        [ "$task" = task_id ] && continue
+        while IFS= read -r owned_path || [ -n "$owned_path" ]; do
+          printf 'T\t%s\t%s\n' "$task" "$owned_path"
+        done < "$d/$paths_file"
+      done < "$tasks"
+    } | awk -F '\t' '
+      $1 == "I" { item[++n]=$2; next }
+      $1 == "T" {
+        allowed=0
+        for (i=1; i<=n; i++) if ($3 == item[i] || index($3, item[i] "/") == 1) allowed=1
+        if (!allowed) { print "task " $2 " owns undeclared item path " $3; exit }
+      }
+    '
+  )
+  [ -z "$scope_error" ] || die "invalid TASKS.tsv: $scope_error"
+}
+
+task_contract_id() {
+  slug=$1; d=$(D "$slug"); tasks="$d/TASKS.tsv"
+  {
+    printf 'TASKS.tsv %s\n' "$(hashfile "$tasks")"
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      printf '%s %s %s %s\n' "$task" "$deps" "$paths_file" "$(hashfile "$d/$paths_file")"
+      mode=$(ls -l "$d/$verify_script" | cut -c1-10)
+      printf '%s %s %s\n' "$verify_script" "$mode" "$(hashfile "$d/$verify_script")"
+    done < "$tasks"
+  } | h12
+}
+
+task_assert_frozen() {
+  slug=$1; d=$(D "$slug")
+  [ -f "$d/TASKS.id" ] && [ ! -L "$d/TASKS.id" ] || die "task DAG is not frozen: $slug"
+  frozen=$(sed -n '1p' "$d/TASKS.id"); current=$(task_contract_id "$slug")
+  [ "$frozen" = "$current" ] || die "task DAG changed after READY: $frozen -> $current"
+}
+
+task_pass_exists() (
+  slug=$1; task=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^TASK-ID: //p' "$result_file" | head -1)" = "$task" ] || continue
+    return 0
+  done
+  return 1
+)
+
+task_field() {
+  slug=$1; task=$2; column=$3
+  awk -F '\t' -v t="$task" -v c="$column" 'NR > 1 && $1 == t { print $c; exit }' "$(D "$slug")/TASKS.tsv"
+}
+
+task_result_file() (
+  slug=$1; task=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  found=
+  for result_file in "$ROOT"/attempts/*/result.md; do
+    [ -f "$result_file" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^TASK-ID: //p' "$result_file" | head -1)" = "$task" ] || continue
+    found=$result_file
+  done
+  [ -n "$found" ] || return 1
+  printf '%s' "$found"
+)
+
+task_live_attempt() (
+  slug=$1; task=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for attempt_path in "$ROOT"/attempts/*; do
+    [ -d "$attempt_path" ] || continue
+    attempt_id=${attempt_path##*/}
+    [ "$(attempt_meta "$attempt_id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$attempt_id" 3)" = "$task" ] || continue
+    attempt_status=$(attempt_state "$attempt_id")
+    if ! attempt_terminal "$attempt_status" || { [ "$attempt_status" = RETURNED ] && [ ! -f "$attempt_path/result.md" ]; }; then
+      printf '%s' "$attempt_id"; return 0
+    fi
+  done
+  return 1
+)
+
+task_retry_available() (
+  slug=$1; task=$2
+  [ -d "$ROOT/attempts" ] || return 1
+  for attempt_path in "$ROOT"/attempts/*; do
+    [ -d "$attempt_path" ] || continue
+    attempt_id=${attempt_path##*/}
+    [ "$(attempt_meta "$attempt_id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$attempt_id" 3)" = "$task" ] || continue
+    [ "$(attempt_meta "$attempt_id" 13)" = - ] || continue
+    [ "$(attempt_state "$attempt_id")" = TIMEOUT ] || continue
+    retried=0
+    for child_path in "$ROOT"/attempts/*; do
+      [ -d "$child_path" ] || continue
+      child_id=${child_path##*/}
+      [ "$(attempt_meta "$child_id" 13)" = "$attempt_id" ] && { retried=1; break; }
+    done
+    [ "$retried" -eq 1 ] || { printf '%s' "$attempt_id"; return 0; }
+  done
+  return 1
+)
+
+task_live_count() (
+  slug=$1; count=0
+  [ -d "$ROOT/attempts" ] || { printf '0'; return; }
+  for attempt_path in "$ROOT"/attempts/*; do
+    [ -d "$attempt_path" ] || continue
+    attempt_id=${attempt_path##*/}
+    [ "$(attempt_meta "$attempt_id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$attempt_id" 3)" != - ] || continue
+    attempt_status=$(attempt_state "$attempt_id")
+    if ! attempt_terminal "$attempt_status" || { [ "$attempt_status" = RETURNED ] && [ ! -f "$attempt_path/result.md" ]; }; then
+      count=$((count + 1))
+    fi
+  done
+  printf '%s' "$count"
+)
+
+task_attempt_for_run() (
+  slug=$1; agent=$2; cwd=$3
+  [ -d "$ROOT/attempts" ] || return 1
+  for attempt_path in "$ROOT"/attempts/*; do
+    [ -f "$attempt_path/task.tsv" ] || continue
+    attempt_id=${attempt_path##*/}
+    [ "$(attempt_meta "$attempt_id" 2)" = "$slug" ] || continue
+    [ "$(attempt_meta "$attempt_id" 6)" = "$agent" ] || continue
+    attempt_terminal "$(attempt_state "$attempt_id")" && continue
+    recorded_worktree=$(awk -F '\t' 'NR == 2 { print $3 }' "$attempt_path/task.tsv")
+    recorded_worktree=$(cd "$recorded_worktree" 2>/dev/null && pwd -P) || continue
+    [ "$recorded_worktree" = "$cwd" ] || continue
+    printf '%s' "$attempt_id"; return 0
+  done
+  return 1
+)
+
+task_topological_order() {
+  slug=$1
+  awk -F '\t' '
+    NR == 1 { next }
+    { order[++n]=$1; deps[$1]=$2 }
+    END {
+      emitted=0
+      for (round=1; round<=n; round++) {
+        for (i=1; i<=n; i++) {
+          id=order[i]; if (done[id]) continue
+          ready=1
+          if (deps[id] != "-") {
+            count=split(deps[id], part, ",")
+            for (j=1; j<=count; j++) if (!done[part[j]]) ready=0
+          }
+          if (ready) { print id; done[id]=1; emitted++ }
+        }
+      }
+      if (emitted != n) exit 2
+    }
+  ' "$(D "$slug")/TASKS.tsv"
+}
+
+task_all_pass() {
+  slug=$1
+  for task in $(task_topological_order "$slug"); do
+    task_pass_exists "$slug" "$task" || return 1
+  done
+  return 0
+}
+
+task_integration_complete() {
+  slug=$1; d=$(D "$slug"); [ -f "$d/INTEGRATION.tsv" ] || return 1
+  recorded=$(awk -F '\t' 'NR > 1 { value=$4 } END { print value }' "$d/INTEGRATION.tsv")
+  [ -n "$recorded" ] && [ "$recorded" = "$(workid "$slug")" ]
+}
+
+task_owns_path() {
+  slug=$1; task=$2; changed=$3
+  paths_file=$(task_field "$slug" "$task" 3)
+  while IFS= read -r owned_path || [ -n "$owned_path" ]; do
+    [ "$changed" = "$owned_path" ] && return 0
+    case $changed in "$owned_path"/*) return 0 ;; esac
+  done < "$(D "$slug")/$paths_file"
+  return 1
+}
+
+task_dependencies_pass() {
+  slug=$1; deps=$2
+  [ "$deps" = - ] && return 0
+  old_ifs=$IFS; IFS=,
+  for dependency in $deps; do
+    task_pass_exists "$slug" "$dependency" || { IFS=$old_ifs; return 1; }
+  done
+  IFS=$old_ifs
+  return 0
+}
+
+task_render_file() {
+  slug=$1; out=$2; d=$(D "$slug")
+  {
+    printf '# TASKS — %s\n\n' "$slug"
+    printf 'Generated from frozen `TASKS.tsv`; do not edit this file by hand.\n\n'
+    printf '| Task | Dependencies | Owned paths | Verify script | Derived state |\n'
+    printf '| --- | --- | --- | --- | --- |\n'
+    while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+      [ "$task" = task_id ] && continue
+      owned=$(awk 'BEGIN { first=1 } { if (!first) printf "<br>"; printf "`%s`", $0; first=0 }' "$d/$paths_file")
+      if task_pass_exists "$slug" "$task"; then
+        derived=PASS
+      elif task_dependencies_pass "$slug" "$deps"; then
+        derived=READY
+      else
+        derived=WAITING
+      fi
+      printf '| %s | %s | %s | `%s` | %s |\n' "$task" "$deps" "$owned" "$verify_script" "$derived"
+    done < "$d/TASKS.tsv"
+  } > "$out"
+}
+
+cmd_integrate_tasks() {
+  slug=$1; d=$(D "$slug")
+  [ "$(phase_of "$slug")" = BUILD ] || die "task integration requires BUILD"
+  [ "$(task_live_count "$slug")" -eq 0 ] || die "task attempts are still live"
+  task_all_pass "$slug" || die "task integration requires PASS for every task"
+  [ -f "$d/TARGET" ] || die "task integration requires a Git target"
+  [ ! -e "$d/INTEGRATION.tsv" ] || die "task integration is already recorded"
+  repo=$(tgt "$slug" repo); item_branch=$(tgt "$slug" branch)
+  git -C "$repo" rev-parse --verify --quiet "$item_branch" >/dev/null \
+    || die "item integration branch does not exist: $item_branch"
+  integration_worktree="$ROOT/worktrees/integrate-$slug"
+  [ ! -e "$integration_worktree" ] || die "integration worktree already exists: $integration_worktree"
+  mkdir -p "$ROOT/worktrees"
+  git -C "$repo" worktree add -q "$integration_worktree" "$item_branch" \
+    || die "could not create integration worktree for $item_branch"
+  integration_tmp="$d/.INTEGRATION.$$.tmp"
+  printf 'task_id\ttask_result\tsource_commit\tintegration_commit\n' > "$integration_tmp"
+  for task in $(task_topological_order "$slug"); do
+    result_file=$(task_result_file "$slug" "$task")
+    dispatch_wid=$(sed -n 's/^DISPATCH-WORK-ID: //p' "$result_file" | head -1)
+    output_wid=$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)
+    git -C "$repo" merge-base --is-ancestor "$dispatch_wid" "$output_wid" \
+      || { state_attempt_update "$slug" BLOCKED - INTEGRATION_CONFLICT; die "task $task result is not descended from its dispatch base"; }
+    commits=$(git -C "$repo" rev-list --reverse "$dispatch_wid..$output_wid")
+    [ -n "$commits" ] || { state_attempt_update "$slug" BLOCKED - TASK_BLOCKED; die "task $task has no commits to integrate"; }
+    for commit in $commits; do
+      if ! git -C "$integration_worktree" cherry-pick "$commit" >/dev/null 2>&1; then
+        state_attempt_update "$slug" BLOCKED - INTEGRATION_CONFLICT
+        printf 'task %s conflict retained in %s\n' "$task" "$integration_worktree" >&2
+        die "integration conflict while applying $commit"
+      fi
+    done
+    integrated=$(git -C "$integration_worktree" rev-parse --verify HEAD | cut -c1-12)
+    printf '%s\t%s\t%s\t%s\n' "$task" "${result_file#"$ROOT/"}" "$output_wid" "$integrated" >> "$integration_tmp"
+  done
+  mv "$integration_tmp" "$d/INTEGRATION.tsv"
+  integrated=$(workid "$slug"); risk=$(state_value "$slug" 5)
+  state_update_item "$slug" ACTIVE BUILD "$integrated" "$risk" - -
+  printf 'integrated %s at %s; worktree retained at %s\n' "$slug" "$integrated" "$integration_worktree"
+}
+
+cmd_task() {
+  uses_managed_lifecycle || die "task requires managed lifecycle behavior"
+  sub=${1:-}; slug=${2:-}; [ -n "$slug" ] || die "usage: crucible task list|ready|dispatch|integrate ITEM ..."
+  need "$slug"; d=$(D "$slug"); [ -f "$d/TASKS.tsv" ] || die "item has no task DAG: $slug"
+  validate_task_dag "$slug"; task_assert_frozen "$slug"
+  case $sub in
+    list) task_render_file "$slug" /dev/stdout ;;
+    ready)
+      if task_all_pass "$slug"; then
+        printf 'READY INTEGRATE\n'
+        return
+      fi
+      found=0
+      while IFS="$(printf '\t')" read -r task deps paths_file verify_script; do
+        [ "$task" = task_id ] && continue
+        task_pass_exists "$slug" "$task" && continue
+        live=$(task_live_attempt "$slug" "$task" 2>/dev/null || true)
+        if [ -n "$live" ]; then
+          [ "$(attempt_state "$live")" = RETURNED ] && { printf 'RESULT %s %s\n' "$task" "$live"; found=1; }
+          continue
+        fi
+        retry=$(task_retry_available "$slug" "$task" 2>/dev/null || true)
+        if [ -n "$retry" ]; then printf 'RETRY %s %s\n' "$task" "$retry"; found=1; continue; fi
+        if task_dependencies_pass "$slug" "$deps"; then printf 'READY %s\n' "$task"; found=1; fi
+      done < "$d/TASKS.tsv"
+      if [ "$found" -eq 0 ]; then
+        live_count=$(task_live_count "$slug")
+        [ "$live_count" -eq 0 ] && printf 'WAIT TASK_DEPENDENCIES\n' || printf 'WAIT TASK_ATTEMPTS %s\n' "$live_count"
+      fi
+      ;;
+    dispatch)
+      task=${3:-}; agent=${4:-}; criterion=${5:-}; class=${6:-FOCUSED}; retry=${7:--}
+      [ -n "$task" ] && [ -n "$agent" ] && [ -n "$criterion" ] \
+        || die "usage: crucible task dispatch ITEM TASK AGENT CRITERION [EVIDENCE_CLASS] [RETRY_OF]"
+      cmd_dispatch_managed "$slug" maker "$agent" "$criterion" "$class" "$retry" "$task"
+      ;;
+    integrate)
+      [ $# -eq 2 ] || die "usage: crucible task integrate ITEM"
+      cmd_integrate_tasks "$slug"
+      ;;
+    *) die "usage: crucible task list|ready|dispatch|integrate ITEM ..." ;;
+  esac
+}
+
+cmd_ready() {
+  uses_managed_lifecycle || die "ready requires managed lifecycle behavior"
+  need "${1:-}"; slug=$1
+  state_validate_file "$ROOT/STATE.tsv"
+  old=$(state_value "$slug" 3)
+  [ "$old" = DRAFT ] || die "refused: ready requires DRAFT, found ${old:-missing}"
+  validate_managed_item "$slug"
+  d=$(D "$slug")
+  if [ -f "$d/TASKS.tsv" ]; then
+    validate_task_dag "$slug"
+    task_view_tmp="$d/.TASKS.md.$$.tmp"; task_id_tmp="$d/.TASKS.id.$$.tmp"
+    trap 'rm -f "$task_view_tmp" "$task_id_tmp"' 0 1 2 15
+    task_render_file "$slug" "$task_view_tmp"
+    task_contract_id "$slug" > "$task_id_tmp"
+    mv "$task_view_tmp" "$d/TASKS.md"; mv "$task_id_tmp" "$d/TASKS.id"
+    trap - 0 1 2 15
+  else
+    [ ! -e "$d/TASKS.md" ] && [ ! -e "$d/TASKS.id" ] \
+      || die "refused: generated task artifacts exist without TASKS.tsv"
+  fi
+  risk=$(item_section_body "$(D "$slug")/ITEM.md" Risk)
+  state_update_item "$slug" ACTIVE READY "$(workid "$slug")" "$risk" - -
+  printf '%s is now READY\n' "$slug"
+}
+
+phase_of() {
+  if uses_managed_lifecycle; then
+    state_validate_file "$ROOT/STATE.tsv"
+    p=$(state_value "$1" 3)
+    printf '%s' "$p"
+  else
+    p=$(sed -n 's/^PHASE: //p' "$(D "$1")/ITEM.md" 2>/dev/null | head -1)
+    printf '%s' "${p:-SPEC}"
+  fi
+}
+
+proposal_file() { printf '%s/PROPOSAL.md' "$ROOT"; }
+
+proposal_id() {
+  pf=$(proposal_file)
+  [ -s "$pf" ] && [ ! -L "$pf" ] || return 1
+  hashfile "$pf" | cut -c1-12
+}
+
+proposal_valid() {
+  pf=$(proposal_file)
+  [ -s "$pf" ] && [ ! -L "$pf" ] || return 1
+  for heading in '## Verified problem' '## Proposed outcome' '## Non-goals' \
+    '## Backlog' '## Verification'; do
+    grep -qF "$heading" "$pf" || return 1
+  done
+  ! grep -q 'TEMPLATE-\|TODO-REPLACE' "$pf"
+}
+
+approval_current() {
+  [ -f "$ROOT/APPROVAL" ] && [ ! -L "$ROOT/APPROVAL" ] || return 1
+  approved=$(sed -n 's/^proposal-id: //p' "$ROOT/APPROVAL" | head -1)
+  [ -n "$approved" ] && [ "$approved" = "$(proposal_id 2>/dev/null || true)" ]
+}
+
+cycle_investigation_state() {
+  f=$(claims_file)
+  [ -f "$f" ] || { printf 'EMPTY'; return; }
+  total=$(grep -c '^### C' "$f" 2>/dev/null || true); total=${total:-0}
+  [ "$total" -gt 0 ] || { printf 'EMPTY'; return; }
+  i=1
+  while [ "$i" -le "$total" ]; do
+    vd="$ROOT/claims/C$i/verdicts"; verdicts=0; truth=0
+    if [ -d "$vd" ]; then
+      for vf in "$vd"/*.md; do
+        [ -f "$vf" ] || continue
+        verdicts=$((verdicts + 1))
+        [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] && truth=$((truth + 1))
+      done
+    fi
+    [ "$verdicts" -gt 0 ] || { printf 'NEEDS_AUDIT'; return; }
+    if [ "$truth" -gt 0 ]; then
+      scout=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
+      [ -n "$scout" ] || { printf 'NEEDS_SCOUT'; return; }
+    fi
+    i=$((i + 1))
+  done
+  printf 'COMPLETE'
+}
+
+cycle_unadmitted_work() {
+  f=$(claims_file); [ -f "$f" ] || return 1
+  total=$(grep -c '^### C' "$f" 2>/dev/null || true); total=${total:-0}; i=1
+  while [ "$i" -le "$total" ]; do
+    item=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    item: //p;}" "$f" | head -1)
+    if [ -z "$item" ]; then
+      scout=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
+      case $scout in
+        ABSENT|PARTLY-EXISTS)
+          vd="$ROOT/claims/C$i/verdicts"
+          if [ -d "$vd" ] && grep -l '^CLAIM-VERDICT: TRUE$' "$vd"/*.md >/dev/null 2>&1; then
+            return 0
+          fi ;;
+      esac
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+cmd_cycle_status() {
+  problem="$ROOT/PROBLEM.md"
+  if [ ! -s "$problem" ] || grep -q 'TEMPLATE-PROBLEM-NEEDS-INPUT' "$problem" 2>/dev/null; then
+    printf 'NEXT INTAKE — capture the operator\047s problem in PROBLEM.md\n'
+    return
+  fi
+  investigation=$(cycle_investigation_state)
+  case $investigation in
+    EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them\n'; return ;;
+    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim\n'; return ;;
+    NEEDS_SCOUT) printf 'NEXT INVESTIGATE — search for existing behavior before proposing work\n'; return ;;
+  esac
+  if ! proposal_valid; then
+    printf 'NEXT PROPOSE — write a refined, evidence-grounded PROPOSAL.md\n'
+    return
+  fi
+  pid=$(proposal_id)
+  if ! approval_current; then
+    printf 'WAIT APPROVAL — show proposal %s to the operator; do not plan or build\n' "$pid"
+    return
+  fi
+  if uses_managed_lifecycle; then
+    state_validate_file "$ROOT/STATE.tsv"
+    slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
+    if [ -n "$slug" ]; then
+      status=$(state_value "$slug" 2); stage=$(state_value "$slug" 3); inflight=$(state_value "$slug" 6)
+      if [ "$status" = BLOCKED ]; then
+        printf 'ESCALATE %s — %s\n' "$slug" "$(state_value "$slug" 7)"
+      elif [ "$inflight" = TASKS ]; then
+        printf 'NEXT EXECUTE %s — dispatch dependency-ready tasks or integrate passing work\n' "$slug"
+      elif [ "$inflight" != - ]; then
+        attempt_status=$(attempt_state "$inflight")
+        case $attempt_status in
+          DISPATCHED|RUNNING) printf 'WAIT %s — agent work or review is in flight (%s)\n' "$slug" "$inflight" ;;
+          OVERDUE) printf 'ESCALATE %s — observe and record the overdue process outcome (%s)\n' "$slug" "$inflight" ;;
+          RETURNED) printf 'NEXT REVIEW %s — reconcile returned attempt %s against its evidence\n' "$slug" "$inflight" ;;
+          TIMEOUT) printf 'NEXT EXECUTE %s — use the one bounded retry for attempt %s\n' "$slug" "$inflight" ;;
+          *) printf 'ESCALATE %s — inconsistent attempt state %s for %s\n' "$slug" "$attempt_status" "$inflight" ;;
+        esac
+      else
+        case $stage in
+          DRAFT|READY) printf 'NEXT PLAN %s — validate the bounded breakdown before execution\n' "$slug" ;;
+          BUILD) printf 'NEXT EXECUTE %s — make, verify, review, and fix until accepted\n' "$slug" ;;
+          REVIEW) printf 'NEXT REVIEW %s — independently falsify current work; close or return findings\n' "$slug" ;;
+        esac
+      fi
+      return
+    fi
+  fi
+  if cycle_unadmitted_work; then
+    printf 'NEXT PLAN — admit the next bounded item from approved proposal %s\n' "$pid"
+    return
+  fi
+  printf 'DONE — approved scope is closed or required no code; current evidence remains on disk\n'
+}
+
+cycle_worktree_records() {
+  program_repo=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM" | head -1)
+  if [ -d "$ROOT/worktrees" ]; then
+    worktree_prefix=$(cd "$ROOT/worktrees" && pwd -P)/
+  else
+    worktree_prefix="$ROOT/worktrees/"
+  fi
+  {
+    [ -n "$program_repo" ] && printf '%s\n' "$program_repo"
+    if [ -d "$ROOT/attempts" ]; then
+      for task_meta in "$ROOT"/attempts/*/task.tsv; do
+        [ -f "$task_meta" ] || continue
+        awk -F '\t' 'NR == 2 { print $1 }' "$task_meta"
+      done
+    fi
+  } | LC_ALL=C sort -u | while IFS= read -r task_repo; do
+    [ -n "$task_repo" ] && [ -d "$task_repo" ] || continue
+    git -C "$task_repo" worktree list --porcelain 2>/dev/null | awk -v repo="$task_repo" -v prefix="$worktree_prefix" '
+      /^worktree / {
+        path=substr($0, 10); keep=(index(path, prefix) == 1); branch="-"; next
+      }
+      keep && /^branch / { branch=substr($0, 8); sub(/^refs\/heads\//, "", branch) }
+      keep && /^$/ { printf "%s\t%s\t%s\n", repo, path, branch; keep=0 }
+      END { if (keep) printf "%s\t%s\t%s\n", repo, path, branch }
+    '
+  done
+}
+
+cycle_cleanup() {
+  flag=${1:-}; case $flag in --dry-run|--apply) : ;; *) die 'usage: crucible cycle clean --dry-run|--apply' ;; esac
+  uses_guided_cycle || die 'cleanup requires a guided cycle'
+  status=$(cmd_cycle_status)
+  case $status in DONE*) : ;; *) die "cleanup requires DONE; current cycle says: $status" ;; esac
+  if [ -d "$ROOT/attempts" ]; then
+    for attempt_path in "$ROOT"/attempts/*; do
+      [ -d "$attempt_path" ] || continue
+      attempt_id=${attempt_path##*/}; attempt_status=$(attempt_state "$attempt_id")
+      attempt_terminal "$attempt_status" \
+        || die "cleanup refuses while attempt $attempt_id is $attempt_status"
+    done
+  fi
+  found=0
+  if [ -f "$ROOT/agents.tsv" ]; then
+    printf 'DELETE %s\n' "$ROOT/agents.tsv"; found=1
+  fi
+  worktree_records=$(cycle_worktree_records)
+  if [ -n "$worktree_records" ]; then
+    while IFS="$(printf '\t')" read -r task_repo task_worktree task_branch; do
+      [ -n "$task_worktree" ] || continue
+      printf 'REMOVE_WORKTREE %s\nPRESERVE_BRANCH %s %s\n' "$task_worktree" "$task_repo" "$task_branch"
+      found=1
+    done <<EOF
+$worktree_records
+EOF
+  fi
+  printf 'PRESERVE %s (problem, proposal, work, reviews, and evidence)\n' "$ROOT"
+  [ "$found" -eq 1 ] || printf 'NO_SESSION_ARTIFACTS\n'
+  [ "$flag" = --apply ] || return 0
+  if [ -n "$worktree_records" ]; then
+    while IFS="$(printf '\t')" read -r task_repo task_worktree task_branch; do
+      [ -n "$task_worktree" ] && [ -d "$task_worktree" ] || continue
+      git -C "$task_repo" worktree remove "$task_worktree" \
+        || die "could not safely remove worktree: $task_worktree"
+    done <<EOF
+$worktree_records
+EOF
+  fi
+  [ ! -d "$ROOT/worktrees" ] \
+    || { find "$ROOT/worktrees" -depth -type d -exec rmdir {} \; 2>/dev/null || true; }
+  [ ! -f "$ROOT/agents.tsv" ] || rm -f "$ROOT/agents.tsv"
+  printf 'session cleanup applied; durable work and evidence preserved\n'
+}
+
+cmd_cycle() {
+  sub=${1:-status}; [ $# -eq 0 ] || shift
+  case $sub in
+    status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; cmd_cycle_status ;;
+    problem)
+      src=${1:-}; [ -n "$src" ] && [ $# -eq 1 ] || die 'usage: crucible cycle problem FILE'
+      [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
+      [ "$(cycle_investigation_state)" = EMPTY ] || die 'refused: investigation already has claims'
+      [ ! -f "$ROOT/APPROVAL" ] || die 'refused: a proposal is already approved'
+      tmp="$ROOT/.PROBLEM.md.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
+      cp "$src" "$tmp"; mv "$tmp" "$ROOT/PROBLEM.md"; trap - 0 1 2 15
+      printf '%s/PROBLEM.md\n' "$ROOT" ;;
+    approve)
+      [ $# -eq 0 ] || die 'usage: crucible cycle approve'
+      [ "$(cycle_investigation_state)" = COMPLETE ] || die 'refused: investigation is incomplete'
+      proposal_valid || die 'refused: PROPOSAL.md is missing required sections or contains placeholders'
+      pid=$(proposal_id)
+      if approval_current; then printf 'proposal %s is already approved\n' "$pid"; return; fi
+      mkdir -p "$ROOT/approvals"
+      record="$ROOT/approvals/$pid.md"
+      [ ! -e "$record" ] || die "approval record already exists but is not current: $record"
+      now=$(date +%s); tmp="$ROOT/.APPROVAL.$$.tmp"; rtmp="$ROOT/approvals/.$pid.$$.tmp"
+      trap 'rm -f "$tmp" "$rtmp"' 0 1 2 15
+      printf 'proposal-id: %s\napproved-epoch: %s\ndecision: APPROVED\n' "$pid" "$now" > "$rtmp"
+      mv "$rtmp" "$record"
+      printf 'proposal-id: %s\nrecord: approvals/%s.md\n' "$pid" "$pid" > "$tmp"
+      mv "$tmp" "$ROOT/APPROVAL"; trap - 0 1 2 15
+      printf 'approved proposal %s\n' "$pid" ;;
+    clean) [ $# -eq 1 ] || die 'usage: crucible cycle clean --dry-run|--apply'; cycle_cleanup "$1" ;;
+    *) die 'usage: crucible cycle [status]|problem FILE|approve|clean --dry-run|--apply' ;;
+  esac
+}
 
 cmd_phase() {
   need "${1:-}"; slug=$1; new=${2:-}
   d=$(D "$slug")
   [ -n "$new" ] || { phase_of "$slug"; echo; return; }
+  if uses_managed_lifecycle; then
+    old=$(phase_of "$slug")
+    [ ! -f "$d/TASKS.tsv" ] || { validate_task_dag "$slug"; task_assert_frozen "$slug"; }
+    inflight=$(state_value "$slug" 6)
+    [ "$inflight" = - ] || die "refused: attempt $inflight is still in flight"
+    case "$old:$new" in
+      READY:BUILD|BUILD:REVIEW) : ;;
+      *) die "refused: invalid transition $old -> $new" ;;
+    esac
+    if [ "$old:$new" = BUILD:REVIEW ]; then
+      current_wid=$(workid "$slug")
+      if [ -f "$d/TASKS.tsv" ]; then
+        task_integration_complete "$slug" \
+          || die "refused: REVIEW requires current-work task integration"
+      else
+        maker_pass_exists "$slug" "$current_wid" \
+          || die "refused: REVIEW requires a current-work maker PASS"
+      fi
+    fi
+    status=$(state_value "$slug" 2); risk=$(state_value "$slug" 5)
+    state_update_item "$slug" "$status" "$new" "$(workid "$slug")" "$risk" - -
+    printf '%s is now in %s\n' "$slug" "$new"
+    return
+  fi
   case $new in SPEC|DESIGN|TASKS|BUILD|VERIFY|ADVERSARY|GRADUATE) : ;;
     *) die "phase must be one of SPEC DESIGN TASKS BUILD VERIFY ADVERSARY GRADUATE" ;; esac
   req=""
@@ -543,6 +2043,55 @@ cmd_phase() {
 
 # What to do now. Reads the files, not your memory.
 cmd_next() {
+  if uses_managed_lifecycle; then
+    state_validate_file "$ROOT/STATE.tsv"
+    slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
+    [ -n "$slug" ] || { printf 'DONE\n'; return; }
+    status=$(state_value "$slug" 2); stage=$(state_value "$slug" 3)
+    inflight=$(state_value "$slug" 6); block=$(state_value "$slug" 7); self=$(self_path)
+    if [ "$status" = BLOCKED ]; then
+      printf 'BLOCKED %s %s see %s/items/%s/ITEM.md\n' "$slug" "$block" "$ROOT" "$slug"
+      return
+    fi
+    if [ "$inflight" = TASKS ]; then
+      printf 'NEXT %s TASK_READY %s task ready %s\n' "$slug" "$self" "$slug"
+      return
+    fi
+    if [ "$inflight" != - ]; then
+      st=$(attempt_state "$inflight"); deadline=$(attempt_meta "$inflight" 12)
+      case $st in
+        DISPATCHED|RUNNING) printf 'WAIT %s %s\n' "$inflight" "$deadline" ;;
+        OVERDUE) printf 'BLOCKED %s OVERDUE_PROCESS record an observed finish for %s\n' "$slug" "$inflight" ;;
+        RETURNED) printf 'NEXT %s RESULT %s result %s <OUTCOME> <EVIDENCE-FILE> <NEXT> [FINGERPRINT]\n' "$slug" "$self" "$inflight" ;;
+        TIMEOUT)
+          printf 'NEXT %s RETRY %s dispatch %s %s %s %s %s %s\n' \
+            "$slug" "$self" "$slug" "$(attempt_meta "$inflight" 5)" \
+            "$(attempt_meta "$inflight" 6)" "$(attempt_meta "$inflight" 8)" \
+            "$(attempt_meta "$inflight" 9)" "$inflight" ;;
+        *) die "state points to terminal attempt $inflight ($st)" ;;
+      esac
+      return
+    fi
+    case $stage in
+      DRAFT)  printf 'NEXT %s READY %s ready %s\n' "$slug" "$self" "$slug" ;;
+      READY)  printf 'NEXT %s BUILD %s phase %s BUILD\n' "$slug" "$self" "$slug" ;;
+      BUILD)
+        if [ -f "$(D "$slug")/TASKS.tsv" ]; then
+          task_assert_frozen "$slug"
+          if task_integration_complete "$slug"; then
+            printf 'NEXT %s REVIEW %s phase %s REVIEW\n' "$slug" "$self" "$slug"
+          elif task_all_pass "$slug"; then
+            printf 'NEXT %s INTEGRATE %s task integrate %s\n' "$slug" "$self" "$slug"
+          else
+            printf 'NEXT %s TASK_READY %s task ready %s\n' "$slug" "$self" "$slug"
+          fi
+        else
+          printf 'NEXT %s REVIEW %s phase %s REVIEW\n' "$slug" "$self" "$slug"
+        fi ;;
+      REVIEW) printf 'NEXT %s CHECK %s check %s\n' "$slug" "$self" "$slug" ;;
+    esac
+    return
+  fi
   f="$ROOT/CLAIMS.md"
   if [ -f "$f" ]; then
     tot=$(grep -c '^### C' "$f" 2>/dev/null || true); tot=${tot:-0}
@@ -595,7 +2144,13 @@ cmd_next() {
 # Install a program into the repository you are standing in. Run this from anywhere
 # inside the target repo. The program and its memory live in that repo from then on.
 cmd_adopt() {
-  prog=${1:-main}
+  prog=main; managed=0
+  case $# in
+    0) : ;;
+    1) if [ "$1" = --managed ]; then managed=1; else prog=$1; fi ;;
+    2) prog=$1; [ "$2" = --managed ] || die 'usage: crucible adopt [PROGRAM] [--managed]'; managed=1 ;;
+    *) die 'usage: crucible adopt [PROGRAM] [--managed]' ;;
+  esac
   case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
   repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
   src=$(cd "$(dirname "$0")" && pwd)
@@ -608,16 +2163,31 @@ cmd_adopt() {
   [ -d "$src/roles" ] && cp -r "$src/roles" "$dst/"
   mkdir -p "$dst/scripts"
   for f in "$src"/scripts/*.sh; do
+    case ${f##*/} in package-release.sh|verify-package.sh) continue ;; esac
     [ -f "$f" ] && cp "$f" "$dst/scripts/"
   done
+  mkdir -p "$dst/docs"
+  [ -f "$src/docs/managed-lifecycle.md" ] && cp "$src/docs/managed-lifecycle.md" "$dst/docs/"
   chmod +x "$dst/crucible" "$dst/scripts/"*.sh 2>/dev/null || true
   base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
   printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
+  if [ "$managed" -eq 1 ]; then
+    printf 'lifecycle: managed\ncycle: guided\n' >> "$dst/PROGRAM"
+  fi
   : > "$dst/LESSONS.md"
   printf -- '- [ ] example — replace this line with real items as claims are admitted\n' > "$dst/BACKLOG.md"
-  # STATE.md is the resume point, and RULES.md calls trusting it over your memory a CHECK.
-  # adopt used to not create it, so START.md pointed at a file that did not exist.
-  cat > "$dst/STATE.md" <<STATEEOF
+  if [ "$managed" -eq 1 ]; then
+    printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$dst/STATE.tsv"
+    cat > "$dst/STATE.md" <<STATEEOF
+# STATE — $prog
+
+Generated from \`STATE.tsv\`; do not edit this file by hand.
+
+| Item | Status | Stage | Work ID | Risk | In-flight attempt | Block code | Updated epoch |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+STATEEOF
+  else
+    cat > "$dst/STATE.md" <<STATEEOF
 # STATE — $prog
 
 The resume point. Trust this over your memory, always, and especially after a restart or a
@@ -642,22 +2212,23 @@ awaiting: (none — the output file that must appear)
 Recover with: cat STATE.md; .crucible/$prog/crucible next; git log --oneline -10
 Never re-dispatch a phase this file marks complete.
 STATEEOF
+  fi
   printf '# CLAIMS — %s\n\nOne heading per finding from the problem document, quoting its source sentence\nverbatim. Nothing becomes an item until it survives audit.\n' "$prog" > "$dst/CLAIMS.md"
+  cat > "$dst/PROBLEM.md" <<'EOF'
+# Problem
+
+TEMPLATE-PROBLEM-NEEDS-INPUT
+EOF
   { printf '# Patterns here are relative to this .crucible/ directory.\n'
     printf '# agents.tsv names the agents on THIS machine, so it is not project state.\n'
     printf '*/agents.tsv\n'
+    printf '# isolated task worktrees are retained machine state, not program artifacts.\n'
+    printf '*/worktrees/\n'
   } > "$repo/.crucible/.gitignore"
-  printf 'installed program "%s" into %s\n\n' "$prog" "$dst"
-  printf 'Everything from here runs as:\n  .crucible/%s/crucible <verb>\n\n' "$prog"
-  printf 'Its lessons, claims, items and evidence are stored in THIS repository, so what it\n'
-  printf 'learns here stays here and is versioned with the code. agents.tsv is gitignored\n'
-  printf 'because it names the agents on this machine.\n\n'
-  printf 'Next:\n'
-  printf '  1. .crucible/%s/crucible selftest        prove the gate refuses what it claims\n' "$prog"
-  printf '  2. edit .crucible/%s/agents.tsv          your panel: name, kind, model, effort, command\n' "$prog"
-  printf '  3. ask the operator for the problem document, then one claim per finding:\n'
-  printf '     .crucible/%s/crucible claim add "<claim>" "<exact source sentence>"\n' "$prog"
-  printf '  4. read .crucible/%s/START.md for the rest\n' "$prog"
+  printf 'installed cycle "%s" into %s\n\n' "$prog" "$dst"
+  printf 'Fresh-agent entrypoint:\n  read .crucible/%s/START.md and execute it\n\n' "$prog"
+  printf 'The agent will configure its panel, investigate the problem, ask for proposal approval,\n'
+  printf 'and coordinate build/review iterations. The operator does not drive protocol commands.\n'
   [ -f "$dst/agents.tsv" ] || {
     { printf '# name\tkind\tmodel\teffort\tcommand   ({BRIEF} {MODEL} {EFFORT} substituted)\n'
       printf '# Only names here may author a verdict. kind is the model family and is what\n'
@@ -671,7 +2242,7 @@ STATEEOF
 # Claims: the outer loop. The script keeps the ledger honest; the agent supplies meaning.
 claims_file() { printf '%s/CLAIMS.md' "$ROOT"; }
 cmd_claim() {
-  sub=${1:-}; shift 2>/dev/null || true
+  sub=${1:-}; [ $# -eq 0 ] || shift
   f=$(claims_file)
   # The ledger creates itself. Requiring `adopt` first meant a program that was set up
   # any other way could not audit anything, which blocked the outer loop entirely.
@@ -764,6 +2335,9 @@ cmd_claim() {
       # which is the single most repeated failure this whole role exists to prevent.
       *) die "refused: $n has no scout report. Dispatch a scout, then: crucible claim scout $n ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT" ;;
     esac
+    if uses_managed_lifecycle; then
+      approval_current || die 'refused: the current PROPOSAL.md is not operator-approved'
+    fi
     cmd_add "$slug" "$(sed -n "/^### $n /s/^### $n — //p" "$(claims_file)" | head -1)"
     awk -v c="### $n " -v s="$slug" '
       $0 ~ "^"c {inc=1} inc && /^    item:/ {print "    item: " s; inc=0; next}
@@ -893,7 +2467,10 @@ cmd_check() {
   done
   [ "$wid" = EMPTY ]    && { say "FAIL no work in $d/work/"; bad=1; }
   [ "$wid" = NOBRANCH ] && { say "FAIL branch $(tgt "$slug" branch) does not exist in $(tgt "$slug" repo)"; bad=1; }
-  if grep -q 'TEMPLATE-FALSIFIER-UNWRITTEN' "$d/ITEM.md" 2>/dev/null; then
+  if uses_managed_lifecycle; then
+    validate_managed_item "$slug"
+    [ "$(phase_of "$slug")" = REVIEW ] || { say "FAIL managed item must be in REVIEW"; bad=1; }
+  elif grep -q 'TEMPLATE-FALSIFIER-UNWRITTEN' "$d/ITEM.md" 2>/dev/null; then
     say "FAIL falsifier not written in ITEM.md"; bad=1
   else
     # Absence of the template marker is not presence of a falsifier. Deleting the whole
@@ -909,24 +2486,27 @@ cmd_check() {
 
   # Self-review is only refused if a maker was recorded, so an unrecorded maker made the
   # check vacuous — and that was the common case.
-  if [ ! -f "$d/MAKER" ] || [ ! -s "$d/MAKER" ]; then
+  if { [ ! -f "$d/MAKER" ] || [ ! -s "$d/MAKER" ]; } \
+    && { [ ! -f "$d/MAKERS.tsv" ] || [ "$(awk 'END { print NR }' "$d/MAKERS.tsv")" -lt 2 ]; }; then
     say "FAIL no maker recorded — run: crucible brief $slug maker NAME (or dispatch a maker)"; bad=1
   fi
 
   # The phase's prerequisite must exist even if PHASE was written by hand rather
   # than through `crucible phase`. A hand-edited phase is still a phase.
-  case $(phase_of "$slug") in
-    TASKS)     [ -f "$d/DESIGN.md" ]    || { say "FAIL phase TASKS requires DESIGN.md"; bad=1; } ;;
-    BUILD|VERIFY) for r in DESIGN.md TASKS.md; do
-                   [ -f "$d/$r" ] || { say "FAIL phase $(phase_of "$slug") requires $r"; bad=1; }
-                 done ;;
-    ADVERSARY) for r in DESIGN.md TASKS.md; do
-                   [ -f "$d/$r" ] || { say "FAIL phase ADVERSARY requires $r"; bad=1; }
-                 done ;;
-    GRADUATE)  for r in DESIGN.md TASKS.md ADVERSARY.md; do
-                   [ -f "$d/$r" ] || { say "FAIL phase GRADUATE requires $r"; bad=1; }
-                 done ;;
-  esac
+  if ! uses_managed_lifecycle; then
+    case $(phase_of "$slug") in
+      TASKS)     [ -f "$d/DESIGN.md" ]    || { say "FAIL phase TASKS requires DESIGN.md"; bad=1; } ;;
+      BUILD|VERIFY) for r in DESIGN.md TASKS.md; do
+                     [ -f "$d/$r" ] || { say "FAIL phase $(phase_of "$slug") requires $r"; bad=1; }
+                   done ;;
+      ADVERSARY) for r in DESIGN.md TASKS.md; do
+                     [ -f "$d/$r" ] || { say "FAIL phase ADVERSARY requires $r"; bad=1; }
+                   done ;;
+      GRADUATE)  for r in DESIGN.md TASKS.md ADVERSARY.md; do
+                     [ -f "$d/$r" ] || { say "FAIL phase GRADUATE requires $r"; bad=1; }
+                   done ;;
+    esac
+  fi
 
   ok_agents=""; en=0
   if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
@@ -939,6 +2519,13 @@ cmd_check() {
       stem=${b%.txt}
       case $b in *.txt) : ;; *) say "FAIL evidence $b must end in .txt"; bad=1; continue ;; esac
       id=${stem##*.}; rest=${stem%.*}; seq=${rest##*.}; an=${rest%.*}
+      if uses_managed_lifecycle; then
+        evidence_attempt=$(sed -n 's/^attempt-id: //p' "$f" | head -1)
+        if [ -n "$evidence_attempt" ] && [ -f "$ROOT/attempts/$evidence_attempt/meta.tsv" ]; then
+          evidence_task=$(awk -F '\t' 'NR == 2 { print $3 }' "$ROOT/attempts/$evidence_attempt/meta.tsv")
+          [ "$evidence_task" = - ] || continue
+        fi
+      fi
       if [ "$id" != "$wid" ]; then say "FAIL stale evidence $b (not from $wid)"; bad=1; continue; fi
       case $an in *.*|'') say "FAIL evidence $b: name must be AGENT.TOKEN.WORKID.txt"; bad=1; continue ;; esac
       case $seq in ''|*[!A-Za-z0-9]*) say "FAIL evidence $b: name must be AGENT.TOKEN.WORKID.txt"; bad=1; continue ;; esac
@@ -959,7 +2546,6 @@ cmd_check() {
     [ "$en" -gt 0 ] || { say "FAIL no usable evidence for $wid"; bad=1; }
   fi
 
-  maker=""; [ -f "$d/MAKER" ] && maker=$(head -1 "$d/MAKER" 2>/dev/null || true)
   vn=0; kinds=""; bodies=""
   for v in "$d/verdicts"/*; do
     [ -e "$v" ] || continue
@@ -971,8 +2557,9 @@ cmd_check() {
     [ -f "$v" ] || { say "FAIL $nm is not a regular file"; bad=1; continue; }
     k=$(kind_of "$nm")
     [ -n "$k" ] || { say "FAIL $nm is not registered in agents.tsv, so it is not a judge"; bad=1; continue; }
-    [ -n "$maker" ] && [ "$nm" = "$maker" ] &&
-      { say "FAIL $nm is the maker and may not judge its own work"; bad=1; continue; }
+    if is_maker "$slug" "$nm"; then
+      say "FAIL $nm is a maker and may not judge its own work"; bad=1; continue
+    fi
     [ -s "$v" ] || { say "FAIL empty verdict $nm.md"; bad=1; continue; }
     l1=$(sed -n '1p' "$v"); l2=$(sed -n '2p' "$v")
     case $l1 in "VERDICT: PASS") : ;;
@@ -982,6 +2569,27 @@ cmd_check() {
     vwid=""; case $l2 in "WORK-ID: "*) vwid=${l2#"WORK-ID: "} ;; esac
     case $vwid in ''|*[!A-Za-z0-9]*) say "FAIL $nm: line 2 must be exactly 'WORK-ID: <id>'"; bad=1; continue ;; esac
     [ "$vwid" = "$wid" ] || { say "FAIL $nm judged $vwid but work is $wid (stale)"; bad=1; continue; }
+    if uses_managed_lifecycle; then
+      l3=$(sed -n '3p' "$v")
+      case $l3 in "result A"*"; see "*) : ;;
+        *) say "FAIL $nm: managed verdict is not bound to an attempt result"; bad=1; continue ;;
+      esac
+      result_id=${l3#result }; result_id=${result_id%%; see *}; result_evidence=${l3#*; see }
+      case $result_id in ''|*[!A0-9.]*)
+        say "FAIL $nm: managed verdict has an invalid attempt id"; bad=1; continue ;;
+      esac
+      result_file="$ROOT/attempts/$result_id/result.md"
+      [ -f "$result_file" ] && [ ! -L "$result_file" ] || {
+        say "FAIL $nm: managed attempt result $result_id is missing"; bad=1; continue; }
+      [ "$(sed -n 's/^OUTCOME: //p' "$result_file" | head -1)" = PASS ] \
+        && [ "$(sed -n 's/^ITEM: //p' "$result_file" | head -1)" = "$slug" ] \
+        && [ "$(sed -n 's/^WORK-ID: //p' "$result_file" | head -1)" = "$wid" ] \
+        && [ "$(sed -n 's/^ATTEMPT-ID: //p' "$result_file" | head -1)" = "$result_id" ] \
+        && [ "$(sed -n 's/^ROLE: //p' "$result_file" | head -1)" = judge ] \
+        && [ "$(sed -n 's/^AGENT: //p' "$result_file" | head -1)" = "$nm" ] \
+        && [ "$(sed -n 's/^EVIDENCE: //p' "$result_file" | head -1)" = "$result_evidence" ] \
+        || { say "FAIL $nm: verdict and managed attempt result disagree"; bad=1; continue; }
+    fi
     case " $ok_agents " in *" $nm "*) : ;;
       *) say "FAIL $nm passed but recorded no evidence of its own"; bad=1; continue ;; esac
     cited=0
@@ -1009,7 +2617,12 @@ cmd_close() {
   need "${1:-}"; slug=$1; shift; lesson=${*:-}; d=$(D "$slug")
   [ -n "$lesson" ] || die 'usage: crucible close SLUG "one-line lesson, or NONE"'
   [ "$(printf '%s' "$lesson" | wc -l | tr -d ' ')" = 0 ] || die "lesson must be one line"
-  grep -q '^STATUS: CLOSED' "$d/ITEM.md" 2>/dev/null && die "$slug is already closed"
+  if uses_managed_lifecycle; then
+    state_validate_file "$ROOT/STATE.tsv"
+    [ "$(state_value "$slug" 2)" != CLOSED ] || die "$slug is already closed"
+  else
+    grep -q '^STATUS: CLOSED' "$d/ITEM.md" 2>/dev/null && die "$slug is already closed"
+  fi
   # mkdir is atomic and fails if the directory exists, so exactly one caller claims a
   # close. Reading STATUS and then writing it is check-then-act: two callers both read
   # OPEN, both append a lesson, and both write the status.
@@ -1020,12 +2633,18 @@ cmd_close() {
   [ "$before" = "$after" ] || { rmdir "$d/.closing" 2>/dev/null
     die "refused: work changed during check ($before -> $after)"; }
   printf -- '- [%s] %s (item %s, work %s)\n' "$(date +%Y-%m-%d)" "$lesson" "$slug" "$after" >> "$ROOT/LESSONS.md"
-  sed "s|^STATUS: OPEN.*|STATUS: CLOSED $after|" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  if uses_managed_lifecycle; then
+    risk=$(state_value "$slug" 5)
+    state_update_item "$slug" CLOSED REVIEW "$after" "$risk" - -
+  else
+    sed "s|^STATUS: OPEN.*|STATUS: CLOSED $after|" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  fi
   printf 'closed %s at %s\n' "$slug" "$after"
 }
 
 case ${1:-help} in
 adopt)    shift; cmd_adopt "$@" ;;
+cycle)    shift; cmd_cycle "$@" ;;
 claim)    shift; cmd_claim "$@" ;;
 triage)   shift; cmd_triage "$@" ;;
 panes)    shift; cmd_panes "$@" ;;
@@ -1036,17 +2655,23 @@ selftest) shift
           exec "$ROOT/scripts/selftest.sh" "$@" ;;
 agents)   shift; cmd_agents "$@" ;;
 target)   shift; cmd_target "$@" ;;
+lifecycle) shift; cmd_lifecycle "$@" ;;
+state)    shift; cmd_state "$@" ;;
+ready)    shift; cmd_ready "$@" ;;
+task)     shift; cmd_task "$@" ;;
 next)     shift; cmd_next "$@" ;;
+attempt)  shift; cmd_attempt "$@" ;;
+result)   shift; cmd_result "$@" ;;
 phase)    shift; cmd_phase "$@" ;;
 dispatch) shift; cmd_dispatch "$@" ;;
 brief)    shift; cmd_brief "$@" ;;
 run)      shift; cmd_run "$@" ;;
 run-claim) shift; cmd_run_claim "$@" ;;
-run-claim) shift; cmd_run_claim "$@" ;;
 check)    shift; cmd_check "$@" ;;
 close)    shift; cmd_close "$@" ;;
 workid)   shift; need "${1:-}"; workid "$1"; echo ;;
-help|-h|--help) usage ;;
+help)     shift; if [ "${1:-}" = protocol ]; then protocol_usage; else [ $# -eq 0 ] || die 'usage: crucible help [protocol]'; usage; fi ;;
+-h|--help) usage ;;
 # An unknown verb refuses. A tool whose premise is "refuse, never warn" must not
 # silently succeed on a command it does not have.
 *) printf 'crucible: unknown verb: %s\n\n' "$1" >&2; usage >&2; exit 2 ;;

@@ -292,6 +292,10 @@ ok "every watch.sh view renders without error"
   && ok "the workids view names what it shows" || bad "workids view rendered nothing recognisable"
 [ -f "$ct/.crucible/p/scripts/watch.sh" ] && ok "adopt ships the live views into the program" \
   || bad "adopt did not ship watch.sh"
+[ ! -e "$ct/.crucible/p/scripts/package-release.sh" ] \
+  && [ ! -e "$ct/.crucible/p/scripts/verify-package.sh" ] \
+  && ok "adopt excludes release-maintainer scripts" \
+  || bad "adopt copied release-maintainer scripts into the target repository"
 
 
 printf '\npane overlay\n'
@@ -306,7 +310,11 @@ elif command -v tmux >/dev/null 2>&1; then
   tmux new-session -d -s crucible-selftest -c "$ct" -x 200 -y 50 2>/dev/null
   tmux split-window -h -d -t crucible-selftest -c "$ct" 2>/dev/null
   tmux split-window -h -d -t crucible-selftest -c "$ct" 2>/dev/null
-  tmux send-keys -t crucible-selftest.0 "cd '$ct' && ./.crucible/p/crucible panes gate workids" C-m
+  # Launch the probe as the pane process. Sending keystrokes raced interactive shell startup on
+  # machines whose zsh startup resets the pane title, leaving three untouched `zsh` panes and
+  # testing the terminal fixture rather than cmd_panes.
+  tmux respawn-pane -k -t crucible-selftest.0 \
+    "cd '$ct' && ./.crucible/p/crucible panes gate workids; exec /bin/sh"
   # Wait for the LAST expected view, not the first title. cmd_panes titles the operator pane
   # before it overlays anything, so waiting for "agent" exited while the views were still
   # being set up and this assertion failed about one run in three.
@@ -359,13 +367,14 @@ grep -q "\[$(cat VERSION)\]" CHANGELOG.md \
   && ok "the changelog's top entry matches VERSION" || bad "CHANGELOG does not mention $(cat VERSION)"
 
 
-# The README is the front door and it went badly stale once, describing a superseded
-# model while mentioning none of the current verbs. This makes that impossible to
-# repeat quietly.
-for v in adopt selftest claim triage next dispatch run check close panes; do
-  grep -q "crucible $v" README.md || bad "README never mentions the $v verb"
+# The README is the operator front door. It must stay on the cycle and must not regress
+# into a catalogue of agent protocol primitives.
+for v in adopt claim triage next dispatch attempt result phase run check close panes; do
+  grep -q "crucible $v" README.md && bad "README exposes internal protocol verb: $v" || true
 done
-ok "the README mentions every principal verb"
+ok "the README keeps internal protocol commands out of operator onboarding"
+grep -q 'crucible cycle' README.md && ok "the README names the one cycle interface" \
+  || bad "the README does not name the cycle interface"
 grep -q 'BOOTSTRAP.md' README.md && ok "the README names the entry point" \
   || bad "the README does not point at BOOTSTRAP.md"
 # A prose assertion count drifted four times: the README said 60, then 63, then 68, and the
@@ -397,11 +406,10 @@ done
 [ -z "$notrouted" ] && ok "every verb in help is explicitly routed" \
   || bad "verbs in help are not routed:$notrouted"
 
-# A5: the README smoke block must execute (via the helper that extracts the
-# ## Smoke test ```sh fence, not the loop diagram) and the gate must refuse after edit.
+# A5: a cold fresh agent cycle must cross intake, investigation, proposal and approval gates.
 ./scripts/verify-quickstart.sh >/dev/null 2>&1 \
-  && ok "README smoke closes an item and post-edit check refuses" \
-  || bad "README smoke (scripts/verify-quickstart.sh) failed"
+  && ok "cold fresh-agent cycle binds approval before planning" \
+  || bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
 
 # A6: one writer per fact (RULES.md 17), asserted positively.
 #
@@ -554,7 +562,9 @@ cd "$HERE"
 # case statement intact: sh -n passed, and the only symptom was "command not found" at
 # runtime for verbs no test happened to call.
 broken=""
-for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help selftest; do
+# `selftest` is asserted through the explicit recursion guard below. Calling it here starts a
+# second complete suite, ignores --fast, and turns a routing assertion into a minutes-long proxy.
+for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help; do
   o=$(./crucible "$v" 2>&1 || true)
   case "$o" in *"command not found"*) broken="$broken $v" ;; esac
 done
@@ -811,10 +821,10 @@ for f in $(ls "$ap"/.crucible/p/*.md "$ap"/.crucible/p/roles/*.md 2>/dev/null); 
 done
 [ -z "$shipbad" ] && ok "an adopted program ships no repo-root-invalid invocation" \
   || bad "an adopted program ships repo-root-invalid invocations:$shipbad"
-# and LOOP must not send a claim auditor to the item-scoped recorder
-grep -qE 'crucible run <item>|crucible run [A-Z]' LOOP.md \
-  && bad "LOOP.md sends a claim auditor to the item-scoped recorder" \
-  || ok "LOOP.md names run-claim for claim evidence"
+# LOOP is behavioral documentation; protocol recorder commands belong in the internal guide.
+grep -qE 'crucible (run|run-claim|attempt|result|phase|dispatch)' LOOP.md \
+  && bad "LOOP.md exposes low-level protocol commands" \
+  || ok "LOOP.md stays at the behavioral loop level"
 
 # Absence of verdicts must refuse on its own, with nothing else wrong. Every earlier case had
 # another failure present, so a mutation that permitted zero judges left the suite green — a

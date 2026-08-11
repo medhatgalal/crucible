@@ -28,7 +28,9 @@ a RULE into a CHECK, do it and say so in the lesson.
 
 7. **CHECK — Only registered agents may judge.** A verdict from a name not in `agents.tsv` is not a
    verdict.
-8. **CHECK — The maker may not judge its own work.**
+8. **CHECK — No recorded maker may judge the item it helped build.** Managed parallel work keeps a
+   durable maker set, so an earlier task maker cannot review the integrated item merely because a
+   different maker ran later.
 9. **CHECK — Two verdicts that are byte-identical are one verdict.**
 10. **CHECK — A judge's brief contains the goal, the work and the recorded evidence. It contains no
     maker report, transcript, or rationale**, because the brief is generated from a whitelist and
@@ -43,17 +45,21 @@ a RULE into a CHECK, do it and say so in the lesson.
 
 ## Roles and dispatch
 
-13. **RULE — Generate the dispatch before the call.** Relabelled from CHECK: an item can
-    close with no dispatch on record, so nothing enforces that a verdict was preceded by one. `.crucible/<program>/crucible dispatch` writes it.
+13. **CHECK in managed lifecycle; RULE in item-file lifecycle — Generate the dispatch before the
+    call.** A managed result is bound to a recorded attempt and refuses without it. An item-file
+    item can still close with no dispatch on record, so `.crucible/<program>/crucible dispatch`
+    remains operator discipline there.
 14. **RULE — One instruction per call: "read this file and follow it exactly."** Everything else
     belongs in the contract. If you find yourself explaining in the conversation, the contract is
     incomplete — fix the file.
 15. **RULE — A role may only read what its role file grants and write what it names.** The
     orchestrator dispatches and records; it does not implement, judge, or merge.
-16. **RULE — Dispatch is not completion.** A task handed to an agent has not happened until its
-    output file exists. "In flight" is not a status. Quote the reply or report it lost.
+16. **CHECK in managed lifecycle; RULE in item-file lifecycle — Dispatch is not completion.** A
+    managed dispatch records an in-flight attempt and `next` waits for its observed outcome; it does
+    not advance the item. In item-file lifecycle, a task handed to an agent has not happened until
+    its output file exists. Quote the reply or report it lost.
 
-## Memory
+## Durable state, not agent memory
 
 17. **RULE — One writer per fact.** Each fact has exactly one path. Relabelled from CHECK: the gate
     refuses a verdict from an unregistered name and evidence whose internal agent disagrees with its
@@ -63,36 +69,40 @@ a RULE into a CHECK, do it and say so in the lesson.
     verbally while the written record said otherwise; an automated reviewer read the record,
     correctly concluded the work was off-plan, and stopped it two minutes before it would have
     succeeded.
-19. **RULE — `STATE.md` is the resume point.** After a restart or a context compaction, re-read it
-    and `git log`, and never re-dispatch a phase it marks complete. `adopt` creates the file and
-    `next` reads the files rather than your memory, but nothing can force you to consult it — so
-    this is a rule, and it is labelled as one.
-20. **CHECK — Every closed item appends exactly one lesson**, and `LESSONS.md` is concatenated into
-    every later maker brief. A lesson nobody reads is theatre; this makes reading it structural.
+19. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
+    and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained
+    resume summary. After a restart or compaction, re-read the recorded state and `git log`; never
+    re-dispatch work it marks complete. Nothing can force you to consult it, so this remains a rule.
+20. **CHECK — Every closed item appends exactly one cycle lesson or `NONE`**, and `LESSONS.md` is
+    concatenated into later maker briefs. This is repository evidence, not global model memory, and may
+    be included in an operator-approved cleanup after the cycle.
+21. **RULE — Never persist project lessons or personas in global agent memory.** A fresh agent relearns
+    the workflow from repository files. Agent contexts and machine configuration are disposable.
 
 ## Work quality
 
-21. **RULE — Search before building.** Before any design, a scout must answer: does code already do
+22. **RULE — Search before building.** Before any design, a scout must answer: does code already do
     this, fully or partly? Report what you searched and how, so the claim can be checked. Search by
     behaviour, not by name — the thing you would build rarely contains the words you would call it.
-22. **RULE — Fit the architecture you are in, or argue to change it explicitly.** Do not silently
+23. **RULE — Fit the architecture you are in, or argue to change it explicitly.** Do not silently
     introduce a second pattern for a solved problem. If the existing architecture is wrong for this
     work, say so, propose the change, and let it be judged as a change.
-23. **RULE — Build only what the item asks for.** No speculative abstraction, no unrequested
+24. **RULE — Build only what the item asks for.** No speculative abstraction, no unrequested
     configurability. A bug fix does not need its neighbourhood refactored.
-24. **RULE — Tests assert behaviour, not mocks.** A test that cannot fail is a lie with a green tick.
-25. **RULE — Name things for behaviour.** No invented identifier schemes, no version numbers in
+25. **RULE — Tests assert behaviour, not mocks.** A test that cannot fail is a lie with a green tick.
+26. **RULE — Name things for behaviour.** No invented identifier schemes, no version numbers in
     names. Identifiers leak from private notes into code, tests, and user-visible strings.
-26. **RULE — Security and performance are acceptance criteria, not afterthoughts.** If the item
+27. **RULE — Security and performance are acceptance criteria, not afterthoughts.** If the item
     touches auth, data, or a hot path, its criteria say so before the build starts, or the judge has
     nothing to check them against.
 
 ## Stopping
 
-27. **RULE — Bound your iteration.** The same finding twice, or an unchanged work id resubmitted,
-    should stop and escalate. Relabelled from CHECK: nothing counts findings or resubmissions, so
-    this is discipline, not a mechanism. Occupancy is not output; something running for hours
-    while nothing lands is a stall wearing a costume.
-28. **RULE — A blocked agent stops and says so.** `BLOCKED` and `NEEDS_CONTEXT` are legitimate
+28. **CHECK in managed lifecycle; RULE in item-file lifecycle — Bound your iteration.** Managed
+    lifecycle blocks a repeated finding fingerprint, refuses duplicate current-work PASSes and a
+    second canonical expensive PASS, and allows one retry after an observed timeout before
+    `RETRY_EXHAUSTED`. Item-file lifecycle does not count findings or resubmissions. Occupancy is
+    not output; something running for hours while nothing lands is a stall wearing a costume.
+29. **RULE — A blocked agent stops and says so.** `BLOCKED` and `NEEDS_CONTEXT` are legitimate
     terminal results with a recorded reason. Guessing under a no-questions rule is a defect
     generator. Bad work is worse than no work and you will not be penalised for escalating.

@@ -25,3 +25,6 @@ RETROSPECTIVE.md
 reviews/
 surveys/
 decisions/
+
+# reproducible release output; published assets are not source
+dist/
