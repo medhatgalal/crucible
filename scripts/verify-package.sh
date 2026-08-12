@@ -18,6 +18,8 @@ CONTENTS=$(tar -tzf "$TMP/one/$NAME")
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/BOOTSTRAP.md$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/crucible$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-agent-cycle.sh$"
+printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-coldstart-independence.sh$"
+printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/roles/contract-auditor.md$"
 if printf '%s\n' "$CONTENTS" | grep -Eq "^crucible-$VERSION/(reports|\.github|dist)/"; then
   echo "verify-package: package contains development-only paths" >&2; exit 1
 fi
@@ -27,7 +29,9 @@ tar -xzf "$TMP/one/$NAME" -C "$TMP/extract"
 PACKAGE="$TMP/extract/crucible-$VERSION"
 [ -x "$PACKAGE/crucible" ]
 [ -x "$PACKAGE/scripts/verify-agent-cycle.sh" ]
+[ -x "$PACKAGE/scripts/verify-coldstart-independence.sh" ]
 "$PACKAGE/crucible" help >/dev/null
 "$PACKAGE/scripts/verify-agent-cycle.sh" >/dev/null
+"$PACKAGE/scripts/verify-coldstart-independence.sh" >/dev/null
 
 printf 'PACKAGE-OK %s %s\n' "$VERSION" "$(awk '{print $1}' "$TMP/one/$NAME.sha256")"

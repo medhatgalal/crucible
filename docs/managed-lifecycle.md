@@ -21,8 +21,43 @@ New cycles select the behavior during adoption:
 <engine>/crucible adopt <program> --managed
 ```
 
-That creates `STATE.tsv` and its generated `STATE.md` atomically with the installed program. The
-`lifecycle enable` primitive remains only for converting an empty older installation before its first
+That creates `STATE.tsv` and its generated `STATE.md` atomically with the installed program, and
+marks `cycle: guided`. Guided cycles require panel configure/approval before investigation.
+
+### Guided panel gate
+
+```sh
+# Replace placeholder agents.tsv rows, write PANEL.md + PANEL.ASSIGN.tsv, then:
+$CP cycle approve-panel
+$CP cycle problem /path/to/report.md
+```
+
+`PANEL.md` must include: Agents, Roles, Risk posture, Isolation transport, Independence ladder,
+Waivers. `PANEL.ASSIGN.tsv` is authoritative role→agent casting (coordinator, claim-auditor, maker,
+reviewer, contract-auditor required). Placeholder `MODEL` / `AGENT_CLI` / `OTHER_CLI` rows refuse
+approval. Guided dispatches must use agents cast for that role.
+
+### Attempt transport and contract audit
+
+```sh
+$CP dispatch fix-report-flow maker <maker-name> A1 FOCUSED
+# contract path is printed
+$CP attempt transport <ATTEMPT> multi-agent   # or acp | subagent
+# Auditor must be a registered agent distinct from the attempt agent:
+$CP contract-audit <ATTEMPT> <auditor-name> PASS   # or FIX | STOP
+$CP attempt start <ATTEMPT> <pid>
+# Optional ACP ladder probe (single-product hosts):
+# $CP probe-acp failed "acp not available"
+# ... agent work ...
+$CP attempt finish <ATTEMPT> RETURNED "observed exit 0"
+$CP result <ATTEMPT> PASS <evidence-file> CLOSE -
+```
+
+Independence ladder: multi-agent preferred; ACP for single-product isolation; subagent only after a
+recorded ACP probe failure (`ACP-PROBE.md` with `status: failed` or PANEL notes). `STOP` blocks the
+item as `INDEPENDENCE_UNAVAILABLE` — do not continue as solo theatre.
+
+The `lifecycle enable` primitive remains only for converting an empty older installation before its first
 item; it is not an onboarding step.
 
 The dry-run changes nothing and prints the exact write set. Apply creates authoritative `STATE.tsv`,

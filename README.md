@@ -29,16 +29,19 @@ Open the repository you want to change, then give a fresh agent either source fo
 **Read from the public web:**
 
 > Read `https://raw.githubusercontent.com/medhatgalal/crucible/main/BOOTSTRAP.md`. You are already in
-> the target repository. Run a complete Crucible cycle for this problem: `<problem or report path>`.
+> the target repository. Configure the agent panel with me, then run a Crucible cycle for this
+> problem: `<problem or report path>`.
 
 **Read from a local checkout or extracted release:**
 
-> Read `/absolute/path/to/crucible/BOOTSTRAP.md`. You are already in the target repository. Run a
-> complete Crucible cycle for this problem: `<problem or report path>`.
+> Read `/absolute/path/to/crucible/BOOTSTRAP.md`. You are already in the target repository. Configure
+> the agent panel with me, then run a Crucible cycle for this problem: `<problem or report path>`.
 
-The agent obtains Crucible, verifies its cold-start contract, installs a guided cycle into the target
-repository, proposes the smallest useful agent/persona panel, and returns one evidence-grounded proposal
-for approval. The operator does not drive lifecycle commands.
+The agent obtains Crucible, verifies its cold-start contract, installs a guided cycle, asks one compact
+configure block for **agent inventory and role casting** (which independent agent plays each persona),
+writes `PANEL.md` + `PANEL.ASSIGN.tsv`, waits for panel approval, then investigates with those agents
+(multi-agent preferred; ACP isolation on single-product hosts; subagents only after ACP failure).
+Success is structure followed with evidence—not a solo agent pretending to be a panel.
 
 Already installed? Say:
 
