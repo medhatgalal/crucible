@@ -385,12 +385,16 @@ cmd_attempt() {
       value=${1:-}; [ $# -eq 1 ] || die "usage: crucible attempt start ATTEMPT PID"
       posint "$value" || die "attempt start requires a positive PID"
       [ "$(attempt_state "$id")" = DISPATCHED ] || die "attempt start requires DISPATCHED"
+      # Independence artifacts must be sealed before the process is observed running.
+      require_attempt_independence "$id"
       attempt_event "$id" RUNNING "$value" observed-start
       printf '%s RUNNING pid %s\n' "$id" "$value"
       ;;
     transport)
       value=${1:-}; [ $# -eq 1 ] || die "usage: crucible attempt transport ATTEMPT multi-agent|acp|subagent"
       case $value in multi-agent|acp|subagent) : ;; *) die "transport must be multi-agent, acp, or subagent" ;; esac
+      [ "$(attempt_state "$id")" = DISPATCHED ] \
+        || die "refused: transport may only be recorded while DISPATCHED (before attempt start)"
       if uses_guided_cycle; then
         enforce_transport_ladder "$value"
       elif [ "$value" = subagent ]; then
@@ -455,17 +459,19 @@ cmd_attempt() {
 contract_structural_ok() {
   ad=$1; role=$2
   [ -f "$ad/contract.md" ] || return 1
-  # Contract must identify the attempt and instruct brief-only follow-through.
-  grep -q 'This attempt is bound' "$ad/contract.md" || return 1
   grep -qiE 'follow it exactly|Read this file and follow it exactly' "$ad/contract.md" || return 1
-  # Reviewer contracts must not embed a maker report section.
   case $role in
     judge|adversary)
+      grep -q 'This attempt is bound' "$ad/contract.md" || return 1
       grep -q '^## Maker report' "$ad/contract.md" && return 1
       grep -q '^## Review independence' "$ad/contract.md" || return 1
       ;;
     maker)
+      grep -q 'This attempt is bound' "$ad/contract.md" || return 1
       grep -qE '^## Work location|^## Item' "$ad/contract.md" || return 1
+      ;;
+    claim-auditor|scout)
+      grep -qE 'claim|Claim|auditing claim' "$ad/contract.md" || return 1
       ;;
   esac
   return 0
@@ -507,6 +513,9 @@ cmd_contract_audit() {
   note=${*:-NONE}
   ad=$(attempt_dir "$id")
   [ -f "$ad/contract.md" ] || die "attempt has no contract.md: $id"
+  st=$(attempt_state "$id")
+  [ "$st" = DISPATCHED ] \
+    || die "refused: contract-audit may only be recorded while DISPATCHED (before attempt start)"
   attempt_agent=$(attempt_meta "$id" 6)
   role=$(attempt_meta "$id" 5)
   slug=$(attempt_meta "$id" 2)
@@ -544,10 +553,18 @@ cmd_contract_audit() {
       || die "contract-audit is immutable: $id"
     existing=$(sed -n 's/^VERDICT: //p' "$ad/contract-audit.md" | head -1)
     existing_auditor=$(sed -n 's/^AUDITOR: //p' "$ad/contract-audit.md" | head -1)
-    [ "$existing" = "$verdict" ] && [ "$existing_auditor" = "$auditor" ] \
-      || die "contract-audit is immutable: $id"
-    printf '%s/contract-audit.md (already %s by %s)\n' "$ad" "$verdict" "$auditor"
-    return
+    if [ "$existing" = "$verdict" ] && [ "$existing_auditor" = "$auditor" ]; then
+      printf '%s/contract-audit.md (already %s by %s)\n' "$ad" "$verdict" "$auditor"
+      return
+    fi
+    # FIX is recoverable: archive prior FIX and allow a new PASS/FIX/STOP.
+    if [ "$existing" = FIX ]; then
+      mkdir -p "$ad/contract-audit.history"
+      n=1; while [ -e "$ad/contract-audit.history/$n.md" ]; do n=$((n+1)); done
+      mv "$ad/contract-audit.md" "$ad/contract-audit.history/$n.md"
+    else
+      die "contract-audit is immutable: $id (existing $existing by $existing_auditor)"
+    fi
   fi
   tmp="$ad/.contract-audit.$$.tmp"
   {
@@ -560,24 +577,57 @@ cmd_contract_audit() {
   if [ "$verdict" = STOP ]; then
     stage=$(state_value "$slug" 3); risk=$(state_value "$slug" 5)
     wid=$(state_value "$slug" 4)
-    state_update_item "$slug" BLOCKED "$stage" "$wid" "$risk" - INDEPENDENCE_UNAVAILABLE
+    # Claim attempts use item field C1 etc. and may not be in STATE.tsv
+    if [ -f "$ROOT/STATE.tsv" ] && state_value "$slug" 1 >/dev/null 2>&1; then
+      case $slug in C[0-9]*) : ;; *)
+        state_update_item "$slug" BLOCKED "$stage" "$wid" "$risk" - INDEPENDENCE_UNAVAILABLE
+      ;; esac
+    fi
     printf '%s/contract-audit.md\nESCALATE INDEPENDENCE_UNAVAILABLE — do not continue as solo theatre\n' "$ad"
+    return
+  fi
+  if [ "$verdict" = FIX ]; then
+    # Clear in-flight so a revised dispatch can proceed after the contract is fixed.
+    if [ -f "$ROOT/STATE.tsv" ]; then
+      case $slug in C[0-9]*) : ;; *)
+        stage=$(state_value "$slug" 3); risk=$(state_value "$slug" 5); wid=$(state_value "$slug" 4)
+        inflight=$(state_value "$slug" 6)
+        [ "$inflight" = "$id" ] && state_update_item "$slug" ACTIVE "$stage" "$wid" "$risk" - -
+      ;; esac
+    fi
+    printf '%s/contract-audit.md\nFIX: revise the contract and re-audit, or redispatch a new attempt\n' "$ad"
     return
   fi
   printf '%s/contract-audit.md\n' "$ad"
 }
 
 cmd_probe_acp() {
-  # Record a structured ACP availability probe for the independence ladder.
+  # Append-only ACP probe log. A prior ok cannot be unbound-overwritten into failed
+  # to unlock weaker subagent transport.
   status=${1:-}; [ -n "$status" ] || die "usage: crucible probe-acp ok|failed|unavailable [note...]"
   case $status in ok|failed|unavailable) : ;; *) die "probe-acp status must be ok, failed, or unavailable" ;; esac
   shift
   note=${*:-none}
   now=$(date +%s)
-  tmp="$ROOT/.ACP-PROBE.md.$$.tmp"
+  mkdir -p "$ROOT/acp-probes"
+  if [ -f "$ROOT/ACP-PROBE.md" ] && [ ! -L "$ROOT/ACP-PROBE.md" ]; then
+    prev=$(sed -n 's/^status: //p' "$ROOT/ACP-PROBE.md" | head -1 | tr '[:upper:]' '[:lower:]')
+    if [ "$prev" = ok ] && [ "$status" != ok ]; then
+      die "refused: ACP probe already ok; cannot downgrade to $status to unlock weaker isolation (record PANEL ACP-unavailable if needed)"
+    fi
+  fi
+  # Append immutable event
+  n=1; while [ -e "$ROOT/acp-probes/$n.md" ]; do n=$((n+1)); done
   {
     printf 'status: %s\nprobed-epoch: %s\nnote: %s\n' "$status" "$now" "$note"
-    printf '\nACP probe record for independence ladder (not a cryptographic proof).\n'
+    printf '\nImmutable ACP probe event %s.\n' "$n"
+  } > "$ROOT/acp-probes/$n.md"
+  # Latest summary for humans / acp_probe_failed
+  tmp="$ROOT/.ACP-PROBE.md.$$.tmp"
+  {
+    printf 'status: %s\nprobed-epoch: %s\nnote: %s\nevent: acp-probes/%s.md\n' \
+      "$status" "$now" "$note" "$n"
+    printf '\nLatest ACP probe summary. History under acp-probes/.\n'
   } > "$tmp"
   mv "$tmp" "$ROOT/ACP-PROBE.md"
   printf '%s/ACP-PROBE.md\n' "$ROOT"
@@ -1147,7 +1197,32 @@ cmd_dispatch_claim() {
     echo; echo "---"; echo; echo "## The rules that bind you"; echo
     cat "$ROOT/RULES.md" 2>/dev/null || echo "(RULES.md missing)"
   } > "$out"
+  # Managed/guided programs also place claim work on the attempt independence ledger.
+  attempt_id=
+  if uses_managed_lifecycle; then
+    mkdir -p "$ROOT/attempts"
+    now=$(date +%s); n=1
+    while :; do
+      attempt_id="A$now.$$.${n}"
+      staging="$ROOT/attempts/.$attempt_id.$$.tmp"
+      [ ! -e "$ROOT/attempts/$attempt_id" ] && mkdir "$staging" 2>/dev/null && break
+      n=$((n+1))
+    done
+    kind=$(kind_of "$name")
+    printf 'attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n' \
+      > "$staging/meta.tsv"
+    printf '%s\t%s\t-\tCLAIM\t%s\t%s\t%s\t-\tFOCUSED\tDISPATCHED\t%s\t%s\t-\n' \
+      "$attempt_id" "$cn" "$role" "$name" "$kind" "$now" "$((now + 1800))" >> "$staging/meta.tsv"
+    printf 'state\tepoch\tpid\treason\nDISPATCHED\t%s\t-\tdispatch-recorded\n' "$now" > "$staging/events.tsv"
+    cp "$out" "$staging/contract.md"
+    printf 'claim-dispatch: %s\n' "${out#"$ROOT"/}" > "$staging/claim-dispatch.txt"
+    mv "$staging" "$ROOT/attempts/$attempt_id"
+    printf 'attempt-id: %s\n' "$attempt_id" >> "$out"
+  fi
   printf '%s\n' "$out"
+  if [ -n "$attempt_id" ]; then
+    printf 'attempt %s (claim independence ledger)\n' "$attempt_id" >&2
+  fi
   { printf '\n# %s as %s on claim %s. Run this:\n' "$name" "$role" "$cn"
     printf '%s\n' "$(invocation "$name" "$out")"; } >&2
 }
@@ -1331,6 +1406,10 @@ cmd_dispatch_managed() (
       fi
     fi
     printf '\n## Rules\n\n'; cat "$ROOT/RULES.md" 2>/dev/null || true
+    printf '\n## Independence seal\n\n'
+    printf 'Before attempt start, record transport and a contract-audit PASS while DISPATCHED:\n\n'
+    printf '    %s attempt transport %s multi-agent|acp|subagent\n' "$self" "$id"
+    printf '    %s contract-audit %s <contract-auditor> PASS\n' "$self" "$id"
   } > "$ad/contract.md"
   mv "$staging" "$target_attempt"
   staging=
@@ -2072,13 +2151,15 @@ require_role_cast() {
 }
 
 panel_id() {
-  pf=$(panel_file); af=$(assign_file)
+  pf=$(panel_file); af=$(assign_file); ag="$ROOT/agents.tsv"
   [ -s "$pf" ] && [ ! -L "$pf" ] || return 1
   [ -s "$af" ] && [ ! -L "$af" ] || return 1
-  # Content-bind both the narrative panel and the role→agent casting table.
+  [ -s "$ag" ] && [ ! -L "$ag" ] || return 1
+  # Content-bind panel narrative, casting, and the approved agent registry/invocations.
   {
     hashfile "$pf"
     hashfile "$af"
+    hashfile "$ag"
   } | h12
 }
 
@@ -2120,23 +2201,41 @@ attempt_contract_audit_pass() {
 # Subagent transport is weaker isolation; only allowed after a recorded ACP probe failure
 # on single-product hosts, or when PANEL explicitly records ACP-unavailable.
 acp_probe_failed() {
-  if [ -f "$ROOT/ACP-PROBE.md" ] && [ ! -L "$ROOT/ACP-PROBE.md" ]; then
-    status=$(sed -n 's/^status: //p' "$ROOT/ACP-PROBE.md" | head -1 | tr '[:upper:]' '[:lower:]')
-    case $status in failed|unavailable|error) return 0 ;; esac
-  fi
   if [ -f "$(panel_file)" ]; then
     grep -qiE 'ACP[- ]?(probe )?(failed|unavailable)|acp: (failed|unavailable)' "$(panel_file)" \
       && return 0
   fi
+  # A prior successful probe cannot unlock subagent via a later failed overwrite.
+  if [ -d "$ROOT/acp-probes" ]; then
+    if grep -ql '^status: ok$' "$ROOT"/acp-probes/*.md 2>/dev/null; then
+      return 1
+    fi
+  elif [ -f "$ROOT/ACP-PROBE.md" ]; then
+    prev=$(sed -n 's/^status: //p' "$ROOT/ACP-PROBE.md" | head -1 | tr '[:upper:]' '[:lower:]')
+    [ "$prev" = ok ] && return 1
+  fi
+  if [ -f "$ROOT/ACP-PROBE.md" ] && [ ! -L "$ROOT/ACP-PROBE.md" ]; then
+    status=$(sed -n 's/^status: //p' "$ROOT/ACP-PROBE.md" | head -1 | tr '[:upper:]' '[:lower:]')
+    case $status in failed|unavailable|error) return 0 ;; esac
+  fi
   return 1
+}
+
+suggest_contract_auditor() {
+  af=$(assign_file)
+  if [ -f "$af" ]; then
+    awk -F '\t' '$1=="contract-auditor" && $2!=""{print $2; exit}' "$af"
+    return
+  fi
+  printf '<auditor-name>'
 }
 
 require_attempt_independence() {
   id=$1
   uses_guided_cycle || return 0
-  transport=$(attempt_transport "$id") || die "refused: attempt $id has no transport (multi-agent|acp|subagent) — run: $(self_path) attempt transport $id <transport>"
+  transport=$(attempt_transport "$id") || die "refused: attempt $id has no transport (multi-agent|acp|subagent) — run: $(self_path) attempt transport $id <transport> while DISPATCHED"
   attempt_contract_audit_pass "$id" \
-    || die "refused: attempt $id lacks contract-audit PASS — run: $(self_path) contract-audit $id PASS"
+    || die "refused: attempt $id lacks contract-audit PASS — run: $(self_path) contract-audit $id $(suggest_contract_auditor) PASS while DISPATCHED"
   case $transport in
     subagent)
       acp_probe_failed \
@@ -2391,6 +2490,8 @@ cmd_cycle() {
       [ $# -eq 0 ] || die 'usage: crucible cycle approve-panel'
       uses_guided_cycle || die 'approve-panel requires a guided cycle'
       panel_valid || die 'refused: PANEL.md / PANEL.ASSIGN.tsv incomplete (need agents inventory, role→agent casting, non-placeholder agents.tsv, transport policy)'
+      # Freeze the approved registry so later agents.tsv edits invalidate the panel id.
+      cp "$ROOT/agents.tsv" "$ROOT/PANEL.AGENTS.tsv"
       pid=$(panel_id)
       if panel_approval_current; then printf 'panel %s is already approved\n' "$pid"; return; fi
       mkdir -p "$ROOT/panel-approvals"
@@ -2398,7 +2499,8 @@ cmd_cycle() {
       [ ! -e "$record" ] || die "panel approval record already exists but is not current: $record"
       now=$(date +%s); tmp="$ROOT/.PANEL.APPROVAL.$$.tmp"; rtmp="$ROOT/panel-approvals/.$pid.$$.tmp"
       trap 'rm -f "$tmp" "$rtmp"' 0 1 2 15
-      printf 'panel-id: %s\napproved-epoch: %s\ndecision: APPROVED\n' "$pid" "$now" > "$rtmp"
+      printf 'panel-id: %s\napproved-epoch: %s\ndecision: APPROVED\nagents-hash: %s\n' \
+        "$pid" "$now" "$(hashfile "$ROOT/agents.tsv" | cut -c1-12)" > "$rtmp"
       mv "$rtmp" "$record"
       printf 'panel-id: %s\nrecord: panel-approvals/%s.md\n' "$pid" "$pid" > "$tmp"
       mv "$tmp" "$ROOT/PANEL.APPROVAL"; trap - 0 1 2 15
@@ -2725,6 +2827,20 @@ cmd_claim() {
       fi
       [ "$found" -eq 1 ] \
         || die "refused: guided TRUE requires a claim dispatch for $who — run: $(self_path) dispatch $n claim-auditor $who"
+      # Independence ledger: sealed transport + contract-audit on the claim attempt.
+      claim_attempt=
+      if [ -d "$ROOT/attempts" ]; then
+        for ad in "$ROOT"/attempts/A*; do
+          [ -d "$ad" ] || continue
+          aid=${ad##*/}
+          [ "$(attempt_meta "$aid" 2)" = "$n" ] || continue
+          [ "$(attempt_meta "$aid" 6)" = "$who" ] || continue
+          claim_attempt=$aid
+        done
+      fi
+      [ -n "$claim_attempt" ] \
+        || die "refused: guided TRUE requires a claim attempt on the independence ledger for $who"
+      require_attempt_independence "$claim_attempt"
     fi
     printf 'CLAIM-VERDICT: %s\nAGENT: %s\nKIND: %s\n' "$word" "$who" "$(kind_of "$who")" > "$d/$who.md"
     printf '%s\n' "$d/$who.md" ;;

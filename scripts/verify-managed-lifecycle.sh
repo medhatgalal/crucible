@@ -150,6 +150,7 @@ refuses 'review requires implemented work' 'current-work maker PASS' "$P/crucibl
 
 maker_contract=$($P/crucible dispatch alpha maker mk1 A1 FOCUSED 2>/dev/null)
 maker_attempt=$(basename "$(dirname "$maker_contract")")
+bind_independence "$P" "$maker_attempt"
 $P/crucible attempt start "$maker_attempt" "$$" >/dev/null
 (
   cd "$repo"
@@ -161,7 +162,6 @@ $P/crucible attempt start "$maker_attempt" "$$" >/dev/null
 maker_out=$(cd "$repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo focused-maker')
 maker_evidence=$(basename "$(printf '%s' "$maker_out" | awk '{print $1}')")
 $P/crucible attempt finish "$maker_attempt" RETURNED observed-exit-zero >/dev/null
-bind_independence "$P" "$maker_attempt"
 $P/crucible result "$maker_attempt" PASS "$maker_evidence" CLOSE - >/dev/null
 refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
   "$P/crucible" run alpha j1 -- sh -c 'echo unbound-review'
@@ -172,6 +172,7 @@ expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
 
 j1_contract=$($P/crucible dispatch alpha judge j1 A1 FOCUSED 2>/dev/null)
 j1_attempt=$(basename "$(dirname "$j1_contract")")
+bind_independence "$P" "$j1_attempt"
 $P/crucible attempt start "$j1_attempt" "$$" >/dev/null
 j1_out=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo focused-j1')
 j1_evidence=$(basename "$(printf '%s' "$j1_out" | awk '{print $1}')")
@@ -181,16 +182,15 @@ printf 'VERDICT: PASS\nWORK-ID: %s\nmanual compatibility verdict; see %s\n' "$wi
   > "$P/items/alpha/verdicts/j1.md"
 refuses 'managed check rejects a hand-written verdict' 'not bound to an attempt result' \
   "$P/crucible" check alpha
-bind_independence "$P" "$j1_attempt"
 $P/crucible result "$j1_attempt" PASS "$j1_evidence" CLOSE - >/dev/null
 
 j2_contract=$($P/crucible dispatch alpha judge j2 A1 FOCUSED 2>/dev/null)
 j2_attempt=$(basename "$(dirname "$j2_contract")")
+bind_independence "$P" "$j2_attempt"
 $P/crucible attempt start "$j2_attempt" "$$" >/dev/null
 j2_out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo focused-j2')
 j2_evidence=$(basename "$(printf '%s' "$j2_out" | awk '{print $1}')")
 $P/crucible attempt finish "$j2_attempt" RETURNED observed-exit-zero >/dev/null
-bind_independence "$P" "$j2_attempt"
 $P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
 
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha

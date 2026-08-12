@@ -54,10 +54,10 @@ And write authoritative casting in `PANEL.ASSIGN.tsv`:
 ```text
 role	agent	required	notes
 coordinator	…	yes	this session; not maker/reviewer
-claim-auditor	…	yes	
-maker	…	yes	
+claim-auditor	…	yes
+maker	…	yes
 reviewer	…	yes	≠ maker
-contract-auditor	…	yes	
+contract-auditor	…	yes
 ```
 
 Show inventory + casting and stop until the operator approves (`cycle approve-panel`). Placeholder
