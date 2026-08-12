@@ -13,7 +13,9 @@ capability. None of that is here, and `README.md` says so in the same words.
 
 Transport labels (`multi-agent`, `acp`, `subagent`), contract audits, and attempt ledgers prove
 **process discipline**, not cryptographic multi-agent identity. ACP isolation is stronger than
-same-thread multi-hat work and weaker than separate OS principals.
+same-thread multi-hat work and weaker than separate OS principals. Panel approval binds content
+hashes of `PANEL.md`, `PANEL.ASSIGN.tsv`, and `agents.tsv` to execution commands on guided cycles;
+it still does not prove a different person ran the other CLI.
 
 ## What it does protect against
 

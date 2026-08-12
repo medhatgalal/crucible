@@ -14,12 +14,12 @@ bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 expect() {
   label=$1; pattern=$2; shift 2
   out=$("$@" 2>&1) || { bad "$label: command refused: $out"; return; }
-  if printf '%s\n' "$out" | grep -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
+  if printf '%s\n' "$out" | grep -E -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
 }
 refuses() {
   label=$1; pattern=$2; shift 2
   out=$("$@" 2>&1) && { bad "$label: command accepted"; return; }
-  if printf '%s\n' "$out" | grep -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
+  if printf '%s\n' "$out" | grep -E -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
 }
 
 write_agents() {
@@ -130,20 +130,20 @@ refuses 'problem cannot bind before panel approval' 'approve the agent panel' \
 
 # Placeholder agents still block even with a panel draft.
 write_panel "$P"
-refuses 'placeholder agents.tsv cannot approve panel' 'placeholders\|incomplete\|PANEL' \
+refuses 'placeholder agents.tsv cannot approve panel' 'placeholders|incomplete|PANEL' \
   "$P/crucible" cycle approve-panel
 
 write_agents "$P"
 # Casting table required: panel without ASSIGN refuses.
 rm -f "$P/PANEL.ASSIGN.tsv"
-refuses 'panel without role casting refuses' 'ASSIGN\|casting\|incomplete' \
+refuses 'panel without role casting refuses' 'ASSIGN|casting|incomplete' \
   "$P/crucible" cycle approve-panel
 write_panel "$P"
 write_agents "$P"
 # maker=reviewer same agent refuses
 printf 'role\tagent\trequired\tnotes\ncoordinator\tc0\tyes\nclaim-auditor\ta1\tyes\nmaker\tmk1\tyes\nreviewer\tmk1\tyes\ncontract-auditor\tj2\tyes\n' \
   > "$P/PANEL.ASSIGN.tsv"
-refuses 'maker and reviewer same agent refuses' 'incomplete\|ASSIGN\|casting' \
+refuses 'maker and reviewer same agent refuses' 'incomplete|ASSIGN|casting' \
   "$P/crucible" cycle approve-panel
 write_panel "$P"
 write_agents "$P"
@@ -213,14 +213,14 @@ if grep -q 'same-family' "$P/START.md" && grep -q 'make.*review.*fix' "$P/START.
 else
   bad 'fresh-agent prompt does not teach same-family risk and iterative review'
 fi
-if grep -q 'compact configure\|Role casting\|role casting' "$P/BOOTSTRAP.md" \
-  && grep -q 'PANEL.ASSIGN\|role casting\|Role casting' "$P/BOOTSTRAP.md" \
-  && grep -q 'independence ladder\|Independence ladder\|multi-agent' "$P/BOOTSTRAP.md"; then
+if grep -qE 'compact configure|Role casting|role casting' "$P/BOOTSTRAP.md" \
+  && grep -qE 'PANEL.ASSIGN|role casting|Role casting' "$P/BOOTSTRAP.md" \
+  && grep -qE 'independence ladder|Independence ladder|multi-agent' "$P/BOOTSTRAP.md"; then
   ok
 else
   bad 'bootstrap does not teach configure, role casting, and independence ladder'
 fi
-if grep -q 'PANEL.ASSIGN' "$P/START.md" && grep -q 'Role casting\|role casting' "$P/START.md"; then
+if grep -q 'PANEL.ASSIGN' "$P/START.md" && grep -qE 'Role casting|role casting' "$P/START.md"; then
   ok
 else
   bad 'START.md does not teach PANEL.ASSIGN role casting'
@@ -230,13 +230,13 @@ if grep -q 'Do not conduct a long setup interview' "$P/BOOTSTRAP.md"; then
 else
   ok
 fi
-if grep -q 'contract-auditor\|contract auditor' "$P/START.md"; then
+if grep -qE 'contract-auditor|contract auditor' "$P/START.md"; then
   ok
 else
   bad 'START.md does not mention contract-auditor'
 fi
 
-# No-work proposal path with panel.
+# No-work proposal path with panel (FALSE still requires dispatch + independence seal).
 clean_repo="$base/clean-repo"; mkdir -p "$clean_repo"
 (
   cd "$clean_repo"
@@ -255,6 +255,8 @@ $Q/crucible cycle problem "$clean_repo/report.md" >/dev/null
 qc=$($Q/crucible claim add 'code change required' 'No code change is actually required.')
 for agent in a1 a2; do
   $Q/crucible run-claim "$qc" "$agent" -- sh -c 'echo checked current behavior' >/dev/null
+  $Q/crucible dispatch "$qc" claim-auditor "$agent" >/dev/null
+  seal_claim_agent "$Q" "$agent"
   $Q/crucible claim verdict "$qc" "$agent" FALSE >/dev/null
 done
 cat > "$Q/PROPOSAL.md" <<'EOF'

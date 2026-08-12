@@ -17,5 +17,6 @@ that causes it. If it describes something already fixed, say STALE and cite the 
 establish it either way from the code, say UNVERIFIABLE and name exactly what you would need —
 never guess in either direction.
 
-Record every command through `crucible run <item> <you> -- <cmd>` and name at least one of those
-files in your verdict. A verdict citing nothing you ran yourself is refused by the gate.
+Record every command through `crucible run-claim <CN> <you> -- <cmd>`. A guided claim verdict
+requires a claim-auditor (or scout) dispatch and a sealed transport + contract-audit PASS on that
+claim attempt. A verdict with no usable evidence you recorded is refused by the gate.

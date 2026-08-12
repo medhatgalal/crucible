@@ -5,6 +5,39 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.2.2] - 2026-08-12
+
+### Panel bind is operational (not display-only)
+
+- Guided `dispatch`, `attempt transport`, `contract-audit`, `attempt start`, `result`,
+  `claim verdict`, and `claim scout` refuse when the approved panel hash is stale
+  (PANEL.md / PANEL.ASSIGN.tsv / agents.tsv drift).
+- `require_attempt_independence` re-runs the transport ladder against the *current*
+  approved panel so temporary kind-collapse or waiver cannot leave a dishonest seal.
+
+### Investigation on the independence ledger
+
+- Every guided claim verdict (TRUE/FALSE/STALE/UNVERIFIABLE) and scout result requires
+  a matching dispatch plus sealed transport + contract-audit PASS.
+- Claim attempt stamps must match **item + agent + role** (stolen attempt-ids refuse).
+- Consume-time re-check: `claim admit`, managed `check` judge results, and
+  `cycle_investigation_state` ignore or refuse unsealed verdicts/results (covers temporary
+  `cycle: guided` toggle while writing files).
+- Successful claim verdict/scout terminalizes the claim attempt (`SUPERSEDED`) so session
+  cleanup is not blocked by sealed-but-never-started DISPATCHED rows.
+
+### Cast exclusions and ladder honesty
+
+- Coordinator may not also be claim-auditor or contract-auditor; contract-auditor may not
+  be a maker (approve-panel refuses).
+- Waiver tokens match only lines `WAIVER:` / `LADDER_WAIVER:` (prose cannot grant them).
+- Prior `probe-acp ok` blocks subagent even if PANEL says `ACP: unavailable`.
+- `contract-audit FIX` SUPERSEDES the attempt (redispatch with a revised contract); re-PASS
+  on the same attempt is not a path.
+- Re-approving a prior panel content hash after intermediate drift re-points PANEL.APPROVAL.
+- Generated contracts put transport + contract-audit **before** attempt start.
+- Guided negative tests extended in `verify-coldstart-independence.sh` and agent-cycle no-work path.
+
 ## [1.2.1] - 2026-08-12
 
 ### Independence enforcement (Codex review P1/P2)

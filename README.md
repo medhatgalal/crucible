@@ -130,10 +130,16 @@ The shell refuses missing or stale evidence, stale work IDs, maker self-review, 
 mutable managed results, unsupported lifecycle transitions, unapproved work admission, unsafe task
 ownership, duplicate expensive checks on unchanged work, and unsupported closure.
 
+On **guided** cycles it also refuses: investigation or work without a current approved agent panel and
+role casting; guided dispatch/transport/contract-audit/start/result under a stale panel; claim
+verdicts and scout results without a sealed independence-ledger attempt; subagent transport without a
+recorded ACP probe failure (or an explicit `ACP: unavailable` line when no prior probe succeeded);
+and coordinator-as-auditor / maker-as-contract-auditor casting.
+
 Crucible is not a security boundary. Under one operating-system user, it cannot cryptographically prove
-who authored a file or that a passing test meaningfully tests the intended behavior. It labels those
-limits honestly and uses isolated context, discriminating falsifiers, and selective cross-family review
-as risk controls—not as pretend guarantees. See [SECURITY.md](SECURITY.md) and [RULES.md](RULES.md).
+who authored a file or that a passing test meaningfully tests the intended behavior. Transport labels
+and contract audits are process discipline, not multi-principal identity. See [SECURITY.md](SECURITY.md)
+and [RULES.md](RULES.md).
 
 ## 📚 Go deeper
 

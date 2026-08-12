@@ -33,5 +33,6 @@ REQUIRED_FIX: ...
 INDEPENDENCE: ok | weak | unavailable
 ```
 
-On FIX, the coordinator rewrites the contract once and re-audits. On STOP or a second FIX, the
-coordinator escalates `INDEPENDENCE_UNAVAILABLE` and does **not** perform the role itself.
+On FIX the attempt is SUPERSEDED: the coordinator revises the contract via **redispatch** and a new
+audit. On STOP the coordinator escalates `INDEPENDENCE_UNAVAILABLE` and does **not** perform the
+role itself.

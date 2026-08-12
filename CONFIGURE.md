@@ -68,8 +68,10 @@ reviewer	j1	yes	≠ maker
 adversary	adv	no	required when risk is HIGH
 ```
 
-Show inventory + casting table and wait for `cycle approve-panel`. Approval content-binds both
-`PANEL.md` and `PANEL.ASSIGN.tsv`.
+Show inventory + casting table and wait for `cycle approve-panel`. Approval content-binds
+`PANEL.md`, `PANEL.ASSIGN.tsv`, and `agents.tsv` (panel id hash). Guided dispatch, transport,
+contract-audit, start, result, and claim verdict/scout refuse when that hash is stale — not only
+`cycle` status.
 
 ### Example coordinator message
 
@@ -102,8 +104,9 @@ Record transport per attempt:
 $CP attempt transport <ATTEMPT> multi-agent|acp|subagent
 ```
 
-Record ACP probe results in `ACP-PROBE.md` (`status: ok|failed|unavailable`) or note ACP unavailable
-in `PANEL.md` before using subagent transport.
+Record ACP probe results with `probe-acp` (`ok|failed|unavailable`). Subagent transport needs a
+recorded failure/unavailable probe, or an explicit panel line `ACP: unavailable` **only when no
+prior `probe-acp ok` exists**. A successful probe cannot be overridden by panel prose.
 
 ## Contract-auditor
 
