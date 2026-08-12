@@ -134,6 +134,7 @@ refuses 'phase cannot erase an in-flight attempt' 'still in flight' "$P/crucible
 expect 'next waits before launch observation' "^WAIT $id " "$P/crucible" next
 
 meta_before=$(cksum "$P/attempts/$id/meta.tsv")
+bind_independence "$P" "$id"
 expect 'start records observed PID' "$id RUNNING pid" "$P/crucible" attempt start "$id" "$$"
 refuses 'overdue cannot be inferred early' 'has not passed' "$P/crucible" attempt overdue "$id"
 expect 'next waits on running process' "^WAIT $id " "$P/crucible" next
@@ -149,7 +150,6 @@ expect 'returned is an observed terminal event' 'RETURNED; record its result nex
 expect 'next requests a result after return' '^NEXT alpha RESULT ' "$P/crucible" next
 refuses 'result requires existing evidence' 'missing regular evidence' "$P/crucible" result "$id" PASS missing.txt CLOSE -
 refuses 'result outcome and next action must agree' 'incompatible result' "$P/crucible" result "$id" PASS "$evidence" FIX -
-bind_independence "$P" "$id"
 result=$($P/crucible result "$id" PASS "$evidence" CLOSE -)
 [ -f "$result" ] && ok || bad 'result was not written'
 grep -q '^OUTCOME: PASS$' "$result" && grep -q "^ATTEMPT-ID: $id$" "$result" \
@@ -174,11 +174,11 @@ grep -q '^## Work — work id ' "$jcontract" && grep -q '^## Recorded evidence$'
   && ok || bad 'judge contract does not contain the work and recorded evidence'
 grep -q 'Relation to recorded maker families: `SAME-FAMILY`' "$jcontract" \
   && ok || bad 'same-family review is not labelled in the judge contract'
+bind_independence "$P" "$jid"
 $P/crucible attempt start "$jid" "$$" >/dev/null
 jeout=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo judge-focused')
 jevidence=$(basename "$(printf '%s' "$jeout" | awk '{print $1}')")
 $P/crucible attempt finish "$jid" RETURNED observed-exit-zero >/dev/null
-bind_independence "$P" "$jid"
 $P/crucible result "$jid" PASS "$jevidence" CLOSE - >/dev/null
 grep -q '^REVIEW-RELATION: SAME-FAMILY$' "$P/attempts/$jid/result.md" \
   && ok || bad 'same-family correlation risk is missing from the result'
@@ -187,11 +187,11 @@ refuses 'judge current-work pass refuses duplicate' 'current-work PASS' "$P/cruc
 
 fcontract=$($P/crucible dispatch alpha judge j2 A2 FULL_SUITE 2>/dev/null)
 fid=$(basename "$(dirname "$fcontract")")
+bind_independence "$P" "$fid"
 $P/crucible attempt start "$fid" "$$" >/dev/null
 feout=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo canonical-suite')
 fevidence=$(basename "$(printf '%s' "$feout" | awk '{print $1}')")
 $P/crucible attempt finish "$fid" RETURNED observed-exit-zero >/dev/null
-bind_independence "$P" "$fid"
 $P/crucible result "$fid" PASS "$fevidence" CLOSE - >/dev/null
 grep -q '^REVIEW-RELATION: CROSS-FAMILY$' "$P/attempts/$fid/result.md" \
   && ok || bad 'cross-family review is not labelled in the result'
@@ -199,21 +199,21 @@ refuses 'canonical expensive pass refuses duplicate' 'canonical FULL_SUITE PASS'
 
 r1contract=$($P/crucible dispatch alpha judge j1 A3 FOCUSED 2>/dev/null)
 r1=$(basename "$(dirname "$r1contract")")
+bind_independence "$P" "$r1"
 $P/crucible attempt start "$r1" "$$" >/dev/null
 r1out=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo finding-one')
 r1e=$(basename "$(printf '%s' "$r1out" | awk '{print $1}')")
 $P/crucible attempt finish "$r1" RETURNED observed-reject >/dev/null
 refuses 'evidence cannot be reused across attempts' 'attempt id does not match' \
   "$P/crucible" result "$r1" REJECT "$jevidence" FIX abcdef123456
-bind_independence "$P" "$r1"
 $P/crucible result "$r1" REJECT "$r1e" FIX abcdef123456 >/dev/null
 r2contract=$($P/crucible dispatch alpha judge j2 A3 FOCUSED 2>/dev/null)
 r2=$(basename "$(dirname "$r2contract")")
+bind_independence "$P" "$r2"
 $P/crucible attempt start "$r2" "$$" >/dev/null
 r2out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo finding-two')
 r2e=$(basename "$(printf '%s' "$r2out" | awk '{print $1}')")
 $P/crucible attempt finish "$r2" RETURNED observed-reject >/dev/null
-bind_independence "$P" "$r2"
 $P/crucible result "$r2" REJECT "$r2e" FIX abcdef123456 >/dev/null
 grep -q "^alpha\tBLOCKED\tREVIEW\t.*\tREPEATED_FINDING\t" "$P/STATE.tsv" \
   && ok || bad 'repeated finding did not block the item'
@@ -221,12 +221,16 @@ expect 'next exposes repeated finding block' '^BLOCKED alpha REPEATED_FINDING ' 
 
 timeout_repo=$(fresh)
 TP="$timeout_repo/.crucible/p"
-tcontract=$(CRUCIBLE_MAKER_SECONDS=2 $TP/crucible dispatch alpha maker mk1 A1 FOCUSED 2>/dev/null)
+tcontract=$(CRUCIBLE_MAKER_SECONDS=30 $TP/crucible dispatch alpha maker mk1 A1 FOCUSED 2>/dev/null)
 tid=$(basename "$(dirname "$tcontract")")
+# non-guided timeout path: no independence seal required before start
 $TP/crucible attempt start "$tid" "$$" >/dev/null
 refuses 'deadline still cannot infer timeout' 'has not passed' "$TP/crucible" attempt overdue "$tid"
 deadline=$(awk -F '\t' 'NR == 2 { print $12 }' "$TP/attempts/$tid/meta.tsv")
-while [ "$(date +%s)" -lt "$deadline" ]; do sleep 1; done
+# Force the deadline into the past without waiting wall-clock 30s.
+awk -F '\t' -v OFS='\t' -v now="$(date +%s)" 'NR==1{print; next} {$12=now-1; print}' \
+  "$TP/attempts/$tid/meta.tsv" > "$TP/attempts/$tid/meta.tsv.tmp"
+mv "$TP/attempts/$tid/meta.tsv.tmp" "$TP/attempts/$tid/meta.tsv"
 expect 'deadline crossing records overdue only' 'OVERDUE; process outcome is still unobserved' "$TP/crucible" attempt overdue "$tid"
 expect 'next exposes overdue process' '^BLOCKED alpha OVERDUE_PROCESS ' "$TP/crucible" next
 expect 'first observed timeout permits one retry' 'one retry is available' "$TP/crucible" attempt finish "$tid" TIMEOUT launcher-observed-timeout

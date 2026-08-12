@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.2.1] - 2026-08-12
+
+### Independence enforcement (Codex review P1/P2)
+
+- Transport and contract-audit may only be recorded while an attempt is **DISPATCHED**;
+  `attempt start` requires a sealed transport + contract-audit PASS on guided cycles
+  (closes post-RETURNED independence theatre).
+- contract-audit **FIX** is recoverable: prior FIX is archived under
+  `contract-audit.history/`, re-audit is allowed, and item in-flight is cleared so
+  redispatch can proceed.
+- Panel approval content-binds `agents.tsv` (registry/invocations); mutating the
+  registry invalidates the panel id.
+- Claim-auditor/scout dispatches create attempt ledger rows; guided claim TRUE
+  requires sealed independence on that claim attempt.
+- ACP probes are append-only under `acp-probes/`; a prior `ok` cannot be unbound-
+  downgraded to `failed` to unlock subagent transport.
+- Missing-audit refusal prints a runnable command including the auditor argument.
+- Trailing-tab hygiene in TSV examples; focused negative tests for the above.
+
 ## [1.2.0] - 2026-08-12
 
 ### Cold-start independence and role casting

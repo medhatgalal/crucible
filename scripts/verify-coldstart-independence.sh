@@ -33,6 +33,25 @@ write_agents() {
   } > "$prog/agents.tsv"
 }
 
+
+seal_claim_agent() {
+  # After claim dispatch, seal the independence ledger attempt for that agent.
+  prog=$1; agent=$2; transport=${3:-multi-agent}
+  id=
+  for ad in "$prog"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    aid=${ad##*/}
+    a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+    [ "$a" = "$agent" ] || continue
+    id=$aid
+  done
+  [ -n "$id" ] || { echo "no claim attempt for $agent" >&2; return 1; }
+  auditor=$(awk -F '\t' '$1=="contract-auditor"{print $2; exit}' "$prog/PANEL.ASSIGN.tsv")
+  [ -n "$auditor" ] || auditor=j2
+  "$prog/crucible" attempt transport "$id" "$transport" >/dev/null
+  "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
+}
+
 write_panel() {
   prog=$1
   cat > "$prog/PANEL.md" <<'EOF'
@@ -52,13 +71,13 @@ NONE
 EOF
   cat > "$prog/PANEL.ASSIGN.tsv" <<'EOF'
 role	agent	required	notes
-coordinator	c0	yes	
-claim-auditor	a1	yes	
-claim-auditor	a2	yes	
-scout	a1	no	
-maker	mk1	yes	
-reviewer	j1	yes	
-contract-auditor	j2	yes	
+coordinator	c0	yes
+claim-auditor	a1	yes
+claim-auditor	a2	yes
+scout	a1	no
+maker	mk1	yes
+reviewer	j1	yes
+contract-auditor	j2	yes
 EOF
 }
 
@@ -128,11 +147,24 @@ cn=$($P/crucible claim add 'x' 'x source')
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo e' >/dev/null
 refuses 'TRUE without claim dispatch' 'claim dispatch' "$P/crucible" claim verdict "$cn" a1 TRUE
 $P/crucible dispatch "$cn" claim-auditor a1 >/dev/null
+seal_claim_agent "$P" a1
 if $P/crucible claim verdict "$cn" a1 TRUE >/dev/null; then ok; else bad 'TRUE with dispatch should pass'; fi
 
-# ACP probe helper
+# ACP probe helper: failed alone ok; cannot unbound-downgrade after ok
 expect 'probe-acp writes record' 'ACP-PROBE.md' "$P/crucible" probe-acp failed 'no acp in fixture'
 grep -q '^status: failed$' "$P/ACP-PROBE.md" && ok || bad 'ACP-PROBE status not failed'
+# fresh ok then refuse failed downgrade
+rm -f "$P/ACP-PROBE.md"
+rm -rf "$P/acp-probes"
+expect 'probe-acp ok' 'ACP-PROBE.md' "$P/crucible" probe-acp ok 'acp works'
+refuses 'cannot downgrade ok probe to failed' 'cannot downgrade' \
+  "$P/crucible" probe-acp failed 'spoof'
+
+# agents.tsv mutation invalidates panel approval (registry is in panel-id)
+printf 'extra\tkindB\tm\thigh\techo x\n' >> "$P/agents.tsv"
+expect 'agents.tsv drift invalidates panel' '^WAIT PANEL ' "$P/crucible" cycle
+write_agents "$P"
+expect 'restoring agents.tsv restores prior panel approval' '^NEXT ' "$P/crucible" cycle
 
 # Panel edit invalidates approval
 printf '\n# note\n' >> "$P/PANEL.md"

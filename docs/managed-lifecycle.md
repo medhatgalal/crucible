@@ -42,11 +42,12 @@ approval. Guided dispatches must use agents cast for that role.
 ```sh
 $CP dispatch fix-report-flow maker <maker-name> A1 FOCUSED
 # contract path is printed
+# While DISPATCHED only — before start:
 $CP attempt transport <ATTEMPT> multi-agent   # or acp | subagent
-# Auditor must be a registered agent distinct from the attempt agent:
+# Auditor must be cast as contract-auditor and distinct from the attempt agent:
 $CP contract-audit <ATTEMPT> <auditor-name> PASS   # or FIX | STOP
-$CP attempt start <ATTEMPT> <pid>
-# Optional ACP ladder probe (single-product hosts):
+$CP attempt start <ATTEMPT> <pid>             # guided: refuses without seal above
+# Optional ACP ladder probe (single-product hosts); append-only history:
 # $CP probe-acp failed "acp not available"
 # ... agent work ...
 $CP attempt finish <ATTEMPT> RETURNED "observed exit 0"

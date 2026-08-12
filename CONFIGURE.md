@@ -60,10 +60,10 @@ And write `PANEL.ASSIGN.tsv` (authoritative casting; machine-checked):
 ```text
 role	agent	required	notes
 coordinator	lead	yes	this session only; never maker/judge
-claim-auditor	a1	yes	
-claim-auditor	a2	yes	
-contract-auditor	j2	yes	
-maker	mk1	yes	
+claim-auditor	a1	yes
+claim-auditor	a2	yes
+contract-auditor	j2	yes
+maker	mk1	yes
 reviewer	j1	yes	≠ maker
 adversary	adv	no	required when risk is HIGH
 ```

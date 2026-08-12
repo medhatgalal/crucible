@@ -152,7 +152,6 @@ complete_task() {
   output=$(cd "$worktree" && "$program/crucible" run alpha "$agent" -- sh -c 'echo task-focused')
   evidence=$(basename "$(printf '%s' "$output" | awk '{print $1}')")
   "$program/crucible" attempt finish "$attempt" RETURNED observed-exit-zero >/dev/null
-  bind_independence "$program" "$attempt"
   "$program/crucible" result "$attempt" PASS "$evidence" CLOSE - >/dev/null
 }
 
@@ -211,7 +210,7 @@ t5_contract=$($P/crucible task dispatch alpha T5 j2 A1 FOCUSED 2>/dev/null)
 t1=$(attempt_id_from_contract "$t1_contract")
 t4=$(attempt_id_from_contract "$t4_contract")
 t5=$(attempt_id_from_contract "$t5_contract")
-for attempt in "$t1" "$t4" "$t5"; do "$P/crucible" attempt start "$attempt" "$$" >/dev/null; done
+for attempt in "$t1" "$t4" "$t5"; do bind_independence "$P" "$attempt"; "$P/crucible" attempt start "$attempt" "$$" >/dev/null; done
 [ "$(awk -F '\t' 'NR == 2 { print $3 }' "$P/attempts/$t1/meta.tsv")" = T1 ] \
   && [ -d "$(awk -F '\t' 'NR == 2 { print $3 }' "$P/attempts/$t1/task.tsv")" ] \
   && ok || bad 'task dispatch did not bind an isolated worktree'
@@ -221,6 +220,7 @@ printf '%s\n' "$ready" | grep -q '^READY T2$' && printf '%s\n' "$ready" | grep -
   && ok || bad "dependency PASS did not release T2 and T3: $ready"
 t2_contract=$($P/crucible task dispatch alpha T2 mk1 A1 FOCUSED 2>/dev/null)
 t2=$(attempt_id_from_contract "$t2_contract")
+bind_independence "$P" "$t2"
 $P/crucible attempt start "$t2" "$$" >/dev/null
 refuses 'default parallel cap refuses a fourth live maker' 'parallel maker limit reached: 3/3' \
   "$P/crucible" task dispatch alpha T3 mk1 A1 FOCUSED
@@ -229,6 +229,7 @@ complete_task "$P" "$t5" j2 src/five
 complete_task "$P" "$t2" mk1 src/two
 t3_contract=$($P/crucible task dispatch alpha T3 j1 A1 FOCUSED 2>/dev/null)
 t3=$(attempt_id_from_contract "$t3_contract")
+bind_independence "$P" "$t3"
 $P/crucible attempt start "$t3" "$$" >/dev/null
 complete_task "$P" "$t3" j1 src/three
 expect 'all passing tasks expose integration' '^READY INTEGRATE$' "$P/crucible" task ready alpha

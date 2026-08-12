@@ -34,6 +34,25 @@ write_agents() {
   } > "$prog/agents.tsv"
 }
 
+
+seal_claim_agent() {
+  # After claim dispatch, seal the independence ledger attempt for that agent.
+  prog=$1; agent=$2; transport=${3:-multi-agent}
+  id=
+  for ad in "$prog"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    aid=${ad##*/}
+    a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+    [ "$a" = "$agent" ] || continue
+    id=$aid
+  done
+  [ -n "$id" ] || { echo "no claim attempt for $agent" >&2; return 1; }
+  auditor=$(awk -F '\t' '$1=="contract-auditor"{print $2; exit}' "$prog/PANEL.ASSIGN.tsv")
+  [ -n "$auditor" ] || auditor=j2
+  "$prog/crucible" attempt transport "$id" "$transport" >/dev/null
+  "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
+}
+
 write_panel() {
   prog=$1
   cat > "$prog/PANEL.md" <<'EOF'
@@ -69,12 +88,12 @@ EOF
   cat > "$prog/PANEL.ASSIGN.tsv" <<'EOF'
 role	agent	required	notes
 coordinator	c0	yes	this session; not maker/reviewer
-claim-auditor	a1	yes	
-claim-auditor	a2	yes	
-scout	a1	no	
-maker	mk1	yes	
+claim-auditor	a1	yes
+claim-auditor	a2	yes
+scout	a1	no
+maker	mk1	yes
 reviewer	j1	yes	≠ maker
-contract-auditor	j2	yes	
+contract-auditor	j2	yes
 EOF
 }
 
@@ -143,11 +162,14 @@ refuses 'guided TRUE requires claim dispatch' 'claim dispatch' \
 refuses 'uncast agent cannot claim-audit' 'not cast' \
   "$P/crucible" dispatch "$cn" claim-auditor mk1
 $P/crucible dispatch "$cn" claim-auditor a1 >/dev/null
+seal_claim_agent "$P" a1
 $P/crucible dispatch "$cn" claim-auditor a2 >/dev/null
+seal_claim_agent "$P" a2
 $P/crucible claim verdict "$cn" a1 TRUE >/dev/null
 $P/crucible claim verdict "$cn" a2 TRUE >/dev/null
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo searched for existing enforcement' >/dev/null
 $P/crucible dispatch "$cn" scout a1 >/dev/null
+seal_claim_agent "$P" a1
 $P/crucible claim scout "$cn" ABSENT a1 >/dev/null
 expect 'verified claims advance to proposal' '^NEXT PROPOSE ' "$P/crucible" cycle
 
