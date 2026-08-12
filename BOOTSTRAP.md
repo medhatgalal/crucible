@@ -48,8 +48,9 @@ run its internal commands. You schedule independent agents; you do not pretend t
 4. If no independent agent can be invoked: **STOP, warn the operator, and escalate**
    `INDEPENDENCE_UNAVAILABLE`. Do not continue as solo theatre under multiple names.
 
-Every dispatch is a file contract. Run the **contract-auditor** persona (`contract-audit PASS|FIX|STOP`)
-before trusting an attempt. On STOP, do not implement the role yourself.
+Every dispatch is a file contract. Run the **contract-auditor** persona
+(`contract-audit ATTEMPT AUDITOR PASS|FIX|STOP`) before trusting an attempt. On STOP, do not
+implement the role yourself.
 
 Do not store project lessons, personas, or cycle state in global agent memory. Durable facts belong to
 the target repository. Live contexts, processes, worktrees, and machine-specific invocations are

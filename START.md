@@ -103,7 +103,7 @@ Every role dispatch:
 
 1. Generate a file contract (`dispatch`).
 2. Record transport (`attempt transport … multi-agent|acp|subagent`).
-3. Run **contract-auditor** → `contract-audit PASS|FIX|STOP`.
+3. Run **contract-auditor** → `contract-audit ATTEMPT AUDITOR PASS|FIX|STOP`.
 4. On FIX, rewrite once; on STOP or second FIX, escalate — do not do the role yourself.
 5. Invoke the agent with only: read the contract and follow it exactly.
 6. Record observed outcomes (`attempt start|finish`, `result`).

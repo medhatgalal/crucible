@@ -5,27 +5,37 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-- **Cold-start independence contract.** Guided cycles now require a content-bound agent panel
-  (`PANEL.md` + `cycle approve-panel`) and non-placeholder `agents.tsv` before problem intake or
-  investigation. Success is structure followed with independent agents—not solo theatre.
-- **Independence ladder.** Prefer multi-agent products/CLIs; on single-product hosts prefer ACP
-  isolation; allow host subagents only after a recorded ACP probe failure; escalate
-  `INDEPENDENCE_UNAVAILABLE` instead of continuing as the panel.
-- **Contract-auditor.** Managed attempts record transport and a file-based
+## [1.2.0] - 2026-08-12
+
+### Cold-start independence and role casting
+
+- Guided cycles require a content-bound agent panel (`PANEL.md` + `cycle approve-panel`) and
+  non-placeholder `agents.tsv` before problem intake or investigation.
+- Compact configure asks for **agent inventory and persona→agent casting**. Authoritative
+  `PANEL.ASSIGN.tsv` is required and content-bound with panel approval. Guided dispatch,
+  claim-auditor dispatch, and contract-audit must match the casting table. Maker and reviewer
+  must be different agents unless waived; the coordinator must not be cast as maker/reviewer
+  unless waived.
+- Independence ladder: prefer multi-agent products/CLIs; on single-product hosts prefer ACP;
+  allow host subagents only after a recorded ACP probe failure (`probe-acp`); escalate
+  `INDEPENDENCE_UNAVAILABLE` instead of continuing as the panel. When ≥2 model kinds are
+  registered, guided transport must be `multi-agent` unless PANEL has
+  `LADDER_WAIVER: single-product`.
+- Managed attempts record transport and
   `contract-audit ATTEMPT AUDITOR PASS|FIX|STOP` before guided-cycle results are accepted.
-  Auditor must be a distinct registered agent; makers cannot audit reviews; structural contract
-  checks apply. New `roles/contract-auditor.md`.
-- **Independence ladder teeth.** When ≥2 model kinds are registered, guided transport must be
-  `multi-agent` unless PANEL has `LADDER_WAIVER: single-product`. `probe-acp` records ACP
-  availability. Guided claim TRUE requires a prior claim-auditor/scout dispatch contract.
-- **Role casting configure.** Compact configure asks for agents **and** persona→independent-agent
-  casting. `PANEL.ASSIGN.tsv` is required and content-bound with panel approval; guided dispatch and
-  contract-audit must match the casting table.
-- Rewrote public `BOOTSTRAP.md`, `START.md`, `CONFIGURE.md`, `LOOP.md`, coordinator role, and
-  related docs so configure → independent dispatch is the SSOT (removed anti-interview lock-in).
-- Clarified that a fresh agent may bootstrap Crucible from either the public raw `BOOTSTRAP.md` URL or
-  an absolute local checkout/package path. Reworked the README around product value, the verified loop,
-  multi-agent role boundaries, durable evidence, and an original lightweight project mark.
+  Auditor must be a distinct registered agent cast as `contract-auditor`; makers cannot audit
+  reviews; structural contract checks apply. New `roles/contract-auditor.md`.
+- Guided claim TRUE requires a prior claim-auditor or scout dispatch contract.
+- Public docs SSOT rewrite: `BOOTSTRAP.md`, `START.md`, `CONFIGURE.md`, `LOOP.md`, `RULES.md`,
+  README, managed-lifecycle guide, coordinator role (removed anti-interview lock-in).
+- Verifiers: `scripts/verify-coldstart-independence.sh`; agent-cycle and package checks updated.
+- Security honesty: process discipline raises the cost of independence theatre; under one OS user
+  independence remains unproven cryptographically.
+
+### Documentation
+
+- Clarified bootstrap from public raw `BOOTSTRAP.md` URL or local checkout/package path.
+- README cold-start success criteria: configure (agents + casting) → independent agents → evidence.
 
 ## [1.1.0] - 2026-08-11
 

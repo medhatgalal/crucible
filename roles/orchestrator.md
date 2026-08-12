@@ -26,8 +26,8 @@ Independence ladder for every role that does work or review:
 4. STOP / `INDEPENDENCE_UNAVAILABLE` if none can be invoked — never silent solo theatre
 
 Every dispatch is a file contract. Record transport, run **contract-auditor**
-(`contract-audit PASS|FIX|STOP`), and only then treat the attempt as valid. On STOP, escalate; do not
-perform the role yourself.
+(`contract-audit ATTEMPT AUDITOR PASS|FIX|STOP`), and only then treat the attempt as valid. On STOP,
+escalate; do not perform the role yourself.
 
 Before approval, interrogate the report, test its claims via independent auditors, search for existing
 behavior, and produce one refined proposal. Stop for explicit operator approval. After approval, admit
