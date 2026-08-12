@@ -35,13 +35,19 @@ a RULE into a CHECK, do it and say so in the lesson.
 10. **CHECK — A judge's brief contains the goal, the work and the recorded evidence. It contains no
     maker report, transcript, or rationale**, because the brief is generated from a whitelist and
     those files are not on it.
-11. **CHECK in guided cycle — Panel and role casting are approved before investigation.**
-    Placeholder `agents.tsv`, incomplete `PANEL.md`, missing/invalid `PANEL.ASSIGN.tsv`
-    (role→independent agent), or unapproved panel refuse problem binding, claim intake, and
-    proposal approval. Guided dispatches and contract-audits must match the casting table.
-12. **CHECK in guided cycle — Managed results require transport + contract-audit PASS.** Each attempt
-    records `multi-agent|acp|subagent`. Subagent requires a recorded ACP probe failure. Missing
-    independence is refused, not silently converted into solo theatre.
+11. **CHECK in guided cycle — Panel and role casting are approved before investigation and
+    execution.** Placeholder `agents.tsv`, incomplete `PANEL.md`, missing/invalid
+    `PANEL.ASSIGN.tsv` (role→independent agent), or unapproved/stale panel refuse problem
+    binding, claim intake, proposal approval, **dispatch, transport, contract-audit, attempt
+    start, result, claim verdict, and claim scout**. Casting is checked against the live
+    approved files; a stale panel hash refuses those commands (not only `cycle` status).
+    Coordinator may not also be claim-auditor or contract-auditor; contract-auditor may not
+    be a maker; maker ≠ reviewer unless an explicit `WAIVER:` / `LADDER_WAIVER:` line says so.
+12. **CHECK in guided cycle — Managed results and claim verdicts require transport +
+    contract-audit PASS.** Each attempt records `multi-agent|acp|subagent` while DISPATCHED.
+    Subagent requires a recorded ACP probe failure (or an explicit `ACP: unavailable` line when
+    no prior `probe-acp ok` exists). Missing independence is refused, not silently converted
+    into solo theatre. Every guided claim verdict and scout result needs a sealed claim attempt.
 13. **RULE — Never tell a judge what not to flag, and never pre-rate a finding's severity.** If you
     believe a finding will be a false positive, let it be raised and adjudicate it. A dispatch
     containing "don't worry about", "at most minor", or "the plan chose this" is you sparing

@@ -101,10 +101,12 @@ dispatch ITEM ROLE AGENT [CRITERION] [EVIDENCE_CLASS] [RETRY_OF]
 `EXTERNAL`, or `MANUAL`. The command prints both the contract path and the registered invocation
 from `agents.tsv`; Crucible records the work but does not launch the process.
 
-Record the observed process lifecycle using the attempt id in the contract path:
+Seal independence while DISPATCHED, then record the observed process lifecycle:
 
 ```sh
 ATTEMPT=A<epoch>.<pid>.<sequence>
+$CP attempt transport "$ATTEMPT" multi-agent   # or acp|subagent per ladder
+$CP contract-audit "$ATTEMPT" <contract-auditor> PASS
 $CP attempt start "$ATTEMPT" <observed-pid>
 
 # The agent commits first, then records a focused check through the command in its contract:

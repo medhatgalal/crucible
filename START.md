@@ -101,11 +101,12 @@ only for genuinely disjoint ownership. A fresh reviewer validates the breakdown 
 
 Every role dispatch:
 
-1. Generate a file contract (`dispatch`).
-2. Record transport (`attempt transport … multi-agent|acp|subagent`).
-3. Run **contract-auditor** → `contract-audit ATTEMPT AUDITOR PASS|FIX|STOP`.
-4. On FIX, rewrite once; on STOP or second FIX, escalate — do not do the role yourself.
-5. Invoke the agent with only: read the contract and follow it exactly.
+1. Generate a file contract (`dispatch`) under a **current** approved panel.
+2. While DISPATCHED, record transport (`attempt transport … multi-agent|acp|subagent`).
+3. Run **contract-auditor** → `contract-audit ATTEMPT AUDITOR PASS|FIX|STOP` (still DISPATCHED).
+4. On FIX the attempt is SUPERSEDED — rewrite the contract via **redispatch**; on STOP escalate
+   `INDEPENDENCE_UNAVAILABLE` — do not do the role yourself.
+5. Only after PASS: invoke the agent with only “read the contract and follow it exactly.”
 6. Record observed outcomes (`attempt start|finish`, `result`).
 
 Dispatch makers into isolated contexts/worktrees. Bind attempts and evidence to the current work id.
@@ -120,8 +121,9 @@ is `ESCALATE`, not permission for unbounded agent churn.
 ## Finish
 
 `DONE` requires current evidence, resolved findings, accounted approved scope, integration/CI tied to
-the reviewed work id, accepting refusal gate, and an independence/structure receipt when attempts
-exist. Report what changed, what proves it, remaining uncertainty, and exact repository state.
+the reviewed work id, and an accepting refusal gate. When attempts exist, `cycle` writes an
+`INDEPENDENCE.md` receipt (process summary, not a close gate or cryptographic proof). Report what
+changed, what proves it, remaining uncertainty, and exact repository state.
 
 Do not persist personal memory. After `DONE`, run `cycle clean --dry-run` and show the exact preview.
 Run `cycle clean --apply` only after explicit approval; it removes machine-only configuration and safely
