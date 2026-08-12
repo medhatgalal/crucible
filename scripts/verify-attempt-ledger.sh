@@ -21,6 +21,35 @@ refuses() {
   printf '%s\n' "$out" | grep -q "$pattern" && ok || bad "$label: wanted $pattern, got $out"
 }
 
+
+bind_independence() {
+  prog=$1; id=$2; transport=${3:-multi-agent}; auditor=${4:-}
+  if [ -z "$auditor" ]; then
+    attempt_agent=$(awk -F '	' 'NR==2 {print $6}' "$prog/attempts/$id/meta.tsv")
+    role=$(awk -F '	' 'NR==2 {print $5}' "$prog/attempts/$id/meta.tsv")
+    slug=$(awk -F '	' 'NR==2 {print $2}' "$prog/attempts/$id/meta.tsv")
+    auditor=
+    for cand in $(grep -v '^#' "$prog/agents.tsv" | awk -F '	' '$1!=""{print $1}'); do
+      [ "$cand" = "$attempt_agent" ] && continue
+      case $role in
+        judge|adversary)
+          if [ -f "$prog/items/$slug/MAKERS.tsv" ] && awk -F '	' -v a="$cand" '$1==a{found=1} END{exit !found}' "$prog/items/$slug/MAKERS.tsv"; then
+            continue
+          fi
+          if [ -f "$prog/items/$slug/MAKER" ] && grep -qx "$cand" "$prog/items/$slug/MAKER"; then
+            continue
+          fi
+          ;;
+      esac
+      auditor=$cand
+      break
+    done
+    [ -n "$auditor" ] || auditor=$attempt_agent
+  fi
+  "$prog/crucible" attempt transport "$id" "$transport" >/dev/null
+  "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
+}
+
 fresh() {
   base=$(mktemp -d)
   repo="$base/repo"
@@ -120,6 +149,7 @@ expect 'returned is an observed terminal event' 'RETURNED; record its result nex
 expect 'next requests a result after return' '^NEXT alpha RESULT ' "$P/crucible" next
 refuses 'result requires existing evidence' 'missing regular evidence' "$P/crucible" result "$id" PASS missing.txt CLOSE -
 refuses 'result outcome and next action must agree' 'incompatible result' "$P/crucible" result "$id" PASS "$evidence" FIX -
+bind_independence "$P" "$id"
 result=$($P/crucible result "$id" PASS "$evidence" CLOSE -)
 [ -f "$result" ] && ok || bad 'result was not written'
 grep -q '^OUTCOME: PASS$' "$result" && grep -q "^ATTEMPT-ID: $id$" "$result" \
@@ -148,6 +178,7 @@ $P/crucible attempt start "$jid" "$$" >/dev/null
 jeout=$(cd "$repo" && .crucible/p/crucible run alpha j1 -- sh -c 'echo judge-focused')
 jevidence=$(basename "$(printf '%s' "$jeout" | awk '{print $1}')")
 $P/crucible attempt finish "$jid" RETURNED observed-exit-zero >/dev/null
+bind_independence "$P" "$jid"
 $P/crucible result "$jid" PASS "$jevidence" CLOSE - >/dev/null
 grep -q '^REVIEW-RELATION: SAME-FAMILY$' "$P/attempts/$jid/result.md" \
   && ok || bad 'same-family correlation risk is missing from the result'
@@ -160,6 +191,7 @@ $P/crucible attempt start "$fid" "$$" >/dev/null
 feout=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo canonical-suite')
 fevidence=$(basename "$(printf '%s' "$feout" | awk '{print $1}')")
 $P/crucible attempt finish "$fid" RETURNED observed-exit-zero >/dev/null
+bind_independence "$P" "$fid"
 $P/crucible result "$fid" PASS "$fevidence" CLOSE - >/dev/null
 grep -q '^REVIEW-RELATION: CROSS-FAMILY$' "$P/attempts/$fid/result.md" \
   && ok || bad 'cross-family review is not labelled in the result'
@@ -173,6 +205,7 @@ r1e=$(basename "$(printf '%s' "$r1out" | awk '{print $1}')")
 $P/crucible attempt finish "$r1" RETURNED observed-reject >/dev/null
 refuses 'evidence cannot be reused across attempts' 'attempt id does not match' \
   "$P/crucible" result "$r1" REJECT "$jevidence" FIX abcdef123456
+bind_independence "$P" "$r1"
 $P/crucible result "$r1" REJECT "$r1e" FIX abcdef123456 >/dev/null
 r2contract=$($P/crucible dispatch alpha judge j2 A3 FOCUSED 2>/dev/null)
 r2=$(basename "$(dirname "$r2contract")")
@@ -180,6 +213,7 @@ $P/crucible attempt start "$r2" "$$" >/dev/null
 r2out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo finding-two')
 r2e=$(basename "$(printf '%s' "$r2out" | awk '{print $1}')")
 $P/crucible attempt finish "$r2" RETURNED observed-reject >/dev/null
+bind_independence "$P" "$r2"
 $P/crucible result "$r2" REJECT "$r2e" FIX abcdef123456 >/dev/null
 grep -q "^alpha\tBLOCKED\tREVIEW\t.*\tREPEATED_FINDING\t" "$P/STATE.tsv" \
   && ok || bad 'repeated finding did not block the item'

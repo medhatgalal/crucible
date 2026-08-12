@@ -2,7 +2,8 @@
 
 The rule that matters: **a claim in a document that is not asserted in `scripts/selftest.sh` is an
 unverified claim.** If you add a refusal, add the assertion that proves it refuses. If you add a
-document that names a verb, the docs check will require the verb to exist.
+document that names a verb, the docs check will require the verb to exist. Docs must not claim
+multi-agent independence stronger than the CHECKs in RULES.md and the guided cycle gates.
 
 ```sh
 ./scripts/selftest.sh --fast       # bounded development gate

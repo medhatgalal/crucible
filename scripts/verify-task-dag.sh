@@ -21,6 +21,35 @@ refuses() {
   printf '%s\n' "$out" | grep -q "$pattern" && ok || bad "$label: wanted $pattern, got $out"
 }
 
+
+bind_independence() {
+  prog=$1; id=$2; transport=${3:-multi-agent}; auditor=${4:-}
+  if [ -z "$auditor" ]; then
+    attempt_agent=$(awk -F '	' 'NR==2 {print $6}' "$prog/attempts/$id/meta.tsv")
+    role=$(awk -F '	' 'NR==2 {print $5}' "$prog/attempts/$id/meta.tsv")
+    slug=$(awk -F '	' 'NR==2 {print $2}' "$prog/attempts/$id/meta.tsv")
+    auditor=
+    for cand in $(grep -v '^#' "$prog/agents.tsv" | awk -F '	' '$1!=""{print $1}'); do
+      [ "$cand" = "$attempt_agent" ] && continue
+      case $role in
+        judge|adversary)
+          if [ -f "$prog/items/$slug/MAKERS.tsv" ] && awk -F '	' -v a="$cand" '$1==a{found=1} END{exit !found}' "$prog/items/$slug/MAKERS.tsv"; then
+            continue
+          fi
+          if [ -f "$prog/items/$slug/MAKER" ] && grep -qx "$cand" "$prog/items/$slug/MAKER"; then
+            continue
+          fi
+          ;;
+      esac
+      auditor=$cand
+      break
+    done
+    [ -n "$auditor" ] || auditor=$attempt_agent
+  fi
+  "$prog/crucible" attempt transport "$id" "$transport" >/dev/null
+  "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
+}
+
 fresh() {
   base=$(mktemp -d); repo="$base/repo"; mkdir -p "$repo"
   (
@@ -123,6 +152,7 @@ complete_task() {
   output=$(cd "$worktree" && "$program/crucible" run alpha "$agent" -- sh -c 'echo task-focused')
   evidence=$(basename "$(printf '%s' "$output" | awk '{print $1}')")
   "$program/crucible" attempt finish "$attempt" RETURNED observed-exit-zero >/dev/null
+  bind_independence "$program" "$attempt"
   "$program/crucible" result "$attempt" PASS "$evidence" CLOSE - >/dev/null
 }
 

@@ -1,5 +1,7 @@
 #!/bin/sh
 # Focused cold-onboarding contract for the operator-facing agent cycle.
+# Proves configure → panel approve → problem → investigate → proposal → done,
+# and that solo-theatre shortcuts are refused.
 
 set -eu
 
@@ -20,6 +22,62 @@ refuses() {
   if printf '%s\n' "$out" | grep -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
 }
 
+write_agents() {
+  prog=$1
+  {
+    printf 'c0\tkindA\tm\thigh\techo {BRIEF}\n'
+    printf 'a1\tkindA\tm\thigh\techo {BRIEF}\n'
+    printf 'a2\tkindB\tm\thigh\techo {BRIEF}\n'
+    printf 'mk1\tkindA\tm\thigh\techo {BRIEF}\n'
+    printf 'j1\tkindB\tm\thigh\techo {BRIEF}\n'
+    printf 'j2\tkindB\tm\thigh\techo {BRIEF}\n'
+  } > "$prog/agents.tsv"
+}
+
+write_panel() {
+  prog=$1
+  cat > "$prog/PANEL.md" <<'EOF'
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2 (echo fixtures; mixed kinds)
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv: coordinator=c0; claim-auditors=a1,a2; maker=mk1; reviewer=j1; contract-auditor=j2.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. Same-family only with label. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+4. stop if none invocable
+
+## Waivers
+
+NONE for this fixture.
+EOF
+  cat > "$prog/PANEL.ASSIGN.tsv" <<'EOF'
+role	agent	required	notes
+coordinator	c0	yes	this session; not maker/reviewer
+claim-auditor	a1	yes	
+claim-auditor	a2	yes	
+scout	a1	no	
+maker	mk1	yes	
+reviewer	j1	yes	≠ maker
+contract-auditor	j2	yes	
+EOF
+}
+
 base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-agent-cycle.XXXXXX")
 repo="$base/repo"; mkdir -p "$repo"
 (
@@ -37,7 +95,7 @@ if grep -q '^lifecycle: managed$' "$P/PROGRAM" && [ -f "$P/STATE.tsv" ]; then
 else
   bad 'cold adoption did not select managed behavior atomically'
 fi
-expect 'cold agent sees one intake state' '^NEXT INTAKE ' "$P/crucible" cycle
+expect 'cold agent must configure panel first' '^NEXT CONFIGURE ' "$P/crucible" cycle
 help=$($P/crucible help)
 if printf '%s\n' "$help" | grep -q 'crucible attempt'; then bad 'public help exposes attempt mechanics'; else ok; fi
 if printf '%s\n' "$help" | grep -q 'Operators normally do not run these commands'; then
@@ -45,21 +103,51 @@ if printf '%s\n' "$help" | grep -q 'Operators normally do not run these commands
 else
   bad 'public help does not explain the agent-owned boundary'
 fi
+if printf '%s\n' "$help" | grep -q 'approve-panel'; then ok; else bad 'public help omits approve-panel'; fi
 
 printf '# Broken behavior\n\nThe program does not preserve approved scope.\n' > "$repo/report.md"
+refuses 'problem cannot bind before panel approval' 'approve the agent panel' \
+  "$P/crucible" cycle problem "$repo/report.md"
+
+# Placeholder agents still block even with a panel draft.
+write_panel "$P"
+refuses 'placeholder agents.tsv cannot approve panel' 'placeholders\|incomplete\|PANEL' \
+  "$P/crucible" cycle approve-panel
+
+write_agents "$P"
+# Casting table required: panel without ASSIGN refuses.
+rm -f "$P/PANEL.ASSIGN.tsv"
+refuses 'panel without role casting refuses' 'ASSIGN\|casting\|incomplete' \
+  "$P/crucible" cycle approve-panel
+write_panel "$P"
+write_agents "$P"
+# maker=reviewer same agent refuses
+printf 'role\tagent\trequired\tnotes\ncoordinator\tc0\tyes\nclaim-auditor\ta1\tyes\nmaker\tmk1\tyes\nreviewer\tmk1\tyes\ncontract-auditor\tj2\tyes\n' \
+  > "$P/PANEL.ASSIGN.tsv"
+refuses 'maker and reviewer same agent refuses' 'incomplete\|ASSIGN\|casting' \
+  "$P/crucible" cycle approve-panel
+write_panel "$P"
+write_agents "$P"
+expect 'panel approval is content-bound' '^approved panel ' "$P/crucible" cycle approve-panel
+expect 'approved panel advances to problem intake' '^NEXT INTAKE ' "$P/crucible" cycle
 expect 'problem report enters the cycle' '/PROBLEM.md$' "$P/crucible" cycle problem "$repo/report.md"
 expect 'bound problem advances to investigation' '^NEXT INVESTIGATE ' "$P/crucible" cycle
 refuses 'low-level item creation cannot bypass proposal approval' 'not operator-approved' \
   "$P/crucible" add bypass 'must not start yet'
 
-printf 'a1\tkindA\tm\thigh\techo {BRIEF}\n' > "$P/agents.tsv"
-printf 'a2\tkindB\tm\thigh\techo {BRIEF}\n' >> "$P/agents.tsv"
 cn=$($P/crucible claim add 'approved scope is not preserved' 'The program does not preserve approved scope.')
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo observed source and behavior' >/dev/null
 $P/crucible run-claim "$cn" a2 -- sh -c 'echo independently reproduced' >/dev/null
+refuses 'guided TRUE requires claim dispatch' 'claim dispatch' \
+  "$P/crucible" claim verdict "$cn" a1 TRUE
+refuses 'uncast agent cannot claim-audit' 'not cast' \
+  "$P/crucible" dispatch "$cn" claim-auditor mk1
+$P/crucible dispatch "$cn" claim-auditor a1 >/dev/null
+$P/crucible dispatch "$cn" claim-auditor a2 >/dev/null
 $P/crucible claim verdict "$cn" a1 TRUE >/dev/null
 $P/crucible claim verdict "$cn" a2 TRUE >/dev/null
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo searched for existing enforcement' >/dev/null
+$P/crucible dispatch "$cn" scout a1 >/dev/null
 $P/crucible claim scout "$cn" ABSENT a1 >/dev/null
 expect 'verified claims advance to proposal' '^NEXT PROPOSE ' "$P/crucible" cycle
 
@@ -103,12 +191,30 @@ if grep -q 'same-family' "$P/START.md" && grep -q 'make.*review.*fix' "$P/START.
 else
   bad 'fresh-agent prompt does not teach same-family risk and iterative review'
 fi
-if grep -q 'Do not conduct a long setup interview' "$P/BOOTSTRAP.md"; then
+if grep -q 'compact configure\|Role casting\|role casting' "$P/BOOTSTRAP.md" \
+  && grep -q 'PANEL.ASSIGN\|role casting\|Role casting' "$P/BOOTSTRAP.md" \
+  && grep -q 'independence ladder\|Independence ladder\|multi-agent' "$P/BOOTSTRAP.md"; then
   ok
 else
-  bad 'bootstrap still permits command-heavy onboarding'
+  bad 'bootstrap does not teach configure, role casting, and independence ladder'
+fi
+if grep -q 'PANEL.ASSIGN' "$P/START.md" && grep -q 'Role casting\|role casting' "$P/START.md"; then
+  ok
+else
+  bad 'START.md does not teach PANEL.ASSIGN role casting'
+fi
+if grep -q 'Do not conduct a long setup interview' "$P/BOOTSTRAP.md"; then
+  bad 'bootstrap still locks anti-interview policy that skipped agent configuration'
+else
+  ok
+fi
+if grep -q 'contract-auditor\|contract auditor' "$P/START.md"; then
+  ok
+else
+  bad 'START.md does not mention contract-auditor'
 fi
 
+# No-work proposal path with panel.
 clean_repo="$base/clean-repo"; mkdir -p "$clean_repo"
 (
   cd "$clean_repo"
@@ -119,9 +225,11 @@ clean_repo="$base/clean-repo"; mkdir -p "$clean_repo"
   "$C" adopt work --managed >/dev/null
 )
 Q="$clean_repo/.crucible/work"
+write_agents "$Q"
+write_panel "$Q"
+$Q/crucible cycle approve-panel >/dev/null
 printf 'No code change is actually required.\n' > "$clean_repo/report.md"
 $Q/crucible cycle problem "$clean_repo/report.md" >/dev/null
-printf 'a1\tkindA\tm\thigh\techo {BRIEF}\na2\tkindB\tm\thigh\techo {BRIEF}\n' > "$Q/agents.tsv"
 qc=$($Q/crucible claim add 'code change required' 'No code change is actually required.')
 for agent in a1 a2; do
   $Q/crucible run-claim "$qc" "$agent" -- sh -c 'echo checked current behavior' >/dev/null

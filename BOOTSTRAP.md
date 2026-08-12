@@ -1,7 +1,7 @@
 # BOOTSTRAP — execute this in the target repository
 
 You are the fresh coordinating agent. Crucible is your protocol; do not ask the operator to learn or
-run its internal commands.
+run its internal commands. You schedule independent agents; you do not pretend to be a panel.
 
 1. Verify the current repository root, branch, HEAD, dirty state, local instructions, and active work.
    Stay in this repository.
@@ -15,14 +15,41 @@ run its internal commands.
 
        <crucible-directory>/crucible adopt work --managed
 
-5. Preserve the supplied problem in a regular file, bind it through the internal `cycle problem`
-   protocol, then read `.crucible/work/START.md` and execute it. Ask for the problem only if none was
-   supplied.
+5. **Configure first (required).** Discover available agent mechanisms (CLIs on PATH, ACP, host
+   subagents). Ask the operator **one compact configure block** covering **both** halves (not a drip
+   interview; not zero questions; do not self-answer material config):
 
-Do not conduct a long setup interview. Inspect the collaboration tools and agent CLIs actually
-available, then propose the smallest useful panel and any persona changes in one compact confirmation.
-Same-model roles require fresh isolated contexts and the label `same-family`; use another model family
-selectively for higher-risk or repeatedly disputed work.
+   **A) Agents inventory**
+   - which agents/products are available and how each is invoked
+   - kinds/models and effort defaults
+
+   **B) Role casting (personas → independent agents)** — required
+   - which roles/personas are active (coordinator, claim-auditor(s), maker, reviewer(s),
+     contract-auditor, optional scout/adversary/…)
+   - **which registered independent agent plays each role**
+   - confirm this session’s coordinator is not cast as maker or reviewer
+
+   **C) Risk + isolation**
+   - risk posture, isolation preference (multi-agent / ACP / subagent), waivers
+
+   Write real rows into `agents.tsv`. Write `PANEL.md` (Agents, Roles, Risk posture, Isolation
+   transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
+   (`role`, `agent`, `required`, `notes`). Show inventory + casting table and wait for
+   `cycle approve-panel`. Do not invent agents or role assignments.
+6. Preserve the supplied problem in a regular file, bind it through `cycle problem`, then read
+   `.crucible/work/START.md` and execute it. Ask for the problem only if none was supplied.
+
+## Independence ladder (mandatory)
+
+1. Prefer **≥2 real agent products/CLIs** when available (for example kiro + codex + grok).
+2. If only one product (for example Kiro) is available, isolate roles via **ACP sessions** first.
+3. Only if ACP is unavailable after a recorded probe: use host **subagents** with fresh contexts,
+   labelled weaker isolation.
+4. If no independent agent can be invoked: **STOP, warn the operator, and escalate**
+   `INDEPENDENCE_UNAVAILABLE`. Do not continue as solo theatre under multiple names.
+
+Every dispatch is a file contract. Run the **contract-auditor** persona (`contract-audit PASS|FIX|STOP`)
+before trusting an attempt. On STOP, do not implement the role yourself.
 
 Do not store project lessons, personas, or cycle state in global agent memory. Durable facts belong to
 the target repository. Live contexts, processes, worktrees, and machine-specific invocations are

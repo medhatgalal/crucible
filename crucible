@@ -4,6 +4,7 @@
 #   crucible adopt [PROGRAM] --managed     install one self-contained cycle in this repo
 #   crucible cycle [status]                resume the durable problem-to-done loop
 #   crucible cycle problem FILE            bind the cycle to a problem report
+#   crucible cycle approve-panel           record approval of the agent panel
 #   crucible cycle approve                 record approval of the current proposal
 #   crucible help protocol                 show the agent-facing protocol primitives
 #
@@ -46,6 +47,7 @@ Crucible runs one durable problem-to-done cycle for a coordinating agent.
   crucible adopt [PROGRAM] --managed   install the cycle in the current repository
   crucible cycle [status]              resume from repository evidence
   crucible cycle problem FILE          bind a problem report to the cycle
+  crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
   crucible help protocol               show internal agent protocol primitives
 
@@ -61,11 +63,17 @@ not drive the cycle with them.
   triage                              render the evidence-grounded proposal input
   add / ready / phase / task          create and advance bounded work
   dispatch / attempt / result         coordinate isolated agent attempts
+  attempt transport                   record multi-agent|acp|subagent isolation
+  contract-audit ATTEMPT AUDITOR …    file-based contract PASS|FIX|STOP by a distinct agent
+  probe-acp ok|failed|unavailable     record ACP availability for the ladder
   run / run-claim                     record work-bound evidence
   check / close                       refuse unsupported completion
   agents / target / state / workid    inspect supporting state
   lifecycle status|enable             compatibility setup for older programs
   panes / selftest                    optional observation and engine verification
+
+Independence ladder: multi-agent preferred, then ACP, then subagent after ACP probe failure.
+If no independent agent can be invoked, STOP and warn — do not continue as solo theatre.
 EOF
 }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -370,7 +378,7 @@ cmd_attempt() {
   uses_managed_lifecycle || die "attempt requires managed lifecycle behavior"
   sub=${1:-}; [ $# -eq 0 ] || shift
   id=${1:-}; [ $# -eq 0 ] || shift
-  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish ATTEMPT ..."
+  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish|transport ATTEMPT ..."
   ad=$(attempt_dir "$id"); slug=$(attempt_meta "$id" 2)
   case $sub in
     start)
@@ -379,6 +387,27 @@ cmd_attempt() {
       [ "$(attempt_state "$id")" = DISPATCHED ] || die "attempt start requires DISPATCHED"
       attempt_event "$id" RUNNING "$value" observed-start
       printf '%s RUNNING pid %s\n' "$id" "$value"
+      ;;
+    transport)
+      value=${1:-}; [ $# -eq 1 ] || die "usage: crucible attempt transport ATTEMPT multi-agent|acp|subagent"
+      case $value in multi-agent|acp|subagent) : ;; *) die "transport must be multi-agent, acp, or subagent" ;; esac
+      if uses_guided_cycle; then
+        enforce_transport_ladder "$value"
+      elif [ "$value" = subagent ]; then
+        acp_probe_failed \
+          || die "refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)"
+      fi
+      if [ -e "$ad/transport" ]; then
+        [ -f "$ad/transport" ] && [ ! -L "$ad/transport" ] || die "transport is immutable: $id"
+        existing=$(sed -n '1p' "$ad/transport" | tr -d '\r')
+        [ "$existing" = "$value" ] || die "transport is immutable: $id"
+        printf '%s transport %s (already recorded)\n' "$id" "$value"
+        return
+      fi
+      tmp="$ad/.transport.$$.tmp"
+      printf '%s\n' "$value" > "$tmp"
+      mv "$tmp" "$ad/transport"
+      printf '%s transport %s\n' "$id" "$value"
       ;;
     overdue)
       [ $# -eq 0 ] || die "usage: crucible attempt overdue ATTEMPT"
@@ -418,8 +447,140 @@ cmd_attempt() {
           printf '%s %s; item blocked %s\n' "$id" "$value" "$block_code" ;;
       esac
       ;;
-    *) die "usage: crucible attempt start|overdue|finish ATTEMPT ..." ;;
+    *) die "usage: crucible attempt start|overdue|finish|transport ATTEMPT ..." ;;
   esac
+}
+
+# Structural minimum checks on a managed contract before audit PASS (shell, not LLM).
+contract_structural_ok() {
+  ad=$1; role=$2
+  [ -f "$ad/contract.md" ] || return 1
+  # Contract must identify the attempt and instruct brief-only follow-through.
+  grep -q 'This attempt is bound' "$ad/contract.md" || return 1
+  grep -qiE 'follow it exactly|Read this file and follow it exactly' "$ad/contract.md" || return 1
+  # Reviewer contracts must not embed a maker report section.
+  case $role in
+    judge|adversary)
+      grep -q '^## Maker report' "$ad/contract.md" && return 1
+      grep -q '^## Review independence' "$ad/contract.md" || return 1
+      ;;
+    maker)
+      grep -qE '^## Work location|^## Item' "$ad/contract.md" || return 1
+      ;;
+  esac
+  return 0
+}
+
+registered_kind_count() {
+  [ -f "$ROOT/agents.tsv" ] || { printf '0'; return; }
+  grep -v '^#' "$ROOT/agents.tsv" | grep -v '^[[:space:]]*$' |
+    awk -F '\t' 'NF >= 2 && $2 != "" { k[$2]=1 } END { print length(k)+0 }'
+}
+
+panel_has_single_product_waiver() {
+  [ -f "$(panel_file)" ] || return 1
+  grep -qiE 'LADDER_WAIVER:[[:space:]]*single-product|waiver:[[:space:]]*single-product' "$(panel_file)"
+}
+
+# Prefer multi-agent transport when ≥2 kinds are registered unless PANEL waives.
+enforce_transport_ladder() {
+  transport=$1
+  kinds=$(registered_kind_count)
+  if [ "$kinds" -ge 2 ] && ! panel_has_single_product_waiver; then
+    [ "$transport" = multi-agent ] \
+      || die "refused: $kinds model kinds registered — use multi-agent transport (or PANEL LADDER_WAIVER: single-product)"
+  fi
+  if [ "$transport" = subagent ]; then
+    acp_probe_failed \
+      || die "refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)"
+  fi
+}
+
+cmd_contract_audit() {
+  uses_managed_lifecycle || die "contract-audit requires managed lifecycle behavior"
+  id=${1:-}; auditor=${2:-}; verdict=${3:-}
+  [ -n "$id" ] && [ -n "$auditor" ] && [ -n "$verdict" ] \
+    || die "usage: crucible contract-audit ATTEMPT AUDITOR PASS|FIX|STOP [note...]"
+  case $verdict in PASS|FIX|STOP) : ;; *) die "contract-audit verdict must be PASS, FIX, or STOP" ;; esac
+  reg "$auditor"
+  shift 3
+  note=${*:-NONE}
+  ad=$(attempt_dir "$id")
+  [ -f "$ad/contract.md" ] || die "attempt has no contract.md: $id"
+  attempt_agent=$(attempt_meta "$id" 6)
+  role=$(attempt_meta "$id" 5)
+  slug=$(attempt_meta "$id" 2)
+  [ "$auditor" != "$attempt_agent" ] \
+    || die "refused: contract-auditor $auditor cannot audit its own attempt agent"
+  require_role_cast contract-auditor "$auditor"
+  case $role in
+    judge|adversary)
+      is_maker "$slug" "$auditor" 2>/dev/null \
+        && die "refused: maker $auditor cannot contract-audit review of $slug" || true
+      ;;
+  esac
+  transport=-
+  if attempt_transport "$id" >/dev/null 2>&1; then
+    transport=$(attempt_transport "$id")
+  fi
+  independence=ok
+  case $verdict in
+    PASS)
+      [ "$transport" != - ] || die "refused: record transport before contract-audit PASS"
+      enforce_transport_ladder "$transport"
+      contract_structural_ok "$ad" "$role" \
+        || die "refused: contract.md fails structural checks (brief-only instruction / role sections)"
+      case $transport in
+        multi-agent) independence=ok ;;
+        acp) independence=weak ;;
+        subagent) independence=weak ;;
+      esac
+      ;;
+    STOP) independence=unavailable ;;
+    FIX) independence=weak ;;
+  esac
+  if [ -e "$ad/contract-audit.md" ]; then
+    [ -f "$ad/contract-audit.md" ] && [ ! -L "$ad/contract-audit.md" ] \
+      || die "contract-audit is immutable: $id"
+    existing=$(sed -n 's/^VERDICT: //p' "$ad/contract-audit.md" | head -1)
+    existing_auditor=$(sed -n 's/^AUDITOR: //p' "$ad/contract-audit.md" | head -1)
+    [ "$existing" = "$verdict" ] && [ "$existing_auditor" = "$auditor" ] \
+      || die "contract-audit is immutable: $id"
+    printf '%s/contract-audit.md (already %s by %s)\n' "$ad" "$verdict" "$auditor"
+    return
+  fi
+  tmp="$ad/.contract-audit.$$.tmp"
+  {
+    printf 'VERDICT: %s\nAUDITOR: %s\nAUDITOR-KIND: %s\nTRANSPORT: %s\nINDEPENDENCE: %s\n' \
+      "$verdict" "$auditor" "$(kind_of "$auditor")" "$transport" "$independence"
+    printf 'FAILURES: %s\nREQUIRED_FIX: %s\n' "$note" "$note"
+    printf '\nFile-based contract audit for attempt %s by %s.\n' "$id" "$auditor"
+  } > "$tmp"
+  mv "$tmp" "$ad/contract-audit.md"
+  if [ "$verdict" = STOP ]; then
+    stage=$(state_value "$slug" 3); risk=$(state_value "$slug" 5)
+    wid=$(state_value "$slug" 4)
+    state_update_item "$slug" BLOCKED "$stage" "$wid" "$risk" - INDEPENDENCE_UNAVAILABLE
+    printf '%s/contract-audit.md\nESCALATE INDEPENDENCE_UNAVAILABLE — do not continue as solo theatre\n' "$ad"
+    return
+  fi
+  printf '%s/contract-audit.md\n' "$ad"
+}
+
+cmd_probe_acp() {
+  # Record a structured ACP availability probe for the independence ladder.
+  status=${1:-}; [ -n "$status" ] || die "usage: crucible probe-acp ok|failed|unavailable [note...]"
+  case $status in ok|failed|unavailable) : ;; *) die "probe-acp status must be ok, failed, or unavailable" ;; esac
+  shift
+  note=${*:-none}
+  now=$(date +%s)
+  tmp="$ROOT/.ACP-PROBE.md.$$.tmp"
+  {
+    printf 'status: %s\nprobed-epoch: %s\nnote: %s\n' "$status" "$now" "$note"
+    printf '\nACP probe record for independence ladder (not a cryptographic proof).\n'
+  } > "$tmp"
+  mv "$tmp" "$ROOT/ACP-PROBE.md"
+  printf '%s/ACP-PROBE.md\n' "$ROOT"
 }
 
 result_finalize() (
@@ -477,10 +638,12 @@ cmd_result() {
   case $fingerprint in -|[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) : ;; *) die "fingerprint must be - or 12 alphanumeric characters" ;; esac
   [ "$outcome" != REJECT ] || [ "$fingerprint" != - ] || die "REJECT requires a finding fingerprint"
   ad=$(attempt_dir "$id"); [ "$(attempt_state "$id")" = RETURNED ] || die "result requires a RETURNED attempt"
+  require_attempt_independence "$id"
   slug=$(attempt_meta "$id" 2); task=$(attempt_meta "$id" 3); dispatch_wid=$(attempt_meta "$id" 4)
   role=$(attempt_meta "$id" 5); agent=$(attempt_meta "$id" 6); kind=$(attempt_meta "$id" 7)
   criterion=$(attempt_meta "$id" 8); class=$(attempt_meta "$id" 9); d=$(D "$slug")
   relation=-; case $role in judge|adversary) relation=$(review_relation "$slug" "$agent") ;; esac
+  transport=-; attempt_transport "$id" >/dev/null 2>&1 && transport=$(attempt_transport "$id")
   current_wid=$(workid "$slug")
   case $role in
     maker)
@@ -551,7 +714,7 @@ EOF
       "$outcome" "$slug" "$wid" "$dispatch_wid" "$id"
     printf 'ROLE: %s\nAGENT: %s\nKIND: %s\nREVIEW-RELATION: %s\nCRITERION: %s\n' \
       "$role" "$agent" "$kind" "$relation" "$criterion"
-    printf 'TASK-ID: %s\nEVIDENCE-CLASS: %s\nEVIDENCE: %s\n' "$task" "$class" "$evidence"
+    printf 'TASK-ID: %s\nEVIDENCE-CLASS: %s\nEVIDENCE: %s\nTRANSPORT: %s\n' "$task" "$class" "$evidence" "$transport"
     printf 'FINDING-FINGERPRINT: %s\nNEXT: %s\n\nRecorded result for %s.\n' "$fingerprint" "$next" "$id"
   } > "$tmp"
   mv "$tmp" "$ad/result.md"; trap - 0 1 2 15
@@ -683,6 +846,7 @@ cmd_add() {
     current=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { n++ } END { print n+0 }' "$ROOT/STATE.tsv")
     [ "$current" -eq 0 ] || die "refused: another item is current"
     if uses_guided_cycle; then
+      panel_approval_current || die 'refused: the agent panel is not operator-approved'
       approval_current || die 'refused: the current PROPOSAL.md is not operator-approved'
     fi
   fi
@@ -935,6 +1099,7 @@ cmd_dispatch_claim() {
   [ -n "$role" ] && [ -n "$name" ] || die "usage: crucible dispatch CN ROLE AGENT"
   rf="$ROOT/roles/$role.md"; [ -f "$rf" ] || die "no such role: $role"
   reg "$name"
+  require_role_cast "$role" "$name"
   f=$(claims_file); [ -f "$f" ] || die "no CLAIMS.md here"
   grep -q "^### $cn " "$f" || die "no such claim: $cn"
   cdir="$ROOT/claims/$cn"; mkdir -p "$cdir/verdicts" "$cdir/dispatches" "$cdir/evidence"
@@ -1002,6 +1167,7 @@ cmd_dispatch_managed() (
   case $class in FOCUSED|FULL_SUITE|EXTERNAL|MANUAL) : ;; *) die "invalid evidence class: $class" ;; esac
   role_file="$ROOT/roles/$role.md"; [ -f "$role_file" ] || die "no such role: $role"
   reg "$agent"
+  require_role_cast "$role" "$agent"
   dispatch_lock="$ROOT/.dispatch.lock"; staging=
   mkdir "$dispatch_lock" 2>/dev/null || die "managed dispatch already in progress"
   # shellcheck disable=SC2329  # invoked by the EXIT trap below
@@ -1125,6 +1291,7 @@ cmd_dispatch_managed() (
   {
     printf '# Attempt %s — %s — %s\n\n' "$id" "$role" "$slug"
     printf 'This attempt is bound to item `%s`, task `%s`, work `%s`, criterion `%s`, and evidence class `%s`.\n\n' "$slug" "$task" "$wid" "$criterion" "$class"
+    printf 'Read this file and follow it exactly. Do not accept coach notes outside this contract.\n\n'
     printf 'Before launch, record the observed PID:\n\n    %s attempt start %s <PID>\n\n' "$self" "$id"
     printf 'Record commands through:\n\n    %s run %s %s -- <command>\n\n' "$self" "$slug" "$agent"
     printf 'When the process exits, record RETURNED, TIMEOUT, STOPPED, or ABANDONED:\n\n'
@@ -1789,6 +1956,224 @@ approval_current() {
   [ -n "$approved" ] && [ "$approved" = "$(proposal_id 2>/dev/null || true)" ]
 }
 
+panel_file() { printf '%s/PANEL.md' "$ROOT"; }
+
+# Placeholder agent rows must not leave CONFIGURE. Real CLIs, ACP, or labelled
+# subagent commands are required before investigation. kindA/kindB alone are fine
+# as kind labels; the adopt seed uses MODEL + AGENT_CLI/OTHER_CLI as placeholders.
+agents_registry_ready() {
+  [ -f "$ROOT/agents.tsv" ] && [ ! -L "$ROOT/agents.tsv" ] || return 1
+  rows=$(grep -v '^#' "$ROOT/agents.tsv" | grep -v '^[[:space:]]*$' | wc -l | tr -d ' ')
+  [ "$rows" -ge 2 ] || return 1
+  if grep -v '^#' "$ROOT/agents.tsv" | grep -v '^[[:space:]]*$' |
+    awk -F '\t' '
+      $3 == "MODEL" || $5 ~ /AGENT_CLI|OTHER_CLI/ { bad=1 }
+      END { exit bad ? 0 : 1 }
+    '
+  then
+    return 1
+  fi
+  return 0
+}
+
+assign_file() { printf '%s/PANEL.ASSIGN.tsv' "$ROOT"; }
+
+# Known castable roles (roles/*.md stems + coordinator + reviewer alias for judge).
+assign_role_known() {
+  case $1 in
+    coordinator|claim-auditor|contract-auditor|maker|reviewer|judge|adversary|scout|specifier|architect|planner|integrator)
+      return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Normalize dispatch role names onto assignment roles.
+assign_role_normalize() {
+  case $1 in
+    judge) printf 'reviewer' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+panel_has_maker_reviewer_waiver() {
+  [ -f "$(panel_file)" ] || return 1
+  grep -qiE 'WAIVER:[[:space:]]*maker-reviewer-same-agent|maker-reviewer-same-agent' "$(panel_file)"
+}
+
+# Validate PANEL.ASSIGN.tsv: role→agent casting for independent agents.
+assign_valid() {
+  af=$(assign_file)
+  [ -f "$af" ] && [ ! -L "$af" ] && [ -s "$af" ] || return 1
+  agents_registry_ready || return 1
+  # shellcheck disable=SC2034
+  has_coord=0; has_claim=0; has_maker=0; has_reviewer=0; has_caudit=0
+  makers=''; reviewers=''; coords=''
+  while IFS="$(printf '\t')" read -r role agent required notes; do
+    [ -n "$role" ] || continue
+    case $role in \#*|role) continue ;; esac
+    assign_role_known "$role" || return 1
+    [ -n "$agent" ] || return 1
+    [ -n "$(kind_of "$agent")" ] || return 1
+    case $required in yes|no|'') : ;; *) return 1 ;; esac
+    nrole=$(assign_role_normalize "$role")
+    case $nrole in
+      coordinator) has_coord=1; coords="$coords $agent" ;;
+      claim-auditor) has_claim=1 ;;
+      maker) has_maker=1; makers="$makers $agent" ;;
+      reviewer) has_reviewer=1; reviewers="$reviewers $agent" ;;
+      contract-auditor) has_caudit=1 ;;
+    esac
+  done < "$af"
+  [ "$has_coord" -eq 1 ] && [ "$has_claim" -eq 1 ] && [ "$has_maker" -eq 1 ] \
+    && [ "$has_reviewer" -eq 1 ] && [ "$has_caudit" -eq 1 ] || return 1
+  # Maker and reviewer must be distinct agents unless waived.
+  if ! panel_has_maker_reviewer_waiver; then
+    for m in $makers; do
+      case " $reviewers " in *" $m "*) return 1 ;; esac
+    done
+  fi
+  # Coordinator must not also be maker or reviewer unless waived.
+  if ! panel_has_maker_reviewer_waiver; then
+    for c in $coords; do
+      case " $makers $reviewers " in *" $c "*) return 1 ;; esac
+    done
+  fi
+  # HIGH risk in PANEL requires an adversary cast.
+  if [ -f "$(panel_file)" ] && grep -qiE 'risk posture|## Risk' "$(panel_file)"; then
+    if grep -A5 '^## Risk posture' "$(panel_file)" | grep -qiE '\bHIGH\b'; then
+      grep -v '^#' "$af" | awk -F '\t' '$1=="adversary"{found=1} END{exit !found}' || return 1
+    fi
+  fi
+  return 0
+}
+
+# True if agent is cast for role in PANEL.ASSIGN.tsv (guided only).
+agent_cast_for_role() {
+  role=$(assign_role_normalize "$1"); agent=$2
+  af=$(assign_file)
+  [ -f "$af" ] || return 1
+  awk -F '\t' -v r="$role" -v a="$agent" '
+    $1 ~ /^#/ || $1 == "role" { next }
+    {
+      role=$1; agent=$2
+      if (role == "judge") role="reviewer"
+      if (role == r && agent == a) { found=1; exit }
+    }
+    END { exit !found }
+  ' "$af"
+}
+
+require_role_cast() {
+  role=$1; agent=$2
+  uses_guided_cycle || return 0
+  nrole=$(assign_role_normalize "$role")
+  agent_cast_for_role "$nrole" "$agent" \
+    || die "refused: agent $agent is not cast as $nrole in PANEL.ASSIGN.tsv — update casting and cycle approve-panel"
+}
+
+panel_id() {
+  pf=$(panel_file); af=$(assign_file)
+  [ -s "$pf" ] && [ ! -L "$pf" ] || return 1
+  [ -s "$af" ] && [ ! -L "$af" ] || return 1
+  # Content-bind both the narrative panel and the role→agent casting table.
+  {
+    hashfile "$pf"
+    hashfile "$af"
+  } | h12
+}
+
+panel_valid() {
+  pf=$(panel_file)
+  [ -s "$pf" ] && [ ! -L "$pf" ] || return 1
+  for heading in '## Agents' '## Roles' '## Risk posture' '## Isolation transport' \
+    '## Independence ladder' '## Waivers'; do
+    grep -qF "$heading" "$pf" || return 1
+  done
+  ! grep -q 'TEMPLATE-\|TODO-REPLACE' "$pf" || return 1
+  agents_registry_ready || return 1
+  # Transport policy must name the ladder preference.
+  grep -qiE 'multi-agent|acp|subagent' "$pf" || return 1
+  # Operator role casting: required independent agent assignments.
+  assign_valid || return 1
+  return 0
+}
+
+panel_approval_current() {
+  [ -f "$ROOT/PANEL.APPROVAL" ] && [ ! -L "$ROOT/PANEL.APPROVAL" ] || return 1
+  approved=$(sed -n 's/^panel-id: //p' "$ROOT/PANEL.APPROVAL" | head -1)
+  [ -n "$approved" ] && [ "$approved" = "$(panel_id 2>/dev/null || true)" ]
+}
+
+attempt_transport() {
+  ad=$(attempt_dir "$1")
+  [ -f "$ad/transport" ] && [ ! -L "$ad/transport" ] || return 1
+  tr=$(sed -n '1p' "$ad/transport" | tr -d '\r')
+  case $tr in multi-agent|acp|subagent) printf '%s' "$tr"; return 0 ;; *) return 1 ;; esac
+}
+
+attempt_contract_audit_pass() {
+  ad=$(attempt_dir "$1")
+  [ -f "$ad/contract-audit.md" ] && [ ! -L "$ad/contract-audit.md" ] || return 1
+  [ "$(sed -n 's/^VERDICT: //p' "$ad/contract-audit.md" | head -1)" = PASS ]
+}
+
+# Subagent transport is weaker isolation; only allowed after a recorded ACP probe failure
+# on single-product hosts, or when PANEL explicitly records ACP-unavailable.
+acp_probe_failed() {
+  if [ -f "$ROOT/ACP-PROBE.md" ] && [ ! -L "$ROOT/ACP-PROBE.md" ]; then
+    status=$(sed -n 's/^status: //p' "$ROOT/ACP-PROBE.md" | head -1 | tr '[:upper:]' '[:lower:]')
+    case $status in failed|unavailable|error) return 0 ;; esac
+  fi
+  if [ -f "$(panel_file)" ]; then
+    grep -qiE 'ACP[- ]?(probe )?(failed|unavailable)|acp: (failed|unavailable)' "$(panel_file)" \
+      && return 0
+  fi
+  return 1
+}
+
+require_attempt_independence() {
+  id=$1
+  uses_guided_cycle || return 0
+  transport=$(attempt_transport "$id") || die "refused: attempt $id has no transport (multi-agent|acp|subagent) — run: $(self_path) attempt transport $id <transport>"
+  attempt_contract_audit_pass "$id" \
+    || die "refused: attempt $id lacks contract-audit PASS — run: $(self_path) contract-audit $id PASS"
+  case $transport in
+    subagent)
+      acp_probe_failed \
+        || die "refused: subagent transport requires a recorded ACP probe failure before weaker isolation"
+      ;;
+  esac
+}
+
+write_independence_receipt() {
+  uses_guided_cycle || return 0
+  out="$ROOT/INDEPENDENCE.md"
+  tmp="$ROOT/.INDEPENDENCE.md.$$.tmp"
+  {
+    printf '# Independence receipt\n\n'
+    printf 'Generated from attempt ledger and contract audits. Not a cryptographic proof.\n\n'
+    printf '| Attempt | Role | Agent | Kind | Transport | Contract audit |\n'
+    printf '| --- | --- | --- | --- | --- | --- |\n'
+    if [ -d "$ROOT/attempts" ]; then
+      for ad in "$ROOT"/attempts/A*; do
+        [ -d "$ad" ] || continue
+        id=${ad##*/}
+        [ -f "$ad/meta.tsv" ] || continue
+        role=$(attempt_meta "$id" 5); agent=$(attempt_meta "$id" 6); kind=$(attempt_meta "$id" 7)
+        tr=-; attempt_transport "$id" >/dev/null 2>&1 && tr=$(attempt_transport "$id")
+        audit=MISSING
+        if [ -f "$ad/contract-audit.md" ]; then
+          audit=$(sed -n 's/^VERDICT: //p' "$ad/contract-audit.md" | head -1)
+          [ -n "$audit" ] || audit=MISSING
+        fi
+        printf '| %s | %s | %s | %s | %s | %s |\n' "$id" "$role" "$agent" "$kind" "$tr" "$audit"
+      done
+    fi
+    printf '\n## Ladder\n\n1. multi-agent (preferred)\n2. acp (single-product isolation)\n3. subagent (only after ACP probe failure)\n4. stop if none invocable\n'
+  } > "$tmp"
+  mv "$tmp" "$out"
+}
+
 cycle_investigation_state() {
   f=$(claims_file)
   [ -f "$f" ] || { printf 'EMPTY'; return; }
@@ -1835,6 +2220,23 @@ cycle_unadmitted_work() {
 }
 
 cmd_cycle_status() {
+  # Guided cycles require panel configure/approval before investigation.
+  if uses_guided_cycle; then
+    if ! panel_valid; then
+      if ! agents_registry_ready; then
+        printf 'NEXT CONFIGURE — replace placeholder agents.tsv; ask operator for agents AND role casting; write PANEL.md + PANEL.ASSIGN.tsv\n'
+      elif [ ! -f "$(assign_file)" ]; then
+        printf 'NEXT CONFIGURE — cast personas to independent agents in PANEL.ASSIGN.tsv (role→agent) and complete PANEL.md\n'
+      else
+        printf 'NEXT CONFIGURE — fix PANEL.md / PANEL.ASSIGN.tsv (agents inventory, role casting, risk, isolation, ladder, waivers)\n'
+      fi
+      return
+    fi
+    if ! panel_approval_current; then
+      printf 'WAIT PANEL — show agent inventory and role casting %s to the operator; do not investigate or build\n' "$(panel_id)"
+      return
+    fi
+  fi
   problem="$ROOT/PROBLEM.md"
   if [ ! -s "$problem" ] || grep -q 'TEMPLATE-PROBLEM-NEEDS-INPUT' "$problem" 2>/dev/null; then
     printf 'NEXT INTAKE — capture the operator\047s problem in PROBLEM.md\n'
@@ -1842,7 +2244,7 @@ cmd_cycle_status() {
   fi
   investigation=$(cycle_investigation_state)
   case $investigation in
-    EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them\n'; return ;;
+    EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them via independent agents\n'; return ;;
     NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim\n'; return ;;
     NEEDS_SCOUT) printf 'NEXT INVESTIGATE — search for existing behavior before proposing work\n'; return ;;
   esac
@@ -1857,6 +2259,12 @@ cmd_cycle_status() {
   fi
   if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
+    # Surface independence escalation from blocked items first.
+    blocked=$(awk -F '\t' 'NR > 1 && $2 == "BLOCKED" && $7 == "INDEPENDENCE_UNAVAILABLE" { print $1; exit }' "$ROOT/STATE.tsv")
+    if [ -n "$blocked" ]; then
+      printf 'ESCALATE INDEPENDENCE_UNAVAILABLE %s — cannot invoke required independent agent; stop and warn; do not continue as solo theatre\n' "$blocked"
+      return
+    fi
     slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
     if [ -n "$slug" ]; then
       status=$(state_value "$slug" 2); stage=$(state_value "$slug" 3); inflight=$(state_value "$slug" 6)
@@ -1887,7 +2295,8 @@ cmd_cycle_status() {
     printf 'NEXT PLAN — admit the next bounded item from approved proposal %s\n' "$pid"
     return
   fi
-  printf 'DONE — approved scope is closed or required no code; current evidence remains on disk\n'
+  write_independence_receipt
+  printf 'DONE — approved scope is closed or required no code; structure receipt in INDEPENDENCE.md when attempts exist\n'
 }
 
 cycle_worktree_records() {
@@ -1970,13 +2379,35 @@ cmd_cycle() {
     problem)
       src=${1:-}; [ -n "$src" ] && [ $# -eq 1 ] || die 'usage: crucible cycle problem FILE'
       [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
+      if uses_guided_cycle; then
+        panel_approval_current || die 'refused: approve the agent panel before binding a problem (cycle approve-panel)'
+      fi
       [ "$(cycle_investigation_state)" = EMPTY ] || die 'refused: investigation already has claims'
       [ ! -f "$ROOT/APPROVAL" ] || die 'refused: a proposal is already approved'
       tmp="$ROOT/.PROBLEM.md.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
       cp "$src" "$tmp"; mv "$tmp" "$ROOT/PROBLEM.md"; trap - 0 1 2 15
       printf '%s/PROBLEM.md\n' "$ROOT" ;;
+    approve-panel)
+      [ $# -eq 0 ] || die 'usage: crucible cycle approve-panel'
+      uses_guided_cycle || die 'approve-panel requires a guided cycle'
+      panel_valid || die 'refused: PANEL.md / PANEL.ASSIGN.tsv incomplete (need agents inventory, role→agent casting, non-placeholder agents.tsv, transport policy)'
+      pid=$(panel_id)
+      if panel_approval_current; then printf 'panel %s is already approved\n' "$pid"; return; fi
+      mkdir -p "$ROOT/panel-approvals"
+      record="$ROOT/panel-approvals/$pid.md"
+      [ ! -e "$record" ] || die "panel approval record already exists but is not current: $record"
+      now=$(date +%s); tmp="$ROOT/.PANEL.APPROVAL.$$.tmp"; rtmp="$ROOT/panel-approvals/.$pid.$$.tmp"
+      trap 'rm -f "$tmp" "$rtmp"' 0 1 2 15
+      printf 'panel-id: %s\napproved-epoch: %s\ndecision: APPROVED\n' "$pid" "$now" > "$rtmp"
+      mv "$rtmp" "$record"
+      printf 'panel-id: %s\nrecord: panel-approvals/%s.md\n' "$pid" "$pid" > "$tmp"
+      mv "$tmp" "$ROOT/PANEL.APPROVAL"; trap - 0 1 2 15
+      printf 'approved panel %s\n' "$pid" ;;
     approve)
       [ $# -eq 0 ] || die 'usage: crucible cycle approve'
+      if uses_guided_cycle; then
+        panel_approval_current || die 'refused: panel is not operator-approved'
+      fi
       [ "$(cycle_investigation_state)" = COMPLETE ] || die 'refused: investigation is incomplete'
       proposal_valid || die 'refused: PROPOSAL.md is missing required sections or contains placeholders'
       pid=$(proposal_id)
@@ -1992,7 +2423,7 @@ cmd_cycle() {
       mv "$tmp" "$ROOT/APPROVAL"; trap - 0 1 2 15
       printf 'approved proposal %s\n' "$pid" ;;
     clean) [ $# -eq 1 ] || die 'usage: crucible cycle clean --dry-run|--apply'; cycle_cleanup "$1" ;;
-    *) die 'usage: crucible cycle [status]|problem FILE|approve|clean --dry-run|--apply' ;;
+    *) die 'usage: crucible cycle [status]|problem FILE|approve-panel|approve|clean --dry-run|--apply' ;;
   esac
 }
 
@@ -2252,6 +2683,9 @@ cmd_claim() {
     txt=${1:-}; src=${2:-}
     [ -n "$txt" ] || die 'usage: crucible claim add "CLAIM" "EXACT SOURCE SENTENCE"'
     [ -n "$src" ] || die 'refused: a claim needs its source sentence quoted verbatim'
+    if uses_guided_cycle; then
+      panel_approval_current || die 'refused: approve the agent panel before investigation (cycle approve-panel)'
+    fi
     cnt=$(grep -c '^### C' "$f" 2>/dev/null || true); cnt=${cnt:-0}
     n=$((cnt + 1))
     { printf '\n### C%s — %s\n\n' "$n" "$txt"
@@ -2277,6 +2711,21 @@ cmd_claim() {
     done
     [ "$ce" -gt 0 ] \
       || die "refused: $who recorded no usable evidence for $n — run: crucible run-claim $n $who -- <command>"
+    # Guided cycles require a claim-auditor (or scout) dispatch contract before a TRUE
+    # verdict so the coordinator cannot solo-theatre the investigation under many names.
+    if uses_guided_cycle && [ "$word" = TRUE ]; then
+      cdir="$ROOT/claims/$n/dispatches"
+      found=0
+      if [ -d "$cdir" ]; then
+        for df in "$cdir"/*-claim-auditor-"$who".md "$cdir"/*-scout-"$who".md; do
+          [ -f "$df" ] || continue
+          found=1
+          break
+        done
+      fi
+      [ "$found" -eq 1 ] \
+        || die "refused: guided TRUE requires a claim dispatch for $who — run: $(self_path) dispatch $n claim-auditor $who"
+    fi
     printf 'CLAIM-VERDICT: %s\nAGENT: %s\nKIND: %s\n' "$word" "$who" "$(kind_of "$who")" > "$d/$who.md"
     printf '%s\n' "$d/$who.md" ;;
   scout)
@@ -2336,6 +2785,9 @@ cmd_claim() {
       *) die "refused: $n has no scout report. Dispatch a scout, then: crucible claim scout $n ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT" ;;
     esac
     if uses_managed_lifecycle; then
+      if uses_guided_cycle; then
+        panel_approval_current || die 'refused: the agent panel is not operator-approved'
+      fi
       approval_current || die 'refused: the current PROPOSAL.md is not operator-approved'
     fi
     cmd_add "$slug" "$(sed -n "/^### $n /s/^### $n — //p" "$(claims_file)" | head -1)"
@@ -2661,6 +3113,8 @@ ready)    shift; cmd_ready "$@" ;;
 task)     shift; cmd_task "$@" ;;
 next)     shift; cmd_next "$@" ;;
 attempt)  shift; cmd_attempt "$@" ;;
+contract-audit) shift; cmd_contract_audit "$@" ;;
+probe-acp) shift; cmd_probe_acp "$@" ;;
 result)   shift; cmd_result "$@" ;;
 phase)    shift; cmd_phase "$@" ;;
 dispatch) shift; cmd_dispatch "$@" ;;

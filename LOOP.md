@@ -3,28 +3,40 @@
 Crucible is one outer-to-inner loop, not a menu of commands.
 
 ```text
-INTAKE → INVESTIGATE ⇄ challenge → PROPOSE → APPROVAL
-                                          ↓
-              DONE ← REVIEW ⇄ FIX ← EXECUTE ← validated PLAN
-                       │
-                       └────────────→ ESCALATE when bounded recovery ends
+CONFIGURE → WAIT PANEL → INTAKE → INVESTIGATE ⇄ challenge → PROPOSE → APPROVAL
+                                                              ↓
+                DONE ← REVIEW ⇄ FIX ← EXECUTE ← validated PLAN
+                         │
+                         └────────────→ ESCALATE when bounded recovery ends
+                                        (includes INDEPENDENCE_UNAVAILABLE)
 ```
 
 `crucible cycle` derives the current position from repository artifacts. The coordinating agent uses
 the lower-level protocol; the operator does not advance phases.
 
+## CONFIGURE and WAIT PANEL
+
+Discover available agents (CLI, ACP, subagent). Ask the operator for (1) agent inventory and
+(2) **persona/role casting** — which independent agent plays coordinator, claim-auditor, maker,
+reviewer, contract-auditor, and optional roles. Write real `agents.tsv` rows, `PANEL.md`, and
+authoritative `PANEL.ASSIGN.tsv`. Show inventory + casting and stop until `cycle approve-panel`.
+Placeholders and incomplete casting refuse progress. Guided dispatches must match the casting table.
+
+Exit: content-bound approval of panel + casting; registry is non-placeholder.
+
 ## INTAKE
 
 Preserve the supplied problem in `PROBLEM.md`. Establish repository, runtime, instructions, dirty state,
-history, and active-work truth. Propose a small panel based on available coordination mechanisms.
+history, and active-work truth.
 
-Exit: the problem and configuration are explicit enough to investigate without guessing.
+Exit: the problem is explicit enough to investigate without guessing.
 
 ## INVESTIGATE
 
 Split the report into atomic claims. Fact-check current behavior from source, tests, commands, history,
-and existing artifacts. Independently search for behavior that already exists. False, stale, duplicate,
-or already-solved claims remain recorded but do not become work.
+and existing artifacts using independent agents (multi-agent or ACP-isolated). Independently search for
+behavior that already exists. False, stale, duplicate, or already-solved claims remain recorded but do
+not become work.
 
 Exit: every material claim has evidence and an existing-work disposition, or is explicitly unverifiable.
 
@@ -46,17 +58,19 @@ Exit: the breakdown is independently judged executable and non-overlapping.
 ## EXECUTE ⇄ REVIEW ⇄ FIX
 
 Makers work only in their assigned scope. Reviews see the approved contract, current work, and evidence,
-not maker rationale. A rejection is a finding, not a phase failure: fix it, produce new current-work
-evidence, and review again. Selective adversarial/cross-family review applies when risk or dispute warrants.
+not maker rationale. Each dispatch has transport + contract-audit PASS on guided cycles. A rejection is
+a finding, not a phase failure: fix it, produce new current-work evidence, and review again. Selective
+adversarial/cross-family review applies when risk or dispute warrants.
 
 The loop stops for a typed escalation after one infrastructure retry, repeated finding, unchanged-work
-resubmission, ownership conflict, or required human decision. A stop is cheaper and more truthful than
-unbounded agent churn.
+resubmission, ownership conflict, independence unavailable, or required human decision. A stop is
+cheaper and more truthful than unbounded agent churn.
 
 Exit: every approved criterion and finding is resolved against the current integrated work id.
 
 ## DONE
 
 The refusal gate accepts closure, relevant integration/CI evidence is current, the approved backlog is
-accounted for, and the final report distinguishes shipped work from remaining uncertainty. Agent contexts
-can disappear without losing truth because the repository holds the evidence.
+accounted for, structure/independence receipts exist when attempts were used, and the final report
+distinguishes shipped work from remaining uncertainty. Agent contexts can disappear without losing truth
+because the repository holds the evidence.

@@ -25,6 +25,35 @@ refuses() {
   printf '%s\n' "$out" | grep -q "$pattern" && ok || bad "$label: wanted $pattern, got $out"
 }
 
+
+bind_independence() {
+  prog=$1; id=$2; transport=${3:-multi-agent}; auditor=${4:-}
+  if [ -z "$auditor" ]; then
+    attempt_agent=$(awk -F '	' 'NR==2 {print $6}' "$prog/attempts/$id/meta.tsv")
+    role=$(awk -F '	' 'NR==2 {print $5}' "$prog/attempts/$id/meta.tsv")
+    slug=$(awk -F '	' 'NR==2 {print $2}' "$prog/attempts/$id/meta.tsv")
+    auditor=
+    for cand in $(grep -v '^#' "$prog/agents.tsv" | awk -F '	' '$1!=""{print $1}'); do
+      [ "$cand" = "$attempt_agent" ] && continue
+      case $role in
+        judge|adversary)
+          if [ -f "$prog/items/$slug/MAKERS.tsv" ] && awk -F '	' -v a="$cand" '$1==a{found=1} END{exit !found}' "$prog/items/$slug/MAKERS.tsv"; then
+            continue
+          fi
+          if [ -f "$prog/items/$slug/MAKER" ] && grep -qx "$cand" "$prog/items/$slug/MAKER"; then
+            continue
+          fi
+          ;;
+      esac
+      auditor=$cand
+      break
+    done
+    [ -n "$auditor" ] || auditor=$attempt_agent
+  fi
+  "$prog/crucible" attempt transport "$id" "$transport" >/dev/null
+  "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
+}
+
 tmp=$(mktemp -d)
 repo="$tmp/repo"
 mkdir -p "$repo"
@@ -132,6 +161,7 @@ $P/crucible attempt start "$maker_attempt" "$$" >/dev/null
 maker_out=$(cd "$repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo focused-maker')
 maker_evidence=$(basename "$(printf '%s' "$maker_out" | awk '{print $1}')")
 $P/crucible attempt finish "$maker_attempt" RETURNED observed-exit-zero >/dev/null
+bind_independence "$P" "$maker_attempt"
 $P/crucible result "$maker_attempt" PASS "$maker_evidence" CLOSE - >/dev/null
 refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
   "$P/crucible" run alpha j1 -- sh -c 'echo unbound-review'
@@ -151,6 +181,7 @@ printf 'VERDICT: PASS\nWORK-ID: %s\nmanual compatibility verdict; see %s\n' "$wi
   > "$P/items/alpha/verdicts/j1.md"
 refuses 'managed check rejects a hand-written verdict' 'not bound to an attempt result' \
   "$P/crucible" check alpha
+bind_independence "$P" "$j1_attempt"
 $P/crucible result "$j1_attempt" PASS "$j1_evidence" CLOSE - >/dev/null
 
 j2_contract=$($P/crucible dispatch alpha judge j2 A1 FOCUSED 2>/dev/null)
@@ -159,6 +190,7 @@ $P/crucible attempt start "$j2_attempt" "$$" >/dev/null
 j2_out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo focused-j2')
 j2_evidence=$(basename "$(printf '%s' "$j2_out" | awk '{print $1}')")
 $P/crucible attempt finish "$j2_attempt" RETURNED observed-exit-zero >/dev/null
+bind_independence "$P" "$j2_attempt"
 $P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
 
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
