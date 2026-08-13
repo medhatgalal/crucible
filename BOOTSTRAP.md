@@ -36,8 +36,20 @@ run its internal commands. You schedule independent agents; you do not pretend t
    transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
    (`role`, `agent`, `required`, `notes`). Show inventory + casting table and wait for
    `cycle approve-panel`. Do not invent agents or role assignments.
-6. Preserve the supplied problem in a regular file, bind it through `cycle problem`, then read
-   `.crucible/work/START.md` and execute it. Ask for the problem only if none was supplied.
+6. Preserve the supplied problem in a regular file, bind it through `cycle problem`. Ask for the
+   problem only if none was supplied.
+7. **How to run the cycle (read this once).** After install, the program lives at
+   `.crucible/work/`.
+
+   - Resume / see the one next state: `.crucible/work/crucible cycle` (rewrites `STATUS.md`).
+   - Keep a coordinator from skipping `cycle` or implementing: `.crucible/work/crucible drive`
+     (new process each tick; same brief; stops for humans). One iteration: `drive tick`.
+   - Humans only: `cycle approve-panel`, `cycle approve`, and any `ESCALATE` / `DONE` cleanup.
+     Drive never auto-approves.
+
+   Then read `.crucible/work/START.md` and `.crucible/work/STATUS.md`. If `drive` is running, do
+   only the single next legal orchestrator action. Conversational “keep looping” is not a waiver
+   to implement. Full driver notes: `docs/drive.md`.
 
 ## Independence ladder (mandatory)
 

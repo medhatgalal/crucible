@@ -2752,6 +2752,8 @@ cmd_drive() {
   while :; do
     n=$((n + 1))
     [ "$n" -le "$max" ] || die "drive stopped: iteration cap $max"
+    uses_guided_cycle || die 'drive requires a guided cycle (PROGRAM cycle: guided was removed)'
+    uses_managed_lifecycle || die 'drive requires managed lifecycle behavior'
     repo=$(drive_product_repo)
     [ -n "$repo" ] && [ -d "$repo" ] || die 'drive requires PROGRAM repo:'
     line=$(write_cycle_status)
@@ -2980,6 +2982,8 @@ cmd_cycle() {
       printf '%s/PROBLEM.md\n' "$ROOT" ;;
     approve-panel)
       [ $# -eq 0 ] || die 'usage: crucible cycle approve-panel'
+      [ -d "$ROOT/.drive.lock" ] \
+        && die 'refused: cycle approve-panel is a human gate — stop drive first (drive never auto-approves)'
       uses_guided_cycle || die 'approve-panel requires a guided cycle'
       panel_valid || die 'refused: PANEL.md / PANEL.ASSIGN.tsv incomplete (need agents inventory, role→agent casting, non-placeholder agents.tsv, transport policy)'
       # Archive approved agents.tsv for operator inspection. Execution binds live files via
@@ -3007,6 +3011,8 @@ cmd_cycle() {
       printf 'approved panel %s\n' "$pid" ;;
     approve)
       [ $# -eq 0 ] || die 'usage: crucible cycle approve'
+      [ -d "$ROOT/.drive.lock" ] \
+        && die 'refused: cycle approve is a human gate — stop drive first (drive never auto-approves)'
       if uses_guided_cycle; then
         panel_approval_current || die 'refused: panel is not operator-approved'
       fi

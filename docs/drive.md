@@ -6,6 +6,17 @@ calls the same `dispatch` / `cycle` verbs.
 
 Conversational “keep looping” is not a waiver to implement.
 
+A cold reader of this repository: start at [BOOTSTRAP.md](../BOOTSTRAP.md) to install, then
+[START.md](../START.md) for the installed prompt. This page is only the outer driver.
+
+## Who runs what
+
+| Actor | Runs | Does not run |
+| --- | --- | --- |
+| Operator | `adopt`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
+| Coordinator process | `cycle`, then one legal orchestrator action from `STATUS.md` | product edits, verdicts, merges, auto-approve |
+| Maker / reviewer / auditor | only their dispatched contract | admit the next backlog row, merge, wear another hat |
+
 ## What one tick does
 
 1. Run `cycle` first and rewrite `STATUS.md` (and print the line).
@@ -22,26 +33,37 @@ Conversational “keep looping” is not a waiver to implement.
 .crucible/<program>/crucible drive tick   # one iteration (tests and babysitting)
 ```
 
-## Legal coordinator actions (CHECKs)
+## Legal coordinator actions
 
-| State | Legal action |
-| --- | --- |
-| INVESTIGATE | Dispatch the next unaudited or unscouted claim only |
-| PROPOSE | Write or update `PROPOSAL.md` only |
-| PLAN, no ACTIVE item | Admit one item from the approved proposal |
-| PLAN, DRAFT/READY | Review `ITEM.md`; do not dispatch a maker |
-| EXECUTE idle | Dispatch the maker (worktree when the item has a task DAG) |
-| WAIT inflight | Do not start a second attempt; observe and record |
-| REVIEW RETURNED | Dispatch the reviewer with contract, work, and evidence — no maker rationale |
-| reviewer FIX | Redispatch the maker with findings only |
+Drive does **not** invoke makers, reviewers, or auditors. It babysits the coordinator: one
+orchestrator action per tick, then `cycle`. After a dispatch, the operator or a later tick
+must actually launch the worker named in the contract.
 
-Drive refuses (and restores the product tree) if the coordinator process:
+| State | What drive does | Label |
+| --- | --- | --- |
+| INVESTIGATE | If the child did not add a dispatch file, parent dispatches the next missing claim-auditor/scout contract | CHECK |
+| PROPOSE | Invokes coordinator; they may write `PROPOSAL.md`. Parent does not write the proposal | RULE |
+| PLAN, no ACTIVE item | Invokes coordinator; they may admit one item. Parent does not invent a slug | RULE |
+| PLAN, DRAFT/READY | Invokes coordinator; do not dispatch a maker. Parent does not dispatch a reviewer here (judge dispatch requires REVIEW) | RULE |
+| EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker (prints the invocation; does not start the process) | fallback |
+| WAIT inflight | Does not start a second live attempt (global DISPATCHED/RUNNING/OVERDUE count) | CHECK (partial) |
+| REVIEW RETURNED | If the inflight maker attempt is RETURNED and the item is REVIEW, parent may `dispatch` the judge | fallback |
+| reviewer FIX | Not implemented as a parent fallback | RULE |
 
-- edits an owned product path (anything outside `.crucible/`)
-- writes a verdict file
-- merges
+### What the product-path CHECK actually covers
 
-Those are CHECKs, not RULES.
+Refuse + restore when the coordinator process, during a tick:
+
+- adds or changes **uncommitted** porcelain outside `.crucible/` (compared to the pre-tick snapshot)
+- leaves `MERGE_HEAD` (merge in progress)
+- creates a **new** `items/*/verdicts/*.md` path
+
+Not covered (RULE, not CHECK): `git commit` of product files, a **completed** merge, edits that do
+not change the porcelain line, writes inside `.crucible/` worktrees, overwriting an existing
+verdict file, claim verdicts under `claims/*/verdicts/`.
+
+Maker work on a `TARGET` repo during a drive tick looks like a product-path write and is refused.
+That is why drive is a **dispatch babysitter**, not a make/review runner.
 
 ## STATUS.md
 
@@ -57,6 +79,6 @@ Coordinators read it after `cycle`.
 
 ## Maker inner loop
 
-Inside **EXECUTE** for the admitted item only, the maker brief may run the falsifier until it
-passes or stop after one infrastructure retry. That loop must not admit the next backlog row
-and must not merge.
+Inside **EXECUTE** for the admitted item only, the **maker contract** (not the drive parent) may
+say: run the falsifier until it passes, or stop after one infrastructure retry. That loop must
+not admit the next backlog row and must not merge. Drive does not run that loop.

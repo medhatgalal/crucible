@@ -29,13 +29,15 @@ Open the repository you want to change, then give a fresh agent either source fo
 **Read from the public web:**
 
 > Read `https://raw.githubusercontent.com/medhatgalal/crucible/main/BOOTSTRAP.md`. You are already in
-> the target repository. Configure the agent panel with me, then run a Crucible cycle for this
-> problem: `<problem or report path>`.
+> the target repository. Configure the agent panel with me, bind this problem: `<problem or report
+> path>`, then tell me when to run `.crucible/work/crucible drive` (I approve panel and proposal;
+> drive never auto-approves).
 
 **Read from a local checkout or extracted release:**
 
 > Read `/absolute/path/to/crucible/BOOTSTRAP.md`. You are already in the target repository. Configure
-> the agent panel with me, then run a Crucible cycle for this problem: `<problem or report path>`.
+> the agent panel with me, bind this problem: `<problem or report path>`, then tell me when to run
+> `.crucible/work/crucible drive`.
 
 The agent obtains Crucible, verifies its cold-start contract, installs a guided cycle, asks one compact
 configure block for **agent inventory and role casting** (which independent agent plays each persona),
@@ -43,12 +45,16 @@ writes `PANEL.md` + `PANEL.ASSIGN.tsv`, waits for panel approval, then investiga
 (multi-agent preferred; ACP isolation on single-product hosts; subagents only after ACP failure).
 Success is structure followed with evidence—not a solo agent pretending to be a panel.
 
-Already installed? Say:
+**Already installed** (program usually `.crucible/work/crucible`):
 
-> Read `.crucible/<program>/START.md` and continue this cycle.
+| You want | Run / say |
+| --- | --- |
+| See the one next state | `.crucible/work/crucible cycle` — also rewrites `STATUS.md` |
+| Resume a coordinator | Read `.crucible/work/START.md` and `STATUS.md` |
+| Keep the coordinator from skipping `cycle` or implementing | `.crucible/work/crucible drive` ([docs/drive.md](docs/drive.md)) |
+| Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
 
-To keep the coordinator from skipping `cycle` or implementing, run
-`.crucible/<program>/crucible drive` (see [docs/drive.md](docs/drive.md)).
+Conversational “keep looping” is not a waiver to implement.
 
 ## ✨ The value
 
@@ -137,7 +143,9 @@ On **guided** cycles it also refuses: investigation or work without a current ap
 role casting; guided dispatch/transport/contract-audit/start/result under a stale panel; claim
 verdicts and scout results without a sealed independence-ledger attempt; subagent transport without a
 recorded ACP probe failure (or an explicit `ACP: unavailable` line when no prior probe succeeded);
-and coordinator-as-auditor / maker-as-contract-auditor casting.
+and coordinator-as-auditor / maker-as-contract-auditor casting. On **drive**, it also refuses
+coordinator edits to owned product paths, verdict writes, and merges, and it will not auto-approve
+a panel or proposal.
 
 Crucible is not a security boundary. Under one operating-system user, it cannot cryptographically prove
 who authored a file or that a passing test meaningfully tests the intended behavior. Transport labels
@@ -146,7 +154,9 @@ and [RULES.md](RULES.md).
 
 ## 📚 Go deeper
 
-- [START.md](START.md) — self-contained fresh-agent operating prompt
+- [BOOTSTRAP.md](BOOTSTRAP.md) — cold start in a target repo (what a fresh agent should read first)
+- [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
+- [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement
 - [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria
 - [CONFIGURE.md](CONFIGURE.md) — agents, models, personas, and risk posture
 - [RULES.md](RULES.md) — enforced checks versus instructional rules
