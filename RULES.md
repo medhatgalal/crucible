@@ -84,47 +84,50 @@ a RULE into a CHECK, do it and say so in the lesson.
     verbally while the written record said otherwise; an automated reviewer read the record,
     correctly concluded the work was off-plan, and stopped it two minutes before it would have
     succeeded.
-21. **CHECK in guided+managed drive — The coordinator cannot skip cycle or implement.**
-    `drive` always runs `cycle` first and rewrites `STATUS.md`. `WAIT PANEL`, `WAIT APPROVAL`,
-    `ESCALATE`, and `DONE` stop for a human (never auto-approved). After a coordinator process,
-    edits to owned product paths, verdict writes, and merges are refused. INVESTIGATE ticks
-    dispatch the next unaudited/unscouted claim only; inflight WAIT does not start a second
-    attempt. Conversational “keep looping” is not a waiver to implement.
-21. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
+21. **CHECK in guided+managed drive — Parent always cycles; human gates do not auto-approve;
+    uncommitted product writes and in-progress merges refuse.** `drive` runs `cycle` (rewrites
+    `STATUS.md`) before and after each coordinator process. `WAIT PANEL`, `WAIT APPROVAL`,
+    `ESCALATE`, and `DONE` exit without invoking the coordinator. `cycle approve-panel` and
+    `cycle approve` refuse while `.drive.lock` exists. After the child, new uncommitted product
+    porcelain (paths outside `.crucible/`), `MERGE_HEAD`, and new `items/*/verdicts/*.md` paths
+    refuse. INVESTIGATE fallback dispatches one missing claim-auditor/scout contract. This is
+    not a proof the coordinator cannot implement via `git commit` or a completed merge.
+    Conversational “keep looping” is a RULE, not this CHECK.
+22. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
     and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained
     resume summary. After a restart or compaction, re-read the recorded state and `git log`; never
     re-dispatch work it marks complete. Nothing can force you to consult it, so this remains a rule.
-22. **CHECK — Every closed item appends exactly one cycle lesson or `NONE`**, and `LESSONS.md` is
+23. **CHECK — Every closed item appends exactly one cycle lesson or `NONE`**, and `LESSONS.md` is
     concatenated into later maker briefs. This is repository evidence, not global model memory, and may
     be included in an operator-approved cleanup after the cycle.
-23. **RULE — Never persist project lessons or personas in global agent memory.** A fresh agent relearns
+24. **RULE — Never persist project lessons or personas in global agent memory.** A fresh agent relearns
     the workflow from repository files. Agent contexts and machine configuration are disposable.
 
 ## Work quality
 
-24. **RULE — Search before building.** Before any design, a scout must answer: does code already do
+25. **RULE — Search before building.** Before any design, a scout must answer: does code already do
     this, fully or partly? Report what you searched and how, so the claim can be checked. Search by
     behaviour, not by name — the thing you would build rarely contains the words you would call it.
-25. **RULE — Fit the architecture you are in, or argue to change it explicitly.** Do not silently
+26. **RULE — Fit the architecture you are in, or argue to change it explicitly.** Do not silently
     introduce a second pattern for a solved problem. If the existing architecture is wrong for this
     work, say so, propose the change, and let it be judged as a change.
-26. **RULE — Build only what the item asks for.** No speculative abstraction, no unrequested
+27. **RULE — Build only what the item asks for.** No speculative abstraction, no unrequested
     configurability. A bug fix does not need its neighbourhood refactored.
-27. **RULE — Tests assert behaviour, not mocks.** A test that cannot fail is a lie with a green tick.
-28. **RULE — Name things for behaviour.** No invented identifier schemes, no version numbers in
+28. **RULE — Tests assert behaviour, not mocks.** A test that cannot fail is a lie with a green tick.
+29. **RULE — Name things for behaviour.** No invented identifier schemes, no version numbers in
     names. Identifiers leak from private notes into code, tests, and user-visible strings.
-29. **RULE — Security and performance are acceptance criteria, not afterthoughts.** If the item
+30. **RULE — Security and performance are acceptance criteria, not afterthoughts.** If the item
     touches auth, data, or a hot path, its criteria say so before the build starts, or the judge has
     nothing to check them against.
 
 ## Stopping
 
-30. **CHECK in managed lifecycle; RULE in item-file lifecycle — Bound your iteration.** Managed
+31. **CHECK in managed lifecycle; RULE in item-file lifecycle — Bound your iteration.** Managed
     lifecycle blocks a repeated finding fingerprint, refuses duplicate current-work PASSes and a
     second canonical expensive PASS, and allows one retry after an observed timeout before
     `RETRY_EXHAUSTED`. Item-file lifecycle does not count findings or resubmissions. Occupancy is
     not output; something running for hours while nothing lands is a stall wearing a costume.
-31. **RULE — A blocked agent stops and says so.** `BLOCKED`, `NEEDS_CONTEXT`, and
+32. **RULE — A blocked agent stops and says so.** `BLOCKED`, `NEEDS_CONTEXT`, and
     `INDEPENDENCE_UNAVAILABLE` are legitimate terminal results with a recorded reason. Guessing under
     a no-questions rule is a defect generator. Bad work is worse than no work and you will not be
     penalised for escalating.

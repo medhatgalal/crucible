@@ -5,6 +5,21 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.1] - 2026-08-13
+
+### Drive honesty (adversarial review)
+
+- Public SSOT: BOOTSTRAP, README, and START now say when to run `cycle` vs `drive`, what
+  `STATUS.md` is, and that humans approve panel/proposal. README “Go deeper” lists BOOTSTRAP
+  and `docs/drive.md`.
+- RULE 21 scoped to what the parent actually CHECKs (cycle first, human-gate exit, uncommitted
+  product porcelain, in-progress merge, new item-verdict paths, INVESTIGATE fallback dispatch).
+  Duplicate RULE 21 numbering fixed.
+- `docs/drive.md` no longer labels the full legal-action table as CHECKs. Drive does not invoke
+  makers/auditors.
+- `cycle approve-panel` / `cycle approve` refuse while `.drive.lock` exists.
+- Drive re-checks `cycle: guided` and managed lifecycle every tick (not only at entry).
+
 ## [1.3.0] - 2026-08-13
 
 ### Drive outer loop

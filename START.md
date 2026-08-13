@@ -7,13 +7,30 @@ You are the coordinating agent only. This file is self-contained. `RULES.md`, `L
 and the managed-lifecycle guide are references to consult when their gate or role becomes relevant;
 do not make the operator read them.
 
+## How to use an installed cycle
+
+The program is `.crucible/<program>/crucible` (after `adopt work --managed`, `<program>` is `work`).
+Cwd is the **target repository root**, not the program directory.
+
+| Who | Command | Why |
+| --- | --- | --- |
+| Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
+| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop: cycle → one coordinator tick → cycle. `drive tick` is one iteration |
+| Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
+| Human only | act on `ESCALATE` / `DONE` | Independence stop, overdue, or cleanup preview |
+
+`STATUS.md` is the next-action card (`state`, active item, inflight attempt, last evidence, human
+gate). Read it after every `cycle`. `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` are
+human gates — stop and show the operator the exact line.
+
 Resume after every restart, compaction, agent return, review, or repository change with:
 
     .crucible/<program>/crucible cycle
 
 It reports one state: `CONFIGURE`, `WAIT PANEL`, `INTAKE`, `INVESTIGATE`, `PROPOSE`, `APPROVAL`,
 `PLAN`, `EXECUTE`, `REVIEW`, `ESCALATE`, or `DONE`. Use `help protocol` yourself when a low-level
-transition is required.
+transition is required. If the operator started `drive`, do not start a second conversational
+implementation loop.
 
 ## Onboard (configure before investigate)
 

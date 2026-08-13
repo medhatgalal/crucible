@@ -81,6 +81,12 @@ else bad 'START.md missing drive-first paragraph'; fi
 [ -f "$HERE/docs/drive.md" ] && ok || bad 'docs/drive.md missing'
 grep -q 'keep looping' "$HERE/docs/drive.md" && ok || bad 'drive doc missing keep-looping lesson'
 grep -q 'keep looping' "$HERE/START.md" && ok || bad 'START.md missing keep-looping lesson'
+grep -q 'drive' "$HERE/BOOTSTRAP.md" && grep -q 'STATUS.md' "$HERE/BOOTSTRAP.md" \
+  && ok || bad 'BOOTSTRAP does not teach drive / STATUS.md'
+grep -q 'docs/drive.md' "$HERE/README.md" && grep -q 'STATUS.md' "$HERE/README.md" \
+  && ok || bad 'README does not point at drive / STATUS.md'
+grep -q 'How to use an installed cycle' "$HERE/START.md" \
+  && ok || bad 'START.md missing how-to-use table'
 
 # --- INVESTIGATE tick dispatches, does not edit src/ ---
 repo=$(setup_repo)
@@ -167,6 +173,12 @@ refuses 'coordinator product-path write is refused' 'owned|product path|verdict|
   "$P/crucible" drive tick
 [ ! -f "$repo/src/pwned" ] || bad 'owned-path refuse left the product write in place'
 [ ! -f "$repo/src/pwned" ] && ok || true
+
+# Human approve verbs refuse while drive lock is held
+mkdir "$P/.drive.lock"
+refuses 'approve-panel refused under drive lock' 'drive|human gate' \
+  "$P/crucible" cycle approve-panel
+rmdir "$P/.drive.lock"
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
