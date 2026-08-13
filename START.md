@@ -16,6 +16,9 @@ Cwd is the **target repository root**, not the program directory.
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
 | Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop: cycle → one coordinator tick → cycle. `drive tick` is one iteration |
+
+When refreshing an installed program from a newer Crucible source, copy engine files
+**additively**. Do not delete machine-local adapters (for example `scripts/acp-brief.py`).
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | act on `ESCALATE` / `DONE` | Independence stop, overdue, or cleanup preview |
 

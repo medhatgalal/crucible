@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.3] - 2026-08-13
+
+### Cycle/admit bar and drive invoke
+
+- `cycle` no longer reports PLAN/COMPLETE for a TRUE claim that `claim admit` would refuse.
+  Investigation stays `NEEDS_AUDIT` until `CRUCIBLE_MIN_AUDITORS` sealed TRUEs (and `MIN_KINDS`).
+- `drive` refuses when the coordinator invoke exits non-zero (missing ACP adapter, etc.)
+  instead of treating a failed launch as no-progress STOP.
+- Refresh note: do not clobber machine-local scripts such as `acp-brief.py`.
+
 ## [1.3.2] - 2026-08-13
 
 ### Drive review P1s

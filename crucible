@@ -2347,6 +2347,29 @@ claim_agent_independence_ok() {
   return 0
 }
 
+# Same bar as claim admit: enough sealed TRUE verdicts and kinds.
+claim_true_bar_met() {
+  cn=$1
+  min_a=${CRUCIBLE_MIN_AUDITORS:-2}
+  t=0; kinds=""
+  vd="$ROOT/claims/$cn/verdicts"
+  [ -d "$vd" ] || return 1
+  for vf in "$vd"/*.md; do
+    [ -f "$vf" ] || continue
+    [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] || continue
+    agent=${vf##*/}; agent=${agent%.md}
+    [ -n "$(kind_of "$agent")" ] || continue
+    if uses_guided_cycle; then
+      claim_agent_independence_ok "$cn" "$agent" || continue
+    fi
+    t=$((t + 1))
+    k=$(kind_of "$agent")
+    case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
+  done
+  kn=0; for k in $kinds; do kn=$((kn + 1)); done
+  [ "$t" -ge "$min_a" ] && [ "$kn" -ge "$MIN_KINDS" ]
+}
+
 cycle_investigation_state() {
   f=$(claims_file)
   [ -f "$f" ] || { printf 'EMPTY'; return; }
@@ -2372,6 +2395,8 @@ cycle_investigation_state() {
     if [ "$truth" -gt 0 ]; then
       scout=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
       [ -n "$scout" ] || { printf 'NEEDS_SCOUT'; return; }
+      # Admit requires MIN_AUDITORS TRUEs. Do not report COMPLETE/PLAN while admit would refuse.
+      claim_true_bar_met "C$i" || { printf 'NEEDS_AUDIT'; return; }
     fi
     i=$((i + 1))
   done
@@ -2387,8 +2412,7 @@ cycle_unadmitted_work() {
       scout=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
       case $scout in
         ABSENT|PARTLY-EXISTS)
-          vd="$ROOT/claims/C$i/verdicts"
-          if [ -d "$vd" ] && grep -l '^CLAIM-VERDICT: TRUE$' "$vd"/*.md >/dev/null 2>&1; then
+          if claim_true_bar_met "C$i"; then
             return 0
           fi ;;
       esac
@@ -2864,7 +2888,9 @@ drive_invoke_coordinator() {
   case $cmd in
     '(no command registered'*|'') return 0 ;;
   esac
-  ( cd "$repo" && sh -c "$cmd" ) || true
+  if ! ( cd "$repo" && sh -c "$cmd" ); then
+    die "refused: coordinator invoke failed — $cmd"
+  fi
 }
 
 cmd_drive() {
@@ -2980,7 +3006,7 @@ cmd_cycle_status() {
   investigation=$(cycle_investigation_state)
   case $investigation in
     EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them via independent agents\n'; return ;;
-    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim\n'; return ;;
+    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim (admit needs %s sealed TRUE verdicts)\n' "${CRUCIBLE_MIN_AUDITORS:-2}"; return ;;
     NEEDS_SCOUT) printf 'NEXT INVESTIGATE — search for existing behavior before proposing work\n'; return ;;
   esac
   if ! proposal_valid; then
