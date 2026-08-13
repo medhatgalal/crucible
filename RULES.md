@@ -85,14 +85,16 @@ a RULE into a CHECK, do it and say so in the lesson.
     correctly concluded the work was off-plan, and stopped it two minutes before it would have
     succeeded.
 21. **CHECK in guided+managed drive — Parent always cycles; human gates do not auto-approve;
-    uncommitted product writes and in-progress merges refuse.** `drive` runs `cycle` (rewrites
-    `STATUS.md`) before and after each coordinator process. `WAIT PANEL`, `WAIT APPROVAL`,
-    `ESCALATE`, and `DONE` exit without invoking the coordinator. `cycle approve-panel` and
-    `cycle approve` refuse while `.drive.lock` exists. After the child, new uncommitted product
-    porcelain (paths outside `.crucible/`), `MERGE_HEAD`, and new `items/*/verdicts/*.md` paths
-    refuse. INVESTIGATE fallback dispatches one missing claim-auditor/scout contract. This is
-    not a proof the coordinator cannot implement via `git commit` or a completed merge.
-    Conversational “keep looping” is a RULE, not this CHECK.
+    coordinator implement paths refuse.** `drive` runs `cycle` (rewrites `STATUS.md`) before and
+    after each coordinator process and re-checks `cycle: guided` every tick. `WAIT PANEL`,
+    `WAIT APPROVAL`, `ESCALATE`, and `DONE` exit without invoking the coordinator.
+    `cycle approve-panel` and `cycle approve` refuse while `.drive.lock` exists. After the child,
+    these refuse (and restore): product `HEAD` movement (commit or completed merge), `MERGE_HEAD`,
+    new or content-changed product porcelain (including already-dirty files), task-worktree
+    writes, new or overwritten `items/*/verdicts` and `claims/*/verdicts` files, removing
+    `cycle: guided`, and a new live attempt id while the cycle is WAIT inflight. INVESTIGATE
+    fallback dispatches one missing claim-auditor/scout contract. Conversational “keep looping”
+    is a RULE, not this CHECK.
 22. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
     and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained
     resume summary. After a restart or compaction, re-read the recorded state and `git log`; never

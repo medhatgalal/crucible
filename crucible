@@ -2493,13 +2493,37 @@ write_cycle_status() {
   printf '%s\n' "$line"
 }
 
+drive_snap_dir() { printf '%s/.drive-snap' "$ROOT"; }
+
+drive_live_attempt_ids() {
+  [ -d "$ROOT/attempts" ] || return 0
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    st=$(attempt_state "$id")
+    case $st in DISPATCHED|RUNNING|OVERDUE) printf '%s\n' "$id" ;; esac
+  done | LC_ALL=C sort
+}
+
 drive_progress_token() {
   line=$1
   nd=0; na=0
   [ -d "$ROOT/claims" ] && nd=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
   [ -d "$ROOT/attempts" ] && na=$(find "$ROOT/attempts" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
   ev=$(drive_last_evidence)
-  printf '%s|%s|%s|%s' "$line" "$nd" "$na" "$ev"
+  seals=-
+  if [ -d "$ROOT/attempts" ]; then
+    seals=$(find "$ROOT/attempts" -type f \( -name transport -o -name 'contract-audit.md' -o -name events.tsv \) 2>/dev/null \
+      | LC_ALL=C sort | while IFS= read -r f; do
+          printf '%s %s\n' "$f" "$(hashfile "$f")"
+        done | h12)
+    [ -n "$seals" ] || seals=-
+  fi
+  claims=-; [ -f "$ROOT/CLAIMS.md" ] && claims=$(hashfile "$ROOT/CLAIMS.md")
+  proposal=-; [ -f "$ROOT/PROPOSAL.md" ] && proposal=$(hashfile "$ROOT/PROPOSAL.md")
+  live=$(drive_live_attempt_ids | h12)
+  [ -n "$live" ] || live=-
+  printf '%s|%s|%s|%s|%s|%s|%s|%s' "$line" "$nd" "$na" "$ev" "$seals" "$claims" "$proposal" "$live"
 }
 
 drive_write_brief() {
@@ -2516,16 +2540,7 @@ If drive is running, only do the next cycle action. Conversational "keep looping
 5. Do not edit owned product paths. Do not write verdicts. Do not merge.
 6. Exit.
 
-Legal actions by state (CHECKs, not prose):
-
-- INVESTIGATE → dispatch the next unaudited or unscouted claim only
-- PROPOSE → write or update PROPOSAL.md only
-- PLAN with no ACTIVE item → admit one item from the approved proposal
-- PLAN with DRAFT/READY → review ITEM.md; do not dispatch a maker
-- EXECUTE idle → dispatch the maker into a worktree
-- WAIT inflight → do not start a second attempt; observe and record
-- REVIEW RETURNED → dispatch the reviewer with contract, work, and evidence (no maker rationale)
-- reviewer FIX → redispatch the maker with findings only
+Legal actions: see STATUS.md and docs/drive.md. INVESTIGATE fallback dispatches one missing claim contract. Do not implement, commit, merge, write verdicts, or flip cycle: guided.
 EOF
 }
 
@@ -2541,20 +2556,97 @@ drive_porcelain_path() {
 
 drive_path_is_program() {
   path=$1
+  # Task worktrees live under the program dir but are product work.
   case $path in
+    *worktrees|*worktrees/*) return 1 ;;
     .crucible|/*/.crucible|.crucible/*|*/.crucible/*) return 0 ;;
   esac
   return 1
 }
 
-drive_restore_product() {
+drive_product_hashes() {
   repo=$1
-  [ -n "$repo" ] && [ -d "$repo/.git" ] || return 0
   git -C "$repo" status --porcelain -uall | while IFS= read -r line; do
     [ -n "$line" ] || continue
     path=$(drive_porcelain_path "$line")
     drive_path_is_program "$path" && continue
-    if [ -f "$ROOT/.drive-porcelain-before" ] && grep -Fxq "$line" "$ROOT/.drive-porcelain-before"; then
+    if [ -f "$repo/$path" ]; then
+      printf '%s %s\n' "$path" "$(hashfile "$repo/$path")"
+    elif [ -d "$repo/$path" ]; then
+      printf '%s DIR\n' "$path"
+    fi
+  done | LC_ALL=C sort
+}
+
+drive_verdict_hashes() {
+  find "$ROOT/items" "$ROOT/claims" -type f -path '*/verdicts/*.md' 2>/dev/null \
+    | LC_ALL=C sort | while IFS= read -r f; do
+        printf '%s %s\n' "${f#"$ROOT"/}" "$(hashfile "$f")"
+      done
+}
+
+drive_worktree_hashes() {
+  [ -d "$ROOT/worktrees" ] || return 0
+  find "$ROOT/worktrees" -type f ! -path '*/.git/*' 2>/dev/null \
+    | LC_ALL=C sort | while IFS= read -r f; do
+        printf '%s %s\n' "${f#"$ROOT"/}" "$(hashfile "$f")"
+      done
+}
+
+drive_take_snapshot() {
+  repo=$1
+  d=$(drive_snap_dir)
+  rm -rf "$d"
+  mkdir -p "$d/verdicts" "$d/wt"
+  git -C "$repo" rev-parse HEAD > "$d/head"
+  if [ -f "$repo/.git/MERGE_HEAD" ]; then printf 'yes\n' > "$d/merge_head"; else printf 'no\n' > "$d/merge_head"; fi
+  git -C "$repo" status --porcelain -uall > "$d/porcelain"
+  drive_product_hashes "$repo" > "$d/product_hashes"
+  drive_verdict_hashes > "$d/verdicts_hashes"
+  drive_worktree_hashes > "$d/worktree_hashes"
+  drive_live_attempt_ids > "$d/live_ids"
+  [ -f "$ROOT/PROGRAM" ] && cp "$ROOT/PROGRAM" "$d/PROGRAM"
+  find "$ROOT/items" "$ROOT/claims" -type f -path '*/verdicts/*.md' 2>/dev/null | while IFS= read -r f; do
+    rel=${f#"$ROOT"/}
+    mkdir -p "$d/verdicts/$(dirname "$rel")"
+    cp "$f" "$d/verdicts/$rel"
+  done
+  if [ -d "$ROOT/worktrees" ]; then
+    find "$ROOT/worktrees" -type f ! -path '*/.git/*' 2>/dev/null | while IFS= read -r f; do
+      rel=${f#"$ROOT"/}
+      mkdir -p "$d/wt/$(dirname "$rel")"
+      cp "$f" "$d/wt/$rel"
+    done
+  fi
+}
+
+drive_restore_all() {
+  repo=$1
+  d=$(drive_snap_dir)
+  [ -n "$repo" ] && [ -d "$repo/.git" ] || return 0
+  if [ -f "$d/head" ]; then
+    before=$(sed -n '1p' "$d/head")
+    now=$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$before" ] && [ "$now" != "$before" ]; then
+      git -C "$repo" reset --hard "$before" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [ -f "$d/PROGRAM" ]; then
+    cp "$d/PROGRAM" "$ROOT/PROGRAM"
+  fi
+  git -C "$repo" status --porcelain -uall | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    path=$(drive_porcelain_path "$line")
+    drive_path_is_program "$path" && continue
+    if [ -f "$d/porcelain" ] && grep -Fxq "$line" "$d/porcelain"; then
+      # Same porcelain line: restore content from HEAD if hash drifted.
+      if [ -f "$repo/$path" ] && [ -f "$d/product_hashes" ]; then
+        old=$(awk -v p="$path" '$1==p {print $2; exit}' "$d/product_hashes")
+        nowh=$(hashfile "$repo/$path")
+        if [ -n "$old" ] && [ "$old" != "$nowh" ]; then
+          git -C "$repo" checkout -- "$path" >/dev/null 2>&1 || true
+        fi
+      fi
       continue
     fi
     case $line in
@@ -2562,43 +2654,86 @@ drive_restore_product() {
       *) git -C "$repo" checkout -- "$path" >/dev/null 2>&1 || true ;;
     esac
   done
+  if [ -d "$ROOT/items" ] || [ -d "$ROOT/claims" ]; then
+    find "$ROOT/items" "$ROOT/claims" -type f -path '*/verdicts/*.md' 2>/dev/null | while IFS= read -r f; do
+      rel=${f#"$ROOT"/}
+      [ -f "$d/verdicts/$rel" ] || rm -f "$f"
+    done
+    if [ -d "$d/verdicts" ]; then
+      find "$d/verdicts" -type f | while IFS= read -r f; do
+        rel=${f#"$d/verdicts/"}
+        mkdir -p "$(dirname "$ROOT/$rel")"
+        cp "$f" "$ROOT/$rel"
+      done
+    fi
+  fi
+  if [ -d "$ROOT/worktrees" ]; then
+    find "$ROOT/worktrees" -type f ! -path '*/.git/*' 2>/dev/null | while IFS= read -r f; do
+      rel=${f#"$ROOT"/}
+      [ -f "$d/wt/$rel" ] || rm -f "$f"
+    done
+  fi
+  if [ -d "$d/wt" ]; then
+    find "$d/wt" -type f | while IFS= read -r f; do
+      rel=${f#"$d/wt/"}
+      mkdir -p "$(dirname "$ROOT/$rel")"
+      cp "$f" "$ROOT/$rel"
+    done
+  fi
 }
 
 drive_check_discipline() {
   repo=$1
+  d=$(drive_snap_dir)
   [ -n "$repo" ] && [ -d "$repo" ] || return 0
+  if ! uses_guided_cycle; then
+    drive_restore_all "$repo"
+    die "refused: coordinator removed cycle: guided"
+  fi
+  if [ -f "$d/head" ]; then
+    before=$(sed -n '1p' "$d/head")
+    now=$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)
+    if [ -n "$before" ] && [ "$now" != "$before" ]; then
+      drive_restore_all "$repo"
+      die "refused: coordinator committed or merged product history"
+    fi
+  fi
   if [ -f "$repo/.git/MERGE_HEAD" ]; then
-    drive_restore_product "$repo"
+    drive_restore_all "$repo"
     die "refused: coordinator merged — drive does not allow merge"
   fi
-  git -C "$repo" status --porcelain -uall > "$ROOT/.drive-porcelain-after"
-  : > "$ROOT/.drive-product-hits.$$"
+  git -C "$repo" status --porcelain -uall > "$d/porcelain_after"
+  : > "$d/product_hits"
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     path=$(drive_porcelain_path "$line")
     drive_path_is_program "$path" && continue
-    if [ -f "$ROOT/.drive-porcelain-before" ] && grep -Fxq "$line" "$ROOT/.drive-porcelain-before"; then
+    if [ -f "$d/porcelain" ] && grep -Fxq "$line" "$d/porcelain"; then
+      if [ -f "$repo/$path" ] && [ -f "$d/product_hashes" ]; then
+        old=$(awk -v p="$path" '$1==p {print $2; exit}' "$d/product_hashes")
+        nowh=$(hashfile "$repo/$path")
+        if [ -n "$old" ] && [ "$old" != "$nowh" ]; then
+          printf '%s\n' "$path" >> "$d/product_hits"
+        fi
+      fi
       continue
     fi
-    printf '%s\n' "$path" >> "$ROOT/.drive-product-hits.$$"
-  done < "$ROOT/.drive-porcelain-after"
-  if [ -s "$ROOT/.drive-product-hits.$$" ]; then
-    hit=$(head -1 "$ROOT/.drive-product-hits.$$")
-    rm -f "$ROOT/.drive-product-hits.$$" "$ROOT/.drive-porcelain-after"
-    drive_restore_product "$repo"
+    printf '%s\n' "$path" >> "$d/product_hits"
+  done < "$d/porcelain_after"
+  if [ -s "$d/product_hits" ]; then
+    hit=$(head -1 "$d/product_hits")
+    drive_restore_all "$repo"
     die "refused: coordinator edited owned product path: $hit"
   fi
-  rm -f "$ROOT/.drive-product-hits.$$" "$ROOT/.drive-porcelain-after"
-  if [ -d "$ROOT/items" ]; then
-    find "$ROOT/items" -path '*/verdicts/*.md' -type f 2>/dev/null | LC_ALL=C sort > "$ROOT/.drive-verdicts-now.$$"
-    if [ -f "$ROOT/.drive-verdicts-before" ]; then
-      if ! cmp -s "$ROOT/.drive-verdicts-before" "$ROOT/.drive-verdicts-now.$$"; then
-        rm -f "$ROOT/.drive-verdicts-now.$$"
-        drive_restore_product "$repo"
-        die "refused: coordinator wrote a verdict file"
-      fi
-    fi
-    rm -f "$ROOT/.drive-verdicts-now.$$"
+  drive_verdict_hashes > "$d/verdicts_after"
+  if ! cmp -s "$d/verdicts_hashes" "$d/verdicts_after"; then
+    drive_restore_all "$repo"
+    die "refused: coordinator wrote a verdict file"
+  fi
+  drive_worktree_hashes > "$d/worktree_after"
+  if ! cmp -s "$d/worktree_hashes" "$d/worktree_after"; then
+    drive_restore_all "$repo"
+    die "refused: coordinator wrote a task worktree"
   fi
 }
 
@@ -2764,17 +2899,24 @@ cmd_drive() {
       return 0
     fi
     mkdir -p "$ROOT/items"
-    find "$ROOT/items" -path '*/verdicts/*.md' -type f 2>/dev/null | LC_ALL=C sort > "$ROOT/.drive-verdicts-before"
-    git -C "$repo" status --porcelain -uall > "$ROOT/.drive-porcelain-before"
-    before_live=$(drive_live_attempt_count)
+    drive_take_snapshot "$repo"
     before_disp=0
     [ -d "$ROOT/claims" ] && before_disp=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
     drive_invoke_coordinator "$repo"
     drive_check_discipline "$repo"
     if [ "$state" = WAIT ]; then
-      after_live=$(drive_live_attempt_count)
-      if [ "$after_live" -gt "$before_live" ]; then
-        die "refused: WAIT inflight — do not start a second attempt"
+      d=$(drive_snap_dir)
+      drive_live_attempt_ids > "$d/live_ids_after"
+      extra=
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        grep -Fxq "$id" "$d/live_ids" 2>/dev/null && continue
+        extra=$id
+        break
+      done < "$d/live_ids_after"
+      if [ -n "$extra" ]; then
+        drive_restore_all "$repo"
+        die "refused: WAIT inflight — do not start a second attempt ($extra)"
       fi
     fi
     after_disp=0
