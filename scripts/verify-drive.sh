@@ -431,6 +431,16 @@ EOF
 expect 'one TRUE stays INVESTIGATE not PLAN' '^NEXT INVESTIGATE ' "$P/crucible" cycle
 refuses 'admit still needs two TRUEs' 'TRUE verdicts' \
   "$P/crucible" claim admit "$cn" sprint-create
+# Second-kind STALE supersedes the lone TRUE for investigation (not for admit).
+"$P/crucible" run-claim "$cn" a2 -- sh -c 'echo now exists' >/dev/null
+"$P/crucible" dispatch "$cn" claim-auditor a2 >/dev/null
+seal_claim "$P" a2
+"$P/crucible" claim verdict "$cn" a2 STALE >/dev/null
+out=$("$P/crucible" cycle 2>&1) || { bad "TRUE+STALE cycle refused: $out"; out=; }
+printf '%s\n' "$out" | grep -E -q '^NEXT INVESTIGATE ' \
+  && bad "TRUE+STALE should not stay INVESTIGATE: $out" || ok
+refuses 'TRUE+STALE still cannot admit' 'TRUE verdicts' \
+  "$P/crucible" claim admit "$cn" sprint-create
 
 # --- missing coordinator command refuses instead of STOP no-progress ---
 repo=$(setup_repo)
