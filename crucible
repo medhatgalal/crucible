@@ -2370,6 +2370,37 @@ claim_true_bar_met() {
   [ "$t" -ge "$min_a" ] && [ "$kn" -ge "$MIN_KINDS" ]
 }
 
+# A sealed FALSE or STALE from a distinct agent means the claim is not current work,
+# even if an earlier TRUE remains on file (write-once verdicts cannot be rewritten).
+claim_true_superseded() {
+  cn=$1
+  vd="$ROOT/claims/$cn/verdicts"
+  [ -d "$vd" ] || return 1
+  true_agents=""
+  for vf in "$vd"/*.md; do
+    [ -f "$vf" ] || continue
+    [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] || continue
+    agent=${vf##*/}; agent=${agent%.md}
+    if uses_guided_cycle; then
+      claim_agent_independence_ok "$cn" "$agent" || continue
+    fi
+    true_agents="$true_agents $agent"
+  done
+  [ -n "$true_agents" ] || return 1
+  for vf in "$vd"/*.md; do
+    [ -f "$vf" ] || continue
+    word=$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)
+    case $word in FALSE|STALE) : ;; *) continue ;; esac
+    agent=${vf##*/}; agent=${agent%.md}
+    case " $true_agents " in *" $agent "*) continue ;; esac
+    if uses_guided_cycle; then
+      claim_agent_independence_ok "$cn" "$agent" || continue
+    fi
+    return 0
+  done
+  return 1
+}
+
 cycle_investigation_state() {
   f=$(claims_file)
   [ -f "$f" ] || { printf 'EMPTY'; return; }
@@ -2395,8 +2426,14 @@ cycle_investigation_state() {
     if [ "$truth" -gt 0 ]; then
       scout=$(sed -n "/^### C$i /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
       [ -n "$scout" ] || { printf 'NEEDS_SCOUT'; return; }
-      # Admit requires MIN_AUDITORS TRUEs. Do not report COMPLETE/PLAN while admit would refuse.
-      claim_true_bar_met "C$i" || { printf 'NEEDS_AUDIT'; return; }
+      # Admit-ready TRUEs need the admit bar. FULLY-EXISTS or a later STALE/FALSE
+      # means the claim is not new work — do not demand a second TRUE.
+      if ! claim_true_superseded "C$i"; then
+        case $scout in
+          ABSENT|PARTLY-EXISTS)
+            claim_true_bar_met "C$i" || { printf 'NEEDS_AUDIT'; return; } ;;
+        esac
+      fi
     fi
     i=$((i + 1))
   done

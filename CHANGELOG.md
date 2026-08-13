@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.4] - 2026-08-13
+
+### STALE/FALSE resolves a lone TRUE for investigation
+
+- A sealed STALE or FALSE from a **distinct** auditor means the claim is not current work.
+  `cycle` no longer stays INVESTIGATE demanding a second TRUE (admit still needs 2 TRUEs).
+- TRUE + scout `FULLY-EXISTS` also does not demand a second TRUE (nothing to admit).
+
 ## [1.3.3] - 2026-08-13
 
 ### Cycle/admit bar and drive invoke
