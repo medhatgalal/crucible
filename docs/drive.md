@@ -46,24 +46,24 @@ must actually launch the worker named in the contract.
 | PLAN, no ACTIVE item | Invokes coordinator; they may admit one item. Parent does not invent a slug | RULE |
 | PLAN, DRAFT/READY | Invokes coordinator; do not dispatch a maker. Parent does not dispatch a reviewer here (judge dispatch requires REVIEW) | RULE |
 | EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker (prints the invocation; does not start the process) | fallback |
-| WAIT inflight | Does not start a second live attempt (global DISPATCHED/RUNNING/OVERDUE count) | CHECK (partial) |
+| WAIT inflight | Refuses a new live attempt id (DISPATCHED/RUNNING/OVERDUE) that was not in the pre-tick set | CHECK |
 | REVIEW RETURNED | If the inflight maker attempt is RETURNED and the item is REVIEW, parent may `dispatch` the judge | fallback |
 | reviewer FIX | Not implemented as a parent fallback | RULE |
 
-### What the product-path CHECK actually covers
+### What the implement CHECK covers
 
 Refuse + restore when the coordinator process, during a tick:
 
-- adds or changes **uncommitted** porcelain outside `.crucible/` (compared to the pre-tick snapshot)
-- leaves `MERGE_HEAD` (merge in progress)
-- creates a **new** `items/*/verdicts/*.md` path
+- moves product `HEAD` (`git commit` or a completed merge) or leaves `MERGE_HEAD`
+- adds product porcelain outside `.crucible/`, or **changes the contents** of an already-dirty
+  product file (same porcelain line is not enough to hide it)
+- writes under `worktrees/` (task worktrees are product work even though they sit in `.crucible/`)
+- creates or **overwrites** `items/*/verdicts/*.md` or `claims/*/verdicts/*.md`
+- deletes `cycle: guided` from `PROGRAM`
+- introduces a **new** live attempt id while the cycle line is WAIT inflight
 
-Not covered (RULE, not CHECK): `git commit` of product files, a **completed** merge, edits that do
-not change the porcelain line, writes inside `.crucible/` worktrees, overwriting an existing
-verdict file, claim verdicts under `claims/*/verdicts/`.
-
-Maker work on a `TARGET` repo during a drive tick looks like a product-path write and is refused.
-That is why drive is a **dispatch babysitter**, not a make/review runner.
+Drive is still a **dispatch babysitter**, not a make/review runner: it does not invoke makers.
+A legitimate maker `TARGET` write during a coordinator tick is refused for the same reason.
 
 ## STATUS.md
 

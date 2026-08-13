@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.2] - 2026-08-13
+
+### Drive review P1s
+
+- Product `HEAD` movement (`git commit` / completed merge) refuses; `HEAD` is reset to the
+  pre-tick snapshot. In-progress `MERGE_HEAD` still refuses.
+- Already-dirty product files are content-hashed; same porcelain line with new bytes refuses.
+- Task worktree writes under `worktrees/` refuse (no longer hidden as `.crucible/*`).
+- Verdict CHECK hashes `items/*/verdicts` and `claims/*/verdicts` (new files and overwrites).
+- WAIT inflight compares live attempt **ids**, not a global count.
+- `cycle: guided` flip during a tick refuses and restores `PROGRAM`.
+- Progress token includes seal files, CLAIMS/PROPOSAL hashes, and live attempt ids so a
+  seal-only WAIT tick is not a false STOP.
+- `verify-drive.sh` covers commit, dirty-hash, worktree, verdicts, PROGRAM flip, WAIT second
+  attempt, and seal-as-progress.
+
 ## [1.3.1] - 2026-08-13
 
 ### Drive honesty (adversarial review)
