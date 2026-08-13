@@ -84,6 +84,12 @@ a RULE into a CHECK, do it and say so in the lesson.
     verbally while the written record said otherwise; an automated reviewer read the record,
     correctly concluded the work was off-plan, and stopped it two minutes before it would have
     succeeded.
+21. **CHECK in guided+managed drive — The coordinator cannot skip cycle or implement.**
+    `drive` always runs `cycle` first and rewrites `STATUS.md`. `WAIT PANEL`, `WAIT APPROVAL`,
+    `ESCALATE`, and `DONE` stop for a human (never auto-approved). After a coordinator process,
+    edits to owned product paths, verdict writes, and merges are refused. INVESTIGATE ticks
+    dispatch the next unaudited/unscouted claim only; inflight WAIT does not start a second
+    attempt. Conversational “keep looping” is not a waiver to implement.
 21. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
     and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained
     resume summary. After a restart or compaction, re-read the recorded state and `git log`; never

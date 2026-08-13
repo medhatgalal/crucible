@@ -12,7 +12,9 @@ CONFIGURE → WAIT PANEL → INTAKE → INVESTIGATE ⇄ challenge → PROPOSE �
 ```
 
 `crucible cycle` derives the current position from repository artifacts. The coordinating agent uses
-the lower-level protocol; the operator does not advance phases.
+the lower-level protocol; the operator does not advance phases. `crucible drive` is the outer loop
+that re-runs cycle, invokes the coordinator once per tick, and stops for human gates so a chat
+cannot skip cycle or implement.
 
 ## CONFIGURE and WAIT PANEL
 

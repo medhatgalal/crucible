@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.0] - 2026-08-13
+
+### Drive outer loop
+
+- `crucible drive` / `drive tick` for guided+managed cycles: always `cycle` first, rewrite
+  `STATUS.md`, invoke the cast coordinator in a new process, then `cycle` again.
+- Human gates (`WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, `DONE`) print the exact action and
+  exit; never auto-approve.
+- CHECK: coordinator edits to owned product paths, verdict writes, and merges are refused
+  (product tree restored). INVESTIGATE ticks dispatch the next unaudited/unscouted claim only.
+  Inflight WAIT cannot start a second attempt.
+- Maker contracts include the inner falsifier loop (this item only; no admit; no merge).
+- `docs/drive.md`; START.md lead sentence; seeded LESSONS.md line; `verify-drive.sh`.
+
 ## [1.2.2] - 2026-08-12
 
 ### Panel bind is operational (not display-only)

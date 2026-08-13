@@ -17,6 +17,9 @@ has never failed proves nothing.
 Record every check with `crucible run <item> <you> -- <cmd>`. Do not hand-write anything into
 evidence/; the gate refuses it. Do not write a verdict; that is not your role and the gate refuses it.
 
+Inside EXECUTE for this admitted item you may run the falsifier until it passes, or stop after one
+infrastructure retry. Do not admit the next backlog row. Do not merge.
+
 It is always acceptable to stop. If the task needs a decision you were not given, or you have been
 reading files without progress, return BLOCKED or NEEDS_CONTEXT with what you tried. Bad work is worse
 than no work.
