@@ -26,7 +26,8 @@ A cold reader of this repository: start at [BOOTSTRAP.md](../BOOTSTRAP.md) to in
    read `START.md` and `STATUS.md`, run `cycle`, do the single next legal orchestrator action,
    write nothing a maker/reviewer/auditor should write, exit.
 4. After the child exits, `cycle` again. Stop on no-progress (same status and no new
-   evidence/dispatch twice), an overdue attempt, or independence STOP.
+   evidence/dispatch twice), an overdue attempt, or independence STOP. A coordinator
+   command that exits non-zero (missing adapter, ACP crash) is a **refuse**, not STOP.
 
 ```text
 .crucible/<program>/crucible drive        # loop until a human gate or stop

@@ -398,5 +398,51 @@ set -e
 printf '%s\n' "$out" | grep -q 'STOP — no progress' \
   && bad "seal-only WAIT tick should not false-STOP" || ok
 
+# --- one TRUE is not PLAN/admit-ready ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Need a real gap.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'a real gap' 'Need a real gap.')
+"$P/crucible" run-claim "$cn" a1 -- sh -c 'echo checked' >/dev/null
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+seal_claim "$P" a1
+"$P/crucible" claim verdict "$cn" a1 TRUE >/dev/null
+"$P/crucible" run-claim "$cn" a1 -- sh -c 'echo searched' >/dev/null
+"$P/crucible" dispatch "$cn" scout a1 >/dev/null
+seal_claim "$P" a1
+"$P/crucible" claim scout "$cn" ABSENT a1 >/dev/null
+cat > "$P/PROPOSAL.md" <<'EOF'
+# Proposal
+## Verified problem
+A real gap exists.
+## Proposed outcome
+One item.
+## Non-goals
+None.
+## Backlog
+sprint-create.
+## Verification
+Two TRUEs required.
+EOF
+expect 'one TRUE stays INVESTIGATE not PLAN' '^NEXT INVESTIGATE ' "$P/crucible" cycle
+refuses 'admit still needs two TRUEs' 'TRUE verdicts' \
+  "$P/crucible" claim admit "$cn" sprint-create
+
+# --- missing coordinator command refuses instead of STOP no-progress ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P" 'python3 /no/such/acp-brief.py grok {BRIEF}'
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+refuses 'failed coordinator invoke is refused' 'invoke failed|No such file|can.t open' \
+  "$P/crucible" drive tick
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
