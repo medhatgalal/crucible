@@ -6,6 +6,7 @@
 #   crucible cycle problem FILE            bind the cycle to a problem report
 #   crucible cycle approve-panel           record approval of the agent panel
 #   crucible cycle approve                 record approval of the current proposal
+#   crucible drive [tick]                  Ralph-style outer loop (guided+managed)
 #   crucible help protocol                 show the agent-facing protocol primitives
 #
 # Roles come from the brief an agent receives, never from which agent it is. Any CLI
@@ -49,6 +50,7 @@ Crucible runs one durable problem-to-done cycle for a coordinating agent.
   crucible cycle problem FILE          bind a problem report to the cycle
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
+  crucible drive [tick]                Ralph-style outer loop: cycle, one legal action, stop for humans
   crucible help protocol               show internal agent protocol primitives
 
 Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
@@ -1399,6 +1401,9 @@ cmd_dispatch_managed() (
       else
         printf 'Write only under `%s/work/`.\n' "$d"
       fi
+      printf '\n## Maker inner loop\n\n'
+      printf 'Run the item falsifier until it passes, or stop after one infrastructure retry.\n'
+      printf 'Do not admit the next backlog row. Do not merge.\n'
     else
       printf '\n## Review independence\n\nRelation to recorded maker families: `%s`.\n' \
         "$(review_relation "$slug" "$agent")"
@@ -2393,6 +2398,418 @@ cycle_unadmitted_work() {
   return 1
 }
 
+drive_product_repo() {
+  sed -n 's/^repo: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1
+}
+
+drive_coordinator_agent() {
+  af=$(assign_file)
+  [ -f "$af" ] || return 1
+  awk -F '\t' '$1=="coordinator" && $2!=""{print $2; exit}' "$af"
+}
+
+drive_cast_agents() {
+  role=$1
+  af=$(assign_file)
+  [ -f "$af" ] || return 0
+  awk -F '\t' -v r="$role" '$1==r && $2!=""{print $2}' "$af"
+}
+
+drive_state_name() {
+  line=$1
+  case $line in
+    NEXT\ CONFIGURE*) printf 'CONFIGURE' ;;
+    WAIT\ PANEL*) printf 'WAIT_PANEL' ;;
+    NEXT\ INTAKE*) printf 'INTAKE' ;;
+    NEXT\ INVESTIGATE*) printf 'INVESTIGATE' ;;
+    NEXT\ PROPOSE*) printf 'PROPOSE' ;;
+    WAIT\ APPROVAL*) printf 'WAIT_APPROVAL' ;;
+    NEXT\ PLAN*) printf 'PLAN' ;;
+    NEXT\ EXECUTE*) printf 'EXECUTE' ;;
+    NEXT\ REVIEW*) printf 'REVIEW' ;;
+    WAIT\ *) printf 'WAIT' ;;
+    ESCALATE*) printf 'ESCALATE' ;;
+    DONE*) printf 'DONE' ;;
+    *) printf 'UNKNOWN' ;;
+  esac
+}
+
+drive_human_gate() {
+  case $1 in
+    WAIT_PANEL) printf 'approve-panel' ;;
+    WAIT_APPROVAL) printf 'approve' ;;
+    ESCALATE) printf 'escalate' ;;
+    DONE) printf 'done' ;;
+    *) printf 'none' ;;
+  esac
+}
+
+drive_last_evidence() {
+  last=
+  if [ -d "$ROOT/claims" ] || [ -d "$ROOT/items" ]; then
+    last=$(find "$ROOT/claims" "$ROOT/items" -type f -path '*/evidence/*' 2>/dev/null \
+      | LC_ALL=C sort | while IFS= read -r f; do
+          ts=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || printf '0')
+          printf '%s\t%s\n' "$ts" "$f"
+        done | LC_ALL=C sort -n | tail -1 | cut -f2-)
+  fi
+  [ -n "$last" ] && printf '%s' "${last#"$ROOT"/}" || printf '-'
+}
+
+drive_active_item() {
+  uses_managed_lifecycle || { printf '-'; return; }
+  [ -f "$ROOT/STATE.tsv" ] || { printf '-'; return; }
+  awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv"
+  :
+}
+
+drive_inflight() {
+  slug=$(drive_active_item)
+  [ -n "$slug" ] && [ "$slug" != - ] || { printf '-'; return; }
+  inf=$(state_value "$slug" 6 2>/dev/null || true)
+  [ -n "$inf" ] && printf '%s' "$inf" || printf '-'
+}
+
+write_cycle_status() {
+  line=$(cmd_cycle_status)
+  state=$(drive_state_name "$line")
+  item=$(drive_active_item); [ -n "$item" ] || item=-
+  inflight=$(drive_inflight); [ -n "$inflight" ] || inflight=-
+  evidence=$(drive_last_evidence)
+  gate=$(drive_human_gate "$state")
+  tmp="$ROOT/.STATUS.md.$$.tmp"
+  {
+    printf '# STATUS\n\n'
+    printf 'line: %s\n' "$line"
+    printf 'state: %s\n' "$state"
+    printf 'active-item: %s\n' "$item"
+    printf 'inflight-attempt: %s\n' "$inflight"
+    printf 'last-evidence: %s\n' "$evidence"
+    printf 'next-human-gate: %s\n' "$gate"
+    printf 'updated-epoch: %s\n' "$(date +%s)"
+    printf '\nRead this after `cycle`. If drive is running, perform only the single next legal orchestrator action.\n'
+  } > "$tmp"
+  mv "$tmp" "$ROOT/STATUS.md"
+  printf '%s\n' "$line"
+}
+
+drive_progress_token() {
+  line=$1
+  nd=0; na=0
+  [ -d "$ROOT/claims" ] && nd=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
+  [ -d "$ROOT/attempts" ] && na=$(find "$ROOT/attempts" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+  ev=$(drive_last_evidence)
+  printf '%s|%s|%s|%s' "$line" "$nd" "$na" "$ev"
+}
+
+drive_write_brief() {
+  self=$(self_path)
+  cat > "$ROOT/DRIVE.BRIEF.md" <<EOF
+# DRIVE BRIEF
+
+If drive is running, only do the next cycle action. Conversational "keep looping" is not a waiver to implement.
+
+1. Read START.md and STATUS.md.
+2. Run: $self cycle
+3. Perform only the single next legal orchestrator action for the current state.
+4. Write nothing a maker, reviewer, or auditor should write.
+5. Do not edit owned product paths. Do not write verdicts. Do not merge.
+6. Exit.
+
+Legal actions by state (CHECKs, not prose):
+
+- INVESTIGATE → dispatch the next unaudited or unscouted claim only
+- PROPOSE → write or update PROPOSAL.md only
+- PLAN with no ACTIVE item → admit one item from the approved proposal
+- PLAN with DRAFT/READY → review ITEM.md; do not dispatch a maker
+- EXECUTE idle → dispatch the maker into a worktree
+- WAIT inflight → do not start a second attempt; observe and record
+- REVIEW RETURNED → dispatch the reviewer with contract, work, and evidence (no maker rationale)
+- reviewer FIX → redispatch the maker with findings only
+EOF
+}
+
+drive_porcelain_path() {
+  # git status --porcelain: XY<space>path  or  XY<space>old -> new
+  line=$1
+  rest=${line#?? }
+  case $rest in
+    *' -> '*) printf '%s' "${rest#* -> }" ;;
+    *) printf '%s' "$rest" ;;
+  esac
+}
+
+drive_path_is_program() {
+  path=$1
+  case $path in
+    .crucible|/*/.crucible|.crucible/*|*/.crucible/*) return 0 ;;
+  esac
+  return 1
+}
+
+drive_restore_product() {
+  repo=$1
+  [ -n "$repo" ] && [ -d "$repo/.git" ] || return 0
+  git -C "$repo" status --porcelain -uall | while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    path=$(drive_porcelain_path "$line")
+    drive_path_is_program "$path" && continue
+    if [ -f "$ROOT/.drive-porcelain-before" ] && grep -Fxq "$line" "$ROOT/.drive-porcelain-before"; then
+      continue
+    fi
+    case $line in
+      "?? "*) rm -rf "$repo/$path" ;;
+      *) git -C "$repo" checkout -- "$path" >/dev/null 2>&1 || true ;;
+    esac
+  done
+}
+
+drive_check_discipline() {
+  repo=$1
+  [ -n "$repo" ] && [ -d "$repo" ] || return 0
+  if [ -f "$repo/.git/MERGE_HEAD" ]; then
+    drive_restore_product "$repo"
+    die "refused: coordinator merged — drive does not allow merge"
+  fi
+  git -C "$repo" status --porcelain -uall > "$ROOT/.drive-porcelain-after"
+  : > "$ROOT/.drive-product-hits.$$"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    path=$(drive_porcelain_path "$line")
+    drive_path_is_program "$path" && continue
+    if [ -f "$ROOT/.drive-porcelain-before" ] && grep -Fxq "$line" "$ROOT/.drive-porcelain-before"; then
+      continue
+    fi
+    printf '%s\n' "$path" >> "$ROOT/.drive-product-hits.$$"
+  done < "$ROOT/.drive-porcelain-after"
+  if [ -s "$ROOT/.drive-product-hits.$$" ]; then
+    hit=$(head -1 "$ROOT/.drive-product-hits.$$")
+    rm -f "$ROOT/.drive-product-hits.$$" "$ROOT/.drive-porcelain-after"
+    drive_restore_product "$repo"
+    die "refused: coordinator edited owned product path: $hit"
+  fi
+  rm -f "$ROOT/.drive-product-hits.$$" "$ROOT/.drive-porcelain-after"
+  if [ -d "$ROOT/items" ]; then
+    find "$ROOT/items" -path '*/verdicts/*.md' -type f 2>/dev/null | LC_ALL=C sort > "$ROOT/.drive-verdicts-now.$$"
+    if [ -f "$ROOT/.drive-verdicts-before" ]; then
+      if ! cmp -s "$ROOT/.drive-verdicts-before" "$ROOT/.drive-verdicts-now.$$"; then
+        rm -f "$ROOT/.drive-verdicts-now.$$"
+        drive_restore_product "$repo"
+        die "refused: coordinator wrote a verdict file"
+      fi
+    fi
+    rm -f "$ROOT/.drive-verdicts-now.$$"
+  fi
+}
+
+drive_has_claim_dispatch() {
+  cn=$1; role=$2; agent=$3
+  [ -d "$ROOT/claims/$cn/dispatches" ] || return 1
+  for f in "$ROOT/claims/$cn/dispatches/"*-"$role"-"$agent".md; do
+    [ -f "$f" ] && return 0
+  done
+  return 1
+}
+
+drive_investigate_dispatch() {
+  f=$(claims_file)
+  [ -f "$f" ] || return 1
+  total=$(grep -c '^### C' "$f" 2>/dev/null || true); total=${total:-0}
+  [ "$total" -gt 0 ] || return 1
+  i=1
+  while [ "$i" -le "$total" ]; do
+    cn="C$i"
+    for agent in $(drive_cast_agents claim-auditor); do
+      if ! drive_has_claim_dispatch "$cn" claim-auditor "$agent"; then
+        cmd_dispatch "$cn" claim-auditor "$agent"
+        return 0
+      fi
+    done
+    scout=$(sed -n "/^### $cn /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
+    truth=0
+    if [ -d "$ROOT/claims/$cn/verdicts" ]; then
+      grep -l '^CLAIM-VERDICT: TRUE$' "$ROOT/claims/$cn/verdicts"/*.md >/dev/null 2>&1 && truth=1 || true
+    fi
+    if [ "$truth" -eq 1 ] && [ -z "$scout" ]; then
+      scout_agent=$(drive_cast_agents scout | head -1)
+      [ -n "$scout_agent" ] || scout_agent=$(drive_cast_agents claim-auditor | head -1)
+      if [ -n "$scout_agent" ] && ! drive_has_claim_dispatch "$cn" scout "$scout_agent"; then
+        cmd_dispatch "$cn" scout "$scout_agent"
+        return 0
+      fi
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+drive_live_attempt_count() {
+  n=0
+  [ -d "$ROOT/attempts" ] || { printf '0'; return; }
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    st=$(attempt_state "$id")
+    case $st in DISPATCHED|RUNNING|OVERDUE) n=$((n + 1)) ;; esac
+  done
+  printf '%s' "$n"
+}
+
+drive_perform_legal() {
+  state=$1
+  line=$2
+  case $state in
+    INVESTIGATE)
+      drive_investigate_dispatch || true
+      ;;
+    WAIT)
+      # CHECK: a second live attempt must not appear because of drive.
+      :
+      ;;
+    EXECUTE)
+      slug=$(printf '%s\n' "$line" | awk '{print $3}')
+      item=$(drive_active_item)
+      [ -n "$slug" ] && [ "$slug" != — ] || slug=$item
+      inflight=$(drive_inflight)
+      if [ -n "$slug" ] && [ "$slug" != - ] && { [ -z "$inflight" ] || [ "$inflight" = - ]; }; then
+        maker=$(drive_cast_agents maker | head -1)
+        if [ -n "$maker" ] && [ "$(state_value "$slug" 3 2>/dev/null || true)" = BUILD ]; then
+          cmd_dispatch "$slug" maker "$maker" || true
+        fi
+      fi
+      ;;
+    REVIEW)
+      slug=$(printf '%s\n' "$line" | awk '{print $3}')
+      item=$(drive_active_item)
+      [ -n "$slug" ] && [ "$slug" != — ] || slug=$item
+      if [ -n "$slug" ] && [ "$slug" != - ]; then
+        inflight=$(drive_inflight)
+        if [ -n "$inflight" ] && [ "$inflight" != - ]; then
+          ast=$(attempt_state "$inflight" 2>/dev/null || true)
+          role=$(attempt_meta "$inflight" 5 2>/dev/null || true)
+          if [ "$ast" = RETURNED ] && [ "$role" = maker ]; then
+            reviewer=$(drive_cast_agents reviewer | head -1)
+            [ -z "$reviewer" ] && reviewer=$(drive_cast_agents judge | head -1)
+            if [ -n "$reviewer" ] && [ "$(state_value "$slug" 3 2>/dev/null || true)" = REVIEW ]; then
+              cmd_dispatch "$slug" judge "$reviewer" || true
+            fi
+          fi
+        fi
+      fi
+      ;;
+  esac
+}
+
+drive_print_human() {
+  state=$1
+  line=$2
+  self=$(self_path)
+  case $state in
+    WAIT_PANEL)
+      printf 'HUMAN — approve the agent panel: %s cycle approve-panel\n' "$self" ;;
+    WAIT_APPROVAL)
+      printf 'HUMAN — approve the current proposal: %s cycle approve\n' "$self" ;;
+    ESCALATE)
+      printf 'HUMAN — %s\n' "$line" ;;
+    DONE)
+      printf 'HUMAN — cycle is DONE; preview cleanup: %s cycle clean --dry-run\n' "$self" ;;
+  esac
+}
+
+drive_is_human_gate() {
+  case $1 in WAIT_PANEL|WAIT_APPROVAL|ESCALATE|DONE) return 0 ;; *) return 1 ;; esac
+}
+
+drive_invoke_coordinator() {
+  repo=$1
+  agent=$(drive_coordinator_agent) || agent=
+  [ -n "$agent" ] || return 0
+  drive_write_brief
+  cmd=$(invocation "$agent" "$ROOT/DRIVE.BRIEF.md")
+  case $cmd in
+    '(no command registered'*|'') return 0 ;;
+  esac
+  ( cd "$repo" && sh -c "$cmd" ) || true
+}
+
+cmd_drive() {
+  uses_guided_cycle || die 'drive requires a guided cycle'
+  uses_managed_lifecycle || die 'drive requires managed lifecycle behavior'
+  sub=${1:-loop}
+  case $sub in
+    tick|loop|'') : ;;
+    *) die 'usage: crucible drive [tick|loop]' ;;
+  esac
+  [ $# -eq 0 ] || shift
+  [ $# -eq 0 ] || die 'usage: crucible drive [tick|loop]'
+  mkdir "$ROOT/.drive.lock" 2>/dev/null || die 'drive already running'
+  # shellcheck disable=SC2329
+  drive_unlock() { rmdir "$ROOT/.drive.lock" 2>/dev/null || true; }
+  trap 'drive_unlock' 0 1 2 15
+  max=${CRUCIBLE_DRIVE_MAX:-32}
+  posint "$max" || die 'CRUCIBLE_DRIVE_MAX must be a positive integer'
+  n=0
+  while :; do
+    n=$((n + 1))
+    [ "$n" -le "$max" ] || die "drive stopped: iteration cap $max"
+    repo=$(drive_product_repo)
+    [ -n "$repo" ] && [ -d "$repo" ] || die 'drive requires PROGRAM repo:'
+    line=$(write_cycle_status)
+    state=$(drive_state_name "$line")
+    if drive_is_human_gate "$state"; then
+      drive_print_human "$state" "$line"
+      drive_unlock; trap - 0 1 2 15
+      return 0
+    fi
+    mkdir -p "$ROOT/items"
+    find "$ROOT/items" -path '*/verdicts/*.md' -type f 2>/dev/null | LC_ALL=C sort > "$ROOT/.drive-verdicts-before"
+    git -C "$repo" status --porcelain -uall > "$ROOT/.drive-porcelain-before"
+    before_live=$(drive_live_attempt_count)
+    before_disp=0
+    [ -d "$ROOT/claims" ] && before_disp=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
+    drive_invoke_coordinator "$repo"
+    drive_check_discipline "$repo"
+    if [ "$state" = WAIT ]; then
+      after_live=$(drive_live_attempt_count)
+      if [ "$after_live" -gt "$before_live" ]; then
+        die "refused: WAIT inflight — do not start a second attempt"
+      fi
+    fi
+    after_disp=0
+    [ -d "$ROOT/claims" ] && after_disp=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$after_disp" -le "$before_disp" ]; then
+      drive_perform_legal "$state" "$line"
+    fi
+    line2=$(write_cycle_status)
+    state2=$(drive_state_name "$line2")
+    token=$(drive_progress_token "$line2")
+    prev=
+    [ -f "$ROOT/DRIVE.state" ] && prev=$(sed -n 's/^token: //p' "$ROOT/DRIVE.state" | head -1)
+    stalls=0
+    [ -f "$ROOT/DRIVE.state" ] && stalls=$(sed -n 's/^stalls: //p' "$ROOT/DRIVE.state" | head -1)
+    [ -n "$stalls" ] || stalls=0
+    if [ -n "$prev" ] && [ "$prev" = "$token" ]; then
+      stalls=$((stalls + 1))
+    else
+      stalls=0
+    fi
+    printf 'token: %s\nstalls: %s\n' "$token" "$stalls" > "$ROOT/DRIVE.state"
+    if [ "$stalls" -ge 1 ]; then
+      printf 'STOP — no progress (same status and no new evidence twice)\n'
+      drive_unlock; trap - 0 1 2 15
+      return 0
+    fi
+    if drive_is_human_gate "$state2"; then
+      drive_print_human "$state2" "$line2"
+      drive_unlock; trap - 0 1 2 15
+      return 0
+    fi
+    case $sub in
+      tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
+    esac
+  done
+}
+
 cmd_cycle_status() {
   # Guided cycles require panel configure/approval before investigation.
   if uses_guided_cycle; then
@@ -2549,7 +2966,7 @@ EOF
 cmd_cycle() {
   sub=${1:-status}; [ $# -eq 0 ] || shift
   case $sub in
-    status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; cmd_cycle_status ;;
+    status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; write_cycle_status ;;
     problem)
       src=${1:-}; [ -n "$src" ] && [ $# -eq 1 ] || die 'usage: crucible cycle problem FILE'
       [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
@@ -2783,14 +3200,16 @@ cmd_adopt() {
     [ -f "$f" ] && cp "$f" "$dst/scripts/"
   done
   mkdir -p "$dst/docs"
-  [ -f "$src/docs/managed-lifecycle.md" ] && cp "$src/docs/managed-lifecycle.md" "$dst/docs/"
+  for f in "$src"/docs/*.md; do
+    [ -f "$f" ] && cp "$f" "$dst/docs/"
+  done
   chmod +x "$dst/crucible" "$dst/scripts/"*.sh 2>/dev/null || true
   base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
   printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
   if [ "$managed" -eq 1 ]; then
     printf 'lifecycle: managed\ncycle: guided\n' >> "$dst/PROGRAM"
   fi
-  : > "$dst/LESSONS.md"
+  printf -- '- Conversational "keep looping" is not a waiver to implement. Drive ticks one legal orchestrator action; makers stay inside EXECUTE for the admitted item.\n' > "$dst/LESSONS.md"
   printf -- '- [ ] example — replace this line with real items as claims are admitted\n' > "$dst/BACKLOG.md"
   if [ "$managed" -eq 1 ]; then
     printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$dst/STATE.tsv"
@@ -3368,6 +3787,7 @@ cmd_close() {
 case ${1:-help} in
 adopt)    shift; cmd_adopt "$@" ;;
 cycle)    shift; cmd_cycle "$@" ;;
+drive)    shift; cmd_drive "$@" ;;
 claim)    shift; cmd_claim "$@" ;;
 triage)   shift; cmd_triage "$@" ;;
 panes)    shift; cmd_panes "$@" ;;

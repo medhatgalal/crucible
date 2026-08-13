@@ -410,6 +410,9 @@ done
 ./scripts/verify-quickstart.sh >/dev/null 2>&1 \
   && ok "cold fresh-agent cycle binds approval before planning" \
   || bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
+./scripts/verify-drive.sh >/dev/null 2>&1 \
+  && ok "drive tick dispatches on INVESTIGATE and refuses owned-path writes" \
+  || bad "drive contract (scripts/verify-drive.sh) failed"
 
 # A6: one writer per fact (RULES.md 17), asserted positively.
 #
@@ -564,7 +567,7 @@ cd "$HERE"
 broken=""
 # `selftest` is asserted through the explicit recursion guard below. Calling it here starts a
 # second complete suite, ignores --fast, and turns a routing assertion into a minutes-long proxy.
-for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help; do
+for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help drive; do
   o=$(./crucible "$v" 2>&1 || true)
   case "$o" in *"command not found"*) broken="$broken $v" ;; esac
 done
@@ -607,7 +610,7 @@ cd "$HERE"
 # runtime for verbs no test happened to call. `selftest` is excluded here because invoking
 # it would re-enter this suite; its own guard is asserted separately below.
 broken=""
-for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help; do
+for v in adopt agents target next phase dispatch brief run run-claim check close workid claim triage panes help drive; do
   o=$(./crucible "$v" 2>&1 || true)
   case "$o" in *"command not found"*) broken="$broken $v" ;; esac
 done

@@ -47,6 +47,9 @@ Already installed? Say:
 
 > Read `.crucible/<program>/START.md` and continue this cycle.
 
+To keep the coordinator from skipping `cycle` or implementing, run
+`.crucible/<program>/crucible drive` (see [docs/drive.md](docs/drive.md)).
+
 ## ✨ The value
 
 | Common agent failure | Crucible response |

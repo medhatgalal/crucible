@@ -20,6 +20,8 @@ printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/crucible$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-agent-cycle.sh$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-coldstart-independence.sh$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/roles/contract-auditor.md$"
+printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/docs/drive.md$"
+printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-drive.sh$"
 if printf '%s\n' "$CONTENTS" | grep -Eq "^crucible-$VERSION/(reports|\.github|dist)/"; then
   echo "verify-package: package contains development-only paths" >&2; exit 1
 fi
@@ -33,5 +35,7 @@ PACKAGE="$TMP/extract/crucible-$VERSION"
 "$PACKAGE/crucible" help >/dev/null
 "$PACKAGE/scripts/verify-agent-cycle.sh" >/dev/null
 "$PACKAGE/scripts/verify-coldstart-independence.sh" >/dev/null
+[ -x "$PACKAGE/scripts/verify-drive.sh" ]
+"$PACKAGE/scripts/verify-drive.sh" >/dev/null
 
 printf 'PACKAGE-OK %s %s\n' "$VERSION" "$(awk '{print $1}' "$TMP/one/$NAME.sha256")"

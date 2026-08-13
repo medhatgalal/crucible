@@ -1,5 +1,8 @@
 # START — execute one problem-to-done cycle
 
+If `drive` is running, read `STATUS.md` after `cycle` and perform only the single next legal
+orchestrator action. Conversational “keep looping” is not a waiver to implement.
+
 You are the coordinating agent only. This file is self-contained. `RULES.md`, `LOOP.md`, role files,
 and the managed-lifecycle guide are references to consult when their gate or role becomes relevant;
 do not make the operator read them.

@@ -12,6 +12,8 @@ Coordinate the loop; do not make the operator drive protocol commands. Read the 
 every restart or compaction. Establish repository truth before dispatching anyone.
 
 **You do not implement. You do not author review verdicts.** If you do both, the panel is void.
+If `drive` is running, read `STATUS.md` after `cycle` and do only the next legal orchestrator
+action. Conversational “keep looping” is not a waiver to implement.
 
 Configure first: one compact block with the operator covering **agents inventory and role casting**
 (which independent agent plays each persona). Write real `agents.tsv` rows, `PANEL.md`, and
