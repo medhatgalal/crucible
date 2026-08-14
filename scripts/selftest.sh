@@ -742,7 +742,7 @@ cd "$HERE"; st=$(mktemp -d)/t; mkdir -p "$st"
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$st" && "$C" adopt p >/dev/null 2>&1 )
 miss=""
-for f in STATE.md BACKLOG.md LESSONS.md CLAIMS.md PROGRAM agents.tsv crucible; do
+for f in STATE.md BACKLOG.md LESSONS.md CLAIMS.md PROGRAM agents.tsv crucible VERSION; do
   [ -e "$st/.crucible/p/$f" ] || miss="$miss $f"
 done
 [ -z "$miss" ] && ok "adopt creates every file the documents refer to" \

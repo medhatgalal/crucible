@@ -49,9 +49,11 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 
 | You want | Run / say |
 | --- | --- |
-| See the one next state | `.crucible/work/crucible cycle` — also rewrites `STATUS.md` |
+| See the one next state | `.crucible/work/crucible cycle` — also rewrites `STATUS.md` (includes `engine:`) |
 | Resume a coordinator | Read `.crucible/work/START.md` and `STATUS.md` |
 | Keep the coordinator from skipping `cycle` or implementing | `.crucible/work/crucible drive` ([docs/drive.md](docs/drive.md)) |
+| Refresh the installed engine | From the **newer** Crucible checkout, cwd = target repo: `adopt work --refresh` — see [docs/install.md](docs/install.md) |
+| Start the next problem on the same panel | After this investigation should end: `cycle problem FILE --next` |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
 
 Conversational “keep looping” is not a waiver to implement.
@@ -82,11 +84,12 @@ flowchart LR
     J -->|"finding"| M
     J -->|"pass"| D["🏁 Done + evidence"]
     J -.-> E["🛑 Escalate<br/>repeated or disputed"]
+    D -->|"same panel, next problem"| R
 ```
 
 Before approval, agents may investigate, falsify, narrow, and propose—but not build. After approval,
-only bounded work enters the make → verify → review → fix loop. `DONE` requires current evidence for
-the integrated work, not a clean diff or an agent self-report.
+only bounded work enters the make → verify → review → fix loop. `DONE` means this PROBLEM has no
+admittable claim. The operator starts the next pass with `cycle problem FILE --next` (same panel).
 
 ## 🧭 Multi-agent orchestration without agent theatre
 
@@ -155,6 +158,7 @@ and [RULES.md](RULES.md).
 ## 📚 Go deeper
 
 - [BOOTSTRAP.md](BOOTSTRAP.md) — cold start in a target repo (what a fresh agent should read first)
+- [docs/install.md](docs/install.md) — install, confirm `engine:`, refresh, next PROBLEM, `drive`
 - [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
 - [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement
 - [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria

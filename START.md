@@ -10,21 +10,22 @@ do not make the operator read them.
 ## How to use an installed cycle
 
 The program is `.crucible/<program>/crucible` (after `adopt work --managed`, `<program>` is `work`).
-Cwd is the **target repository root**, not the program directory.
+Cwd is the **target repository root**, not the program directory. Install, refresh, and
+`--next` copy-paste: [docs/install.md](docs/install.md).
 
 | Who | Command | Why |
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
 | Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop: cycle → one coordinator tick → cycle. `drive tick` is one iteration |
-
-When refreshing an installed program from a newer Crucible source, copy engine files
-**additively**. Do not delete machine-local adapters (for example `scripts/acp-brief.py`).
+| Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Does not delete local adapters such as `scripts/acp-brief.py`. Cwd is the target repository. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
-| Human only | act on `ESCALATE` / `DONE` | Independence stop, overdue, or cleanup preview |
+| Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
+| Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
 
-`STATUS.md` is the next-action card (`state`, active item, inflight attempt, last evidence, human
-gate). Read it after every `cycle`. `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` are
-human gates — stop and show the operator the exact line.
+`STATUS.md` is the next-action card (`state`, `engine`, active item, inflight attempt, last evidence,
+human gate). Read it after every `cycle`. `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` are
+human gates — stop and show the operator the exact line. On `DONE`, the operator binds the next
+PROBLEM with `cycle problem FILE --next` or previews cleanup. Do not recast the panel.
 
 Resume after every restart, compaction, agent return, review, or repository change with:
 
@@ -143,11 +144,13 @@ is `ESCALATE`, not permission for unbounded agent churn.
 
 ## Finish
 
-`DONE` requires current evidence, resolved findings, accounted approved scope, integration/CI tied to
-the reviewed work id, and an accepting refusal gate. When attempts exist, `cycle` writes an
-`INDEPENDENCE.md` receipt (process summary, not a close gate or cryptographic proof). Report what
-changed, what proves it, remaining uncertainty, and exact repository state.
+`DONE` means **this PROBLEM has no admittable claim**. Report what changed, what proves it, remaining
+uncertainty, and exact repository state. When attempts exist, `cycle` writes an `INDEPENDENCE.md`
+receipt (process summary, not a close gate).
 
-Do not persist personal memory. After `DONE`, run `cycle clean --dry-run` and show the exact preview.
-Run `cycle clean --apply` only after explicit approval; it removes machine-only configuration and safely
-unregisters isolated worktrees while preserving branches, work, reviews, and evidence.
+Do not persist personal memory. Do not recast the panel. Do not bind the next PROBLEM yourself.
+
+- Another problem on the same panel: stop and tell the operator to run
+  `cycle problem FILE --next` (see [docs/install.md](docs/install.md)).
+- Program finished: run `cycle clean --dry-run` and show the exact preview. Run
+  `cycle clean --apply` only after explicit approval.
