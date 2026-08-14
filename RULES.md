@@ -88,6 +88,7 @@ a RULE into a CHECK, do it and say so in the lesson.
     coordinator implement paths refuse.** `drive` runs `cycle` (rewrites `STATUS.md`) before and
     after each coordinator process and re-checks `cycle: guided` every tick. `WAIT PANEL`,
     `WAIT APPROVAL`, `ESCALATE`, and `DONE` exit without invoking the coordinator.
+    Drive never binds the next PROBLEM (`cycle problem FILE --next` is a human gate).
     `cycle approve-panel` and `cycle approve` refuse while `.drive.lock` exists. After the child,
     these refuse (and restore): product `HEAD` movement (commit or completed merge), `MERGE_HEAD`,
     new or content-changed product porcelain (including already-dirty files), task-worktree

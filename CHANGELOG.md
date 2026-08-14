@@ -5,6 +5,28 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.5] - 2026-08-14
+
+### The DAG can start the next PROBLEM without recasting the panel
+
+- `DONE` meant the program was finished forever. An approved follow-up (for example live-verify
+  after the verbs already shipped) had no admittable claim, so `cycle` said DONE and `drive`
+  printed cleanup. The operator had to `adopt` a new program and recast the panel.
+- `cycle problem FILE --next` archives the closed investigation under `history/` (problem, claims,
+  proposal, items, attempts) and binds a new PROBLEM. `PANEL*` and `agents.tsv` stay. Drive still
+  does not invent the next problem. Leftover `DISPATCHED` attempts that never started do not
+  block `--next`; `RUNNING` / `OVERDUE` still do.
+- `DONE` now says there is no admittable claim, and leftover `items/` directories are not work.
+
+### Additive engine refresh
+
+- Refreshing by copying the program directory deleted machine-local adapters (`scripts/acp-brief.py`)
+  and often left a pre-`drive` engine in the target repo. `adopt PROGRAM --refresh` overwrites
+  engine files only and keeps extra scripts.
+- `adopt` ships `VERSION`. `STATUS.md` records `engine:` so a stale install is visible.
+- Onboarding SSOT: [docs/install.md](docs/install.md) (install, confirm engine, refresh, `--next`,
+  `drive`). BOOTSTRAP, START, README, LOOP, CONFIGURE, RULE 21, drive, and orchestrator point at it.
+
 ## [1.3.4] - 2026-08-13
 
 ### STALE/FALSE resolves a lone TRUE for investigation

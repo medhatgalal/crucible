@@ -6,14 +6,15 @@ calls the same `dispatch` / `cycle` verbs.
 
 Conversational “keep looping” is not a waiver to implement.
 
-A cold reader of this repository: start at [BOOTSTRAP.md](../BOOTSTRAP.md) to install, then
-[START.md](../START.md) for the installed prompt. This page is only the outer driver.
+A cold reader of this repository: start at [BOOTSTRAP.md](../BOOTSTRAP.md) or
+[install.md](install.md) to install or refresh, then [START.md](../START.md) for the
+installed prompt. This page is only the outer driver.
 
 ## Who runs what
 
 | Actor | Runs | Does not run |
 | --- | --- | --- |
-| Operator | `adopt`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
+| Operator | `adopt` / `adopt --refresh`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
 | Coordinator process | `cycle`, then one legal orchestrator action from `STATUS.md` | product edits, verdicts, merges, auto-approve |
 | Maker / reviewer / auditor | only their dispatched contract | admit the next backlog row, merge, wear another hat |
 
@@ -21,7 +22,7 @@ A cold reader of this repository: start at [BOOTSTRAP.md](../BOOTSTRAP.md) to in
 
 1. Run `cycle` first and rewrite `STATUS.md` (and print the line).
 2. If the line is `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, or `DONE`: print the exact human
-   action and exit. Drive never auto-approves.
+   action and exit. Drive never auto-approves and never binds the next problem.
 3. Otherwise invoke the **cast coordinator** in a **new process** with the same brief every time:
    read `START.md` and `STATUS.md`, run `cycle`, do the single next legal orchestrator action,
    write nothing a maker/reviewer/auditor should write, exit.
@@ -71,12 +72,14 @@ A legitimate maker `TARGET` write during a coordinator tick is refused for the s
 Rewritten on every `cycle` and every drive tick:
 
 - `line` / `state`
+- `engine` (from the installed `VERSION`; `unknown` if the program was never refreshed)
 - `active-item`
 - `inflight-attempt`
 - `last-evidence`
 - `next-human-gate`
 
-Coordinators read it after `cycle`.
+Coordinators read it after `cycle`. If `engine:` is `unknown` or missing, the operator
+must `--refresh` before `drive` can be trusted (see [install.md](install.md)).
 
 ## Maker inner loop
 

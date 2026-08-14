@@ -15,10 +15,12 @@ existing program does not change underneath active work.
 
 ## Install it for a new cycle
 
-New cycles select the behavior during adoption:
+New cycles select the behavior during adoption (install/refresh/use: [install.md](install.md)):
 
 ```sh
 <engine>/crucible adopt <program> --managed
+# later, from a newer source, same program name:
+<engine>/crucible adopt <program> --refresh
 ```
 
 That creates `STATE.tsv` and its generated `STATE.md` atomically with the installed program, and
@@ -30,6 +32,8 @@ marks `cycle: guided`. Guided cycles require panel configure/approval before inv
 # Replace placeholder agents.tsv rows, write PANEL.md + PANEL.ASSIGN.tsv, then:
 $CP cycle approve-panel
 $CP cycle problem /path/to/report.md
+# After this PROBLEM is finished (or should be abandoned) — same panel, new investigation:
+$CP cycle problem /path/to/next-report.md --next
 ```
 
 `PANEL.md` must include: Agents, Roles, Risk posture, Isolation transport, Independence ladder,

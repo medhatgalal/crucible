@@ -87,6 +87,12 @@ grep -q 'docs/drive.md' "$HERE/README.md" && grep -q 'STATUS.md' "$HERE/README.m
   && ok || bad 'README does not point at drive / STATUS.md'
 grep -q 'How to use an installed cycle' "$HERE/START.md" \
   && ok || bad 'START.md missing how-to-use table'
+grep -q 'adopt <program> --refresh' "$HERE/START.md" \
+  && ok || bad 'START.md missing adopt --refresh'
+grep -q 'cycle problem FILE --next' "$HERE/START.md" \
+  && ok || bad 'START.md missing cycle problem --next'
+[ -f "$HERE/docs/install.md" ] && grep -q 'adopt work --refresh' "$HERE/docs/install.md" \
+  && ok || bad 'docs/install.md missing refresh contract'
 
 # --- INVESTIGATE tick dispatches, does not edit src/ ---
 repo=$(setup_repo)
@@ -453,6 +459,165 @@ printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
 refuses 'failed coordinator invoke is refused' 'invoke failed|No such file|can.t open' \
   "$P/crucible" drive tick
+
+# --- --next archives leftover DISPATCHED (never started); RUNNING still blocks ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Old problem still open.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'old gap' 'Old problem still open.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+printf 'Live-verify instead.\n' > "$repo/next-problem.md"
+out=$("$P/crucible" cycle problem "$repo/next-problem.md" --next 2>&1) || {
+  bad "next refused leftover DISPATCHED: $out"; out=
+}
+printf '%s\n' "$out" | grep -q '/PROBLEM.md$' && ok || bad "next should bind despite DISPATCHED leftover: $out"
+grep -q 'Live-verify instead' "$P/PROBLEM.md" && ok || bad 'next did not replace PROBLEM after DISPATCHED leftover'
+
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Old problem still open.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'old gap' 'Old problem still open.')
+"$P/crucible" run-claim "$cn" a1 -- sh -c 'echo checked' >/dev/null
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+seal_claim "$P" a1
+id=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+  [ "$a" = a1 ] || continue
+  id=${ad##*/}
+done
+"$P/crucible" attempt start "$id" 1 >/dev/null
+printf 'Next while running.\n' > "$repo/next-problem.md"
+refuses 'next refuses while an attempt is RUNNING' 'RUNNING|OVERDUE' \
+  "$P/crucible" cycle problem "$repo/next-problem.md" --next
+
+# --- adopt --refresh is additive and keeps local adapters ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+printf '1.2.0\n' > "$P/VERSION"
+printf 'KEEP-ACP\n' > "$P/scripts/acp-brief.py"
+printf 'stale start\n' > "$P/START.md"
+( cd "$repo" && "$C" adopt work --refresh >/dev/null )
+[ "$(sed -n '1p' "$P/VERSION")" = "$(sed -n '1p' "$HERE/VERSION")" ] && ok \
+  || bad "refresh did not update VERSION"
+grep -q 'KEEP-ACP' "$P/scripts/acp-brief.py" && ok || bad 'refresh deleted acp-brief.py'
+grep -q 'drive' "$P/START.md" && ok || bad 'refresh did not update START.md'
+grep -q 'lifecycle: managed' "$P/PROGRAM" && ok || bad 'refresh clobbered PROGRAM'
+( cd "$repo" && "$C" adopt missing --refresh >/dev/null 2>&1 ) \
+  && bad 'refresh of missing program was allowed' \
+  || ok
+
+# --- cycle problem --next archives and keeps the panel ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+panel_before=$(sed -n 's/^panel-id: //p' "$P/PANEL.APPROVAL" | head -1)
+printf 'No code change is actually required.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'code change required' 'No code change is actually required.')
+seal_claim() {
+  prog=$1; agent=$2
+  id=
+  for ad in "$prog"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+    [ "$a" = "$agent" ] || continue
+    id=${ad##*/}
+  done
+  [ -n "$id" ] || return 1
+  "$prog/crucible" attempt transport "$id" multi-agent >/dev/null
+  "$prog/crucible" contract-audit "$id" j2 PASS >/dev/null
+}
+for agent in a1 a2; do
+  "$P/crucible" run-claim "$cn" "$agent" -- sh -c 'echo checked' >/dev/null
+  "$P/crucible" dispatch "$cn" claim-auditor "$agent" >/dev/null
+  seal_claim "$P" "$agent"
+  "$P/crucible" claim verdict "$cn" "$agent" FALSE >/dev/null
+done
+cat > "$P/PROPOSAL.md" <<'EOF'
+# Proposal
+## Verified problem
+The allegation is false.
+## Proposed outcome
+No code change.
+## Non-goals
+No speculative work.
+## Backlog
+Empty.
+## Verification
+Two recorded falsifications.
+EOF
+"$P/crucible" cycle approve >/dev/null
+expect 'false-claim approval is DONE' '^DONE ' "$P/crucible" cycle
+grep -q '^engine: ' "$P/STATUS.md" && ok || bad 'STATUS.md missing engine'
+mkdir -p "$P/items/leftover"
+printf leftover\\n > "$P/items/leftover/ITEM.md"
+printf 'Live-verify sprint create on PT.\n' > "$repo/next-problem.md"
+out=$("$P/crucible" cycle problem "$repo/next-problem.md" --next 2>&1) || {
+  bad "cycle problem --next refused: $out"; out=
+}
+printf '%s\n' "$out" | grep -q '/PROBLEM.md$' && ok || bad "next did not bind PROBLEM: $out"
+printf '%s\n' "$out" | grep -q '^archived ' && ok || bad "next did not archive: $out"
+grep -q 'Live-verify sprint create' "$P/PROBLEM.md" && ok || bad 'next PROBLEM not replaced'
+[ ! -d "$P/items/leftover" ] && ok || bad 'leftover items/ dir was not archived'
+hist=$(find "$P/history" -type d -name leftover 2>/dev/null | head -1)
+[ -n "$hist" ] && ok || bad 'leftover item was not under history/'
+[ "$(sed -n 's/^panel-id: //p' "$P/PANEL.APPROVAL" | head -1)" = "$panel_before" ] \
+  && ok || bad 'next recast or rewrote the panel approval'
+expect 'next problem is INVESTIGATE' '^NEXT INVESTIGATE ' "$P/crucible" cycle
+"$P/crucible" claim add 'live verify missing' 'Live-verify sprint create on PT.' >/dev/null
+printf 'Another problem.\n' > "$repo/too-soon.md"
+refuses 'problem without --next still refuses after claims' 'already has claims' \
+  "$P/crucible" cycle problem "$repo/too-soon.md"
+
+# --next refuses while an item is ACTIVE
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Need a real gap.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'a real gap' 'Need a real gap.')
+for agent in a1 a2; do
+  "$P/crucible" run-claim "$cn" "$agent" -- sh -c 'echo checked' >/dev/null
+  "$P/crucible" dispatch "$cn" claim-auditor "$agent" >/dev/null
+  seal_claim "$P" "$agent"
+  "$P/crucible" claim verdict "$cn" "$agent" TRUE >/dev/null
+done
+"$P/crucible" run-claim "$cn" a1 -- sh -c 'echo searched' >/dev/null
+"$P/crucible" dispatch "$cn" scout a1 >/dev/null
+seal_claim "$P" a1
+"$P/crucible" claim scout "$cn" ABSENT a1 >/dev/null
+cat > "$P/PROPOSAL.md" <<'EOF'
+# Proposal
+## Verified problem
+A real gap exists.
+## Proposed outcome
+One item.
+## Non-goals
+None.
+## Backlog
+one-item.
+## Verification
+Two TRUEs.
+EOF
+"$P/crucible" cycle approve >/dev/null
+"$P/crucible" claim admit "$cn" one-item >/dev/null
+printf 'Next while active.\n' > "$repo/next-problem.md"
+refuses 'next refuses while an item is ACTIVE' 'ACTIVE or BLOCKED' \
+  "$P/crucible" cycle problem "$repo/next-problem.md" --next
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

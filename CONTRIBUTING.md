@@ -8,6 +8,7 @@ multi-agent independence stronger than the CHECKs in RULES.md and the guided cyc
 ```sh
 ./scripts/selftest.sh --fast       # bounded development gate
 ./scripts/verify-agent-cycle.sh    # cold problem-to-done behavior
+./scripts/verify-drive.sh          # drive, refresh, and cycle problem --next
 ./scripts/verify-package.sh        # reproducible release archive
 /bin/sh -n crucible                # it must stay POSIX sh
 ```

@@ -21,6 +21,7 @@ printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-agent-cyc
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-coldstart-independence.sh$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/roles/contract-auditor.md$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/docs/drive.md$"
+printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/docs/install.md$"
 printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/scripts/verify-drive.sh$"
 if printf '%s\n' "$CONTENTS" | grep -Eq "^crucible-$VERSION/(reports|\.github|dist)/"; then
   echo "verify-package: package contains development-only paths" >&2; exit 1

@@ -2,8 +2,10 @@
 # crucible - a file-only refusal gate for maker/judge work. No dependencies.
 #
 #   crucible adopt [PROGRAM] --managed     install one self-contained cycle in this repo
+#   crucible adopt [PROGRAM] --refresh     additive engine update (keeps local adapters)
 #   crucible cycle [status]                resume the durable problem-to-done loop
 #   crucible cycle problem FILE            bind the cycle to a problem report
+#   crucible cycle problem FILE --next     same panel, archive closed investigation, new PROBLEM
 #   crucible cycle approve-panel           record approval of the agent panel
 #   crucible cycle approve                 record approval of the current proposal
 #   crucible drive [tick]                  Ralph-style outer loop (guided+managed)
@@ -46,8 +48,10 @@ usage() {
 Crucible runs one durable problem-to-done cycle for a coordinating agent.
 
   crucible adopt [PROGRAM] --managed   install the cycle in the current repository
+  crucible adopt [PROGRAM] --refresh   additive engine update; does not delete local adapters
   crucible cycle [status]              resume from repository evidence
   crucible cycle problem FILE          bind a problem report to the cycle
+  crucible cycle problem FILE --next   same panel; archive this investigation; bind a new PROBLEM
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
   crucible drive [tick]                Ralph-style outer loop: cycle, one legal action, stop for humans
@@ -2531,6 +2535,14 @@ drive_inflight() {
   [ -n "$inf" ] && printf '%s' "$inf" || printf '-'
 }
 
+engine_version() {
+  if [ -s "$ROOT/VERSION" ] && [ ! -L "$ROOT/VERSION" ]; then
+    sed -n '1p' "$ROOT/VERSION"
+  else
+    printf 'unknown'
+  fi
+}
+
 write_cycle_status() {
   line=$(cmd_cycle_status)
   state=$(drive_state_name "$line")
@@ -2543,6 +2555,7 @@ write_cycle_status() {
     printf '# STATUS\n\n'
     printf 'line: %s\n' "$line"
     printf 'state: %s\n' "$state"
+    printf 'engine: %s\n' "$(engine_version)"
     printf 'active-item: %s\n' "$item"
     printf 'inflight-attempt: %s\n' "$inflight"
     printf 'last-evidence: %s\n' "$evidence"
@@ -2908,7 +2921,8 @@ drive_print_human() {
     ESCALATE)
       printf 'HUMAN — %s\n' "$line" ;;
     DONE)
-      printf 'HUMAN — cycle is DONE; preview cleanup: %s cycle clean --dry-run\n' "$self" ;;
+      printf 'HUMAN — cycle is DONE (no admittable claim). Same panel, next problem: %s cycle problem FILE --next\n' "$self"
+      printf 'HUMAN — or preview cleanup: %s cycle clean --dry-run\n' "$self" ;;
   esac
 }
 
@@ -3094,7 +3108,7 @@ cmd_cycle_status() {
     return
   fi
   write_independence_receipt
-  printf 'DONE — approved scope is closed or required no code; structure receipt in INDEPENDENCE.md when attempts exist\n'
+  printf 'DONE — no admittable claim remains; leftover items/ dirs are not work. Same panel, next problem: cycle problem FILE --next\n'
 }
 
 cycle_worktree_records() {
@@ -3170,21 +3184,101 @@ EOF
   printf 'session cleanup applied; durable work and evidence preserved\n'
 }
 
+cycle_live_attempts_terminal() {
+  [ -d "$ROOT/attempts" ] || return 0
+  for attempt_path in "$ROOT"/attempts/*; do
+    [ -d "$attempt_path" ] || continue
+    attempt_id=${attempt_path##*/}
+    attempt_status=$(attempt_state "$attempt_id")
+    # --next archives the investigation. Block only attempts that may still have a
+    # process. DISPATCHED-never-started leftovers are not live workers.
+    case $attempt_status in
+      RUNNING|OVERDUE) die "refused: attempt $attempt_id is $attempt_status" ;;
+    esac
+  done
+}
+
+cycle_no_current_item() {
+  uses_managed_lifecycle || return 0
+  [ -f "$ROOT/STATE.tsv" ] || return 0
+  slug=$(awk -F '\t' 'NR > 1 && ($2 == "ACTIVE" || $2 == "BLOCKED") { print $1; exit }' "$ROOT/STATE.tsv")
+  [ -z "$slug" ]
+}
+
+cycle_archive_investigation() {
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  pid=noproposal
+  if try=$(proposal_id); then
+    pid=$try
+  fi
+  dest="$ROOT/history/$stamp-$pid"
+  [ ! -e "$dest" ] || die "archive already exists: $dest"
+  mkdir -p "$dest"
+  for f in PROBLEM.md CLAIMS.md PROPOSAL.md APPROVAL STATE.tsv STATE.md INDEPENDENCE.md BACKLOG.md DRIVE.state DRIVE.BRIEF.md STATUS.md; do
+    [ -e "$ROOT/$f" ] || continue
+    mv "$ROOT/$f" "$dest/"
+  done
+  for d in claims items approvals attempts; do
+    [ -e "$ROOT/$d" ] || continue
+    mv "$ROOT/$d" "$dest/"
+  done
+  mkdir -p "$ROOT/items"
+  printf '# CLAIMS — %s\n\nOne heading per finding from the problem document, quoting its source sentence\nverbatim. Nothing becomes an item until it survives audit.\n' \
+    "$(sed -n 's/^program: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1)" > "$ROOT/CLAIMS.md"
+  printf -- '- [ ] example — replace this line with real items as claims are admitted\n' > "$ROOT/BACKLOG.md"
+  if uses_managed_lifecycle; then
+    printf 'item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n' > "$ROOT/STATE.tsv"
+    state_render_file "$ROOT/STATE.md"
+  fi
+  printf '%s' "$dest"
+}
+
+cycle_bind_problem() {
+  src=$1
+  [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
+  tmp="$ROOT/.PROBLEM.md.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
+  cp "$src" "$tmp"; mv "$tmp" "$ROOT/PROBLEM.md"; trap - 0 1 2 15
+  printf '%s/PROBLEM.md\n' "$ROOT"
+}
+
 cmd_cycle() {
   sub=${1:-status}; [ $# -eq 0 ] || shift
   case $sub in
     status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; write_cycle_status ;;
     problem)
-      src=${1:-}; [ -n "$src" ] && [ $# -eq 1 ] || die 'usage: crucible cycle problem FILE'
+      src=; next=0
+      while [ $# -gt 0 ]; do
+        case $1 in
+          --next) next=1 ;;
+          -*) die 'usage: crucible cycle problem FILE [--next]' ;;
+          *)
+            [ -z "$src" ] || die 'usage: crucible cycle problem FILE [--next]'
+            src=$1
+            ;;
+        esac
+        shift
+      done
+      [ -n "$src" ] || die 'usage: crucible cycle problem FILE [--next]'
       [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
       if uses_guided_cycle; then
         panel_approval_current || die 'refused: approve the agent panel before binding a problem (cycle approve-panel)'
       fi
+      if [ "$next" -eq 1 ]; then
+        [ -d "$ROOT/.drive.lock" ] \
+          && die 'refused: cycle problem --next is a human gate — stop drive first'
+        uses_guided_cycle || die 'cycle problem --next requires a guided cycle'
+        uses_managed_lifecycle || die 'cycle problem --next requires managed lifecycle behavior'
+        cycle_no_current_item \
+          || die 'refused: an ACTIVE or BLOCKED item is current — close or escalate it first'
+        cycle_live_attempts_terminal
+        dest=$(cycle_archive_investigation)
+        printf 'archived %s\n' "$dest"
+        cycle_bind_problem "$src"
+        return
+      fi
       [ "$(cycle_investigation_state)" = EMPTY ] || die 'refused: investigation already has claims'
       [ ! -f "$ROOT/APPROVAL" ] || die 'refused: a proposal is already approved'
-      tmp="$ROOT/.PROBLEM.md.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
-      cp "$src" "$tmp"; mv "$tmp" "$ROOT/PROBLEM.md"; trap - 0 1 2 15
-      printf '%s/PROBLEM.md\n' "$ROOT" ;;
+      cycle_bind_problem "$src" ;;
     approve-panel)
       [ $# -eq 0 ] || die 'usage: crucible cycle approve-panel'
       [ -d "$ROOT/.drive.lock" ] \
@@ -3387,34 +3481,68 @@ cmd_next() {
 
 # Install a program into the repository you are standing in. Run this from anywhere
 # inside the target repo. The program and its memory live in that repo from then on.
-cmd_adopt() {
-  prog=main; managed=0
-  case $# in
-    0) : ;;
-    1) if [ "$1" = --managed ]; then managed=1; else prog=$1; fi ;;
-    2) prog=$1; [ "$2" = --managed ] || die 'usage: crucible adopt [PROGRAM] [--managed]'; managed=1 ;;
-    *) die 'usage: crucible adopt [PROGRAM] [--managed]' ;;
-  esac
-  case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
-  repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
-  src=$(cd "$(dirname "$0")" && pwd)
-  dst="$repo/.crucible/$prog"
-  [ -d "$dst" ] && die "program already exists: $dst"
-  mkdir -p "$dst/items"
-  for f in crucible BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md; do
+adopt_install_engine() {
+  src=$1
+  dst=$2
+  mkdir -p "$dst/items" "$dst/scripts" "$dst/docs" "$dst/roles"
+  for f in crucible BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md VERSION; do
     [ -f "$src/$f" ] && cp "$src/$f" "$dst/"
   done
-  [ -d "$src/roles" ] && cp -r "$src/roles" "$dst/"
-  mkdir -p "$dst/scripts"
+  if [ -d "$src/roles" ]; then
+    for f in "$src/roles"/*.md; do
+      [ -f "$f" ] && cp "$f" "$dst/roles/"
+    done
+  fi
   for f in "$src"/scripts/*.sh; do
     case ${f##*/} in package-release.sh|verify-package.sh) continue ;; esac
     [ -f "$f" ] && cp "$f" "$dst/scripts/"
   done
-  mkdir -p "$dst/docs"
-  for f in "$src"/docs/*.md; do
-    [ -f "$f" ] && cp "$f" "$dst/docs/"
+  if [ -d "$src/docs" ]; then
+    for f in "$src"/docs/*.md; do
+      [ -f "$f" ] && cp "$f" "$dst/docs/"
+    done
+  fi
+  chmod +x "$dst/crucible" 2>/dev/null || true
+  chmod +x "$dst/scripts/"*.sh 2>/dev/null || true
+}
+
+cmd_adopt() {
+  prog=; managed=0; refresh=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --managed) managed=1 ;;
+      --refresh) refresh=1 ;;
+      -*) die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh]' ;;
+      *)
+        [ -z "$prog" ] || die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh]'
+        prog=$1
+        ;;
+    esac
+    shift
   done
-  chmod +x "$dst/crucible" "$dst/scripts/"*.sh 2>/dev/null || true
+  [ -n "$prog" ] || prog=main
+  [ "$refresh" -eq 0 ] || [ "$managed" -eq 0 ] \
+    || die 'usage: crucible adopt [PROGRAM] --refresh  (--managed is install-only)'
+  case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
+  repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
+  src=$(cd "$(dirname "$0")" && pwd)
+  dst="$repo/.crucible/$prog"
+  if [ "$refresh" -eq 1 ]; then
+    [ -d "$dst" ] && [ -f "$dst/PROGRAM" ] || die "program does not exist: $dst"
+    old=unknown
+    [ -s "$dst/VERSION" ] && old=$(sed -n '1p' "$dst/VERSION")
+    new=unknown
+    [ -s "$src/VERSION" ] && new=$(sed -n '1p' "$src/VERSION")
+    adopt_install_engine "$src" "$dst"
+    printf 'refreshed engine %s -> %s\n%s\n' "$old" "$new" "$dst"
+    if [ -f "$dst/scripts/acp-brief.py" ]; then
+      printf 'kept local adapter: scripts/acp-brief.py\n'
+    fi
+    return
+  fi
+  [ -d "$dst" ] && die "program already exists: $dst"
+  mkdir -p "$dst"
+  adopt_install_engine "$src" "$dst"
   base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
   printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
   if [ "$managed" -eq 1 ]; then

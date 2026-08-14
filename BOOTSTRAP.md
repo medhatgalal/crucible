@@ -11,7 +11,8 @@ run its internal commands. You schedule independent agents; you do not pretend t
    derive its repository URL and clone it once to a temporary directory. If it was read from disk, use
    the directory containing it. Verify the local source with `scripts/verify-agent-cycle.sh`; stop if
    the bounded cold-start contract fails.
-4. Install the default guided cycle from the target repository:
+4. Install the default guided cycle from the target repository (full install/refresh
+   contract: [docs/install.md](docs/install.md)):
 
        <crucible-directory>/crucible adopt work --managed
 
@@ -44,12 +45,17 @@ run its internal commands. You schedule independent agents; you do not pretend t
    - Resume / see the one next state: `.crucible/work/crucible cycle` (rewrites `STATUS.md`).
    - Keep a coordinator from skipping `cycle` or implementing: `.crucible/work/crucible drive`
      (new process each tick; same brief; stops for humans). One iteration: `drive tick`.
-   - Humans only: `cycle approve-panel`, `cycle approve`, and any `ESCALATE` / `DONE` cleanup.
-     Drive never auto-approves.
+   - Refresh an already-installed program from this newer source (cwd = target repo):
+     `<crucible-directory>/crucible adopt work --refresh`. Additive: it overwrites engine files
+     and does not delete machine-local adapters such as `scripts/acp-brief.py`.
+   - Humans only: `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next` after this
+     investigation should end (same panel, new PROBLEM), and any `ESCALATE` / cleanup.
+     Drive never auto-approves and never binds the next problem.
 
-   Then read `.crucible/work/START.md` and `.crucible/work/STATUS.md`. If `drive` is running, do
-   only the single next legal orchestrator action. Conversational “keep looping” is not a waiver
-   to implement. Full driver notes: `docs/drive.md`.
+   Then read `.crucible/work/START.md` and `.crucible/work/STATUS.md`. Confirm `engine:` in
+   `STATUS.md` matches the source you installed from. If `drive` is running, do only the single
+   next legal orchestrator action. Conversational “keep looping” is not a waiver to implement.
+   Full driver notes: `docs/drive.md`. Install/refresh/use: `docs/install.md`.
 
 ## Independence ladder (mandatory)
 

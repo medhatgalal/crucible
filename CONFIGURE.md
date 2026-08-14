@@ -73,6 +73,9 @@ Show inventory + casting table and wait for `cycle approve-panel`. Approval cont
 contract-audit, start, result, and claim verdict/scout refuse when that hash is stale — not only
 `cycle` status.
 
+`adopt --refresh` and `cycle problem FILE --next` keep the approved panel. Do not recast after
+refresh or when starting the next PROBLEM unless the operator asked to change agents.
+
 ### Example coordinator message
 
 ```text

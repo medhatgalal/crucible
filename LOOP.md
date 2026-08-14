@@ -6,9 +6,10 @@ Crucible is one outer-to-inner loop, not a menu of commands.
 CONFIGURE → WAIT PANEL → INTAKE → INVESTIGATE ⇄ challenge → PROPOSE → APPROVAL
                                                               ↓
                 DONE ← REVIEW ⇄ FIX ← EXECUTE ← validated PLAN
-                         │
-                         └────────────→ ESCALATE when bounded recovery ends
-                                        (includes INDEPENDENCE_UNAVAILABLE)
+                 │       │
+                 │       └────────────→ ESCALATE when bounded recovery ends
+                 │                      (includes INDEPENDENCE_UNAVAILABLE)
+                 └─ cycle problem FILE --next (human) → INTAKE   same panel
 ```
 
 `crucible cycle` derives the current position from repository artifacts. The coordinating agent uses
@@ -76,3 +77,11 @@ The refusal gate accepts closure, relevant integration/CI evidence is current, t
 accounted for, structure/independence receipts exist when attempts were used, and the final report
 distinguishes shipped work from remaining uncertainty. Agent contexts can disappear without losing truth
 because the repository holds the evidence.
+
+`DONE` means **this PROBLEM has no admittable claim** (every claim is STALE, FALSE, FULLY-EXISTS, or
+below the admit bar). Leftover `items/` directories that are not in `STATE.tsv` are not work. Drive
+stops here and does not invent the next investigation.
+
+The panel stays. The operator starts the next problem-to-done pass with
+`cycle problem FILE --next` (archives the closed investigation under `history/`, keeps
+`PANEL*` and `agents.tsv`). Recasting the panel is not required.
