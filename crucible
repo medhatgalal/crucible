@@ -2300,6 +2300,16 @@ claim_attempt_matches() {
   return 0
 }
 
+# A claim dispatch is usable only after transport + contract-audit PASS.
+# First-match would bind a leftover DISPATCHED file from an earlier redispatch.
+claim_attempt_is_sealed() {
+  id=$1
+  ad="$ROOT/attempts/$id"
+  [ -f "$ad/transport" ] || return 1
+  [ -f "$ad/contract-audit.md" ] || return 1
+  grep -q '^VERDICT: PASS' "$ad/contract-audit.md"
+}
+
 write_independence_receipt() {
   uses_guided_cycle || return 0
   out="$ROOT/INDEPENDENCE.md"
@@ -3673,9 +3683,9 @@ cmd_claim() {
           [ -f "$df" ] || continue
           found=1
           stamped=$(sed -n 's/^attempt-id: //p' "$df" | head -1)
-          if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$n" "$who"; then
+          if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$n" "$who" \
+            && claim_attempt_is_sealed "$stamped"; then
             claim_attempt=$stamped
-            break
           fi
         done
       fi
@@ -3686,6 +3696,7 @@ cmd_claim() {
           [ -d "$ad" ] || continue
           aid=${ad##*/}
           claim_attempt_matches "$aid" "$n" "$who" || continue
+          claim_attempt_is_sealed "$aid" || continue
           claim_attempt=$aid
         done
       fi
@@ -3723,9 +3734,9 @@ cmd_claim() {
           [ -f "$df" ] || continue
           found=1
           stamped=$(sed -n 's/^attempt-id: //p' "$df" | head -1)
-          if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$n" "$who" scout; then
+          if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$n" "$who" scout \
+            && claim_attempt_is_sealed "$stamped"; then
             claim_attempt=$stamped
-            break
           fi
         done
       fi
@@ -3736,6 +3747,7 @@ cmd_claim() {
           [ -d "$ad" ] || continue
           aid=${ad##*/}
           claim_attempt_matches "$aid" "$n" "$who" scout || continue
+          claim_attempt_is_sealed "$aid" || continue
           claim_attempt=$aid
         done
       fi

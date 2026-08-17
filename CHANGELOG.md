@@ -14,6 +14,9 @@ All notable changes to this project are documented here. This project follows
 - `attempt transport acp` is legal on a multi-kind panel. The label describes this hop.
   Forcing `multi-agent` onto a same-product ACP scout made contract-audit FIX the hop
   as dishonest, then the engine refused the honest label.
+- `claim scout` / `claim verdict` bind the latest **sealed** dispatch, not the first
+  leftover file. Redispatch after FIX left `1-scout-*.md` unsealed; first-match made
+  scouts unable to record results.
 
 ## [1.3.5] - 2026-08-14
 
