@@ -169,8 +169,21 @@ $P/crucible claim verdict "$cn" a1 TRUE >/dev/null
 $P/crucible claim verdict "$cn" a2 TRUE >/dev/null
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo searched for existing enforcement' >/dev/null
 $P/crucible dispatch "$cn" scout a1 >/dev/null
+scout_contract=$(ls "$P/claims/$cn/dispatches/"*-scout-a1.md)
+if grep -E -q "claim verdict $cn a1" "$scout_contract"; then
+  bad 'scout contract embeds claim-auditor verdict surface'
+else
+  ok
+fi
+if grep -q "claims/$cn/evidence/" "$scout_contract" && grep -q 'claim scout' "$scout_contract"; then
+  ok
+else
+  bad 'scout contract omits report path or claim scout result'
+fi
 seal_claim_agent "$P" a1
 $P/crucible claim scout "$cn" ABSENT a1 >/dev/null
+refuses 'dispatch with no args prints usage' 'usage: crucible dispatch' \
+  "$P/crucible" dispatch
 expect 'verified claims advance to proposal' '^NEXT PROPOSE ' "$P/crucible" cycle
 
 cat > "$P/PROPOSAL.md" <<'EOF'

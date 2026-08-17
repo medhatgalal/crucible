@@ -1180,6 +1180,8 @@ cmd_dispatch_claim() {
     echo "Then record your result:"
     echo
     if [ "$role" = scout ]; then
+      echo "- **You must write:** claims/$cn/evidence/ (via run-claim) and the scout result below"
+      echo
       echo "    $self claim scout $cn ABSENT|PARTLY-EXISTS|FULLY-EXISTS $name"
       echo
       echo "FULLY-EXISTS means the repository already does this; it blocks admission, so say where."
@@ -1188,13 +1190,14 @@ cmd_dispatch_claim() {
       echo "search you ran and let it be checked. Search by behaviour, not by name — the thing that"
       echo "would be built rarely contains the words someone would call it."
       echo
-      echo "(the lines below apply to auditors, not to you)"
+      echo "Do not record a claim verdict. That surface is for claim-auditor only."
+    else
+      echo "    $self claim verdict $cn $name TRUE|FALSE|STALE|UNVERIFIABLE"
+      echo
+      echo "TRUE means true of the code as it exists now, cited to file:line. STALE means it was"
+      echo "true and has since been fixed — cite the fix. UNVERIFIABLE means the code cannot settle"
+      echo "it; name what is missing. Never guess, and never resolve doubt in favour of the claim."
     fi
-    echo "    $self claim verdict $cn $name TRUE|FALSE|STALE|UNVERIFIABLE"
-    echo
-    echo "TRUE means true of the code as it exists now, cited to file:line. STALE means it was"
-    echo "true and has since been fixed — cite the fix. UNVERIFIABLE means the code cannot settle"
-    echo "it; name what is missing. Never guess, and never resolve doubt in favour of the claim."
     echo; echo "---"; echo; echo "## The claim"; echo
     awk -v c="### $cn " 'index($0,c)==1{p=1;print;next} p&&/^### C[0-9]/{exit} p{print}' "$f"
     echo; echo "---"; echo; echo "## Your role in full"; echo
@@ -1446,6 +1449,8 @@ cmd_dispatch_managed() (
 
 cmd_dispatch() {
   slug=${1:-}; role=${2:-}; name=${3:-}
+  [ -n "$slug" ] && [ -n "$role" ] && [ -n "$name" ] \
+    || die "usage: crucible dispatch CN|ITEM ROLE AGENT"
   case $slug in C[0-9]*) cmd_dispatch_claim "$@"; return $? ;; esac
   if uses_managed_lifecycle; then cmd_dispatch_managed "$@"; return $?; fi
   need "$slug"

@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Claim-scout contracts are role-faithful
+
+- Generated scout contracts no longer embed `claim verdict` (that surface is claim-auditor
+  only) and they name `claims/CN/evidence/` as the scout report path.
+- `crucible dispatch` with missing args prints usage instead of crashing under `set -u`
+  on a managed program.
+
 ## [1.3.5] - 2026-08-14
 
 ### The DAG can start the next PROBLEM without recasting the panel
