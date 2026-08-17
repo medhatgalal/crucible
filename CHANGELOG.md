@@ -5,6 +5,18 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.3.7] - 2026-08-17
+
+### `dispatch ITEM judge` is usable on a guided panel
+
+- `agent_cast_for_role` assigned `role=$(assign_role_normalize …)`, and POSIX functions
+  share the caller’s variables. `cmd_dispatch_managed` then saw `reviewer` and died:
+  `managed lifecycle dispatch role must be maker, judge, or adversary`.
+- Normalize only for `PANEL.ASSIGN` lookup. The dispatch role stays `judge`.
+
+P1 (drive starts sealed workers), P3 (admit attach), P4 (`FAILURES: none`), and P5
+(`PASS --like`) already shipped in 1.3.6 and stay.
+
 ## [1.3.6] - 2026-08-17
 
 ### Drive starts sealed workers

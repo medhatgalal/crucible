@@ -620,6 +620,17 @@ Two TRUEs.
 EOF
 "$P/crucible" cycle approve >/dev/null
 "$P/crucible" claim admit "$cn" one-item >/dev/null
+# P0: dispatch ITEM judge must keep role=judge (ASSIGN lookup may say reviewer).
+awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="one-item"{$3="REVIEW"} {print}' \
+  "$P/STATE.tsv" > "$P/STATE.tsv.tmp" && mv "$P/STATE.tsv.tmp" "$P/STATE.tsv"
+git -C "$repo" branch ai/one-item main >/dev/null 2>&1 || true
+jout=$("$P/crucible" dispatch one-item judge j1 2>&1) || {
+  bad "guided judge dispatch refused: $jout"; jout=
+}
+printf '%s\n' "$jout" | grep -q 'as judge' && ok \
+  || bad "dispatch ITEM judge clobbered role: $jout"
+printf '%s\n' "$jout" | grep -q 'must be maker, judge, or adversary' \
+  && bad "P0: judge normalized to reviewer before managed dispatch" || true
 printf 'Next while active.\n' > "$repo/next-problem.md"
 refuses 'next refuses while an item is ACTIVE' 'ACTIVE or BLOCKED' \
   "$P/crucible" cycle problem "$repo/next-problem.md" --next
