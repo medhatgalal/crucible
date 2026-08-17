@@ -496,18 +496,20 @@ panel_has_single_product_waiver() {
   grep -qiE '^[[:space:]]*(LADDER_WAIVER|WAIVER):[[:space:]]*single-product\b' "$(panel_file)"
 }
 
-# Prefer multi-agent transport when ≥2 kinds are registered unless PANEL waives.
+# Prefer multi-agent *agents* when ≥2 kinds are registered. The transport label
+# describes this hop: acp is honest for a same-product ACP session even on a
+# multi-kind panel. Do not force the multi-agent label onto a grok→grok hop.
+# Subagent still requires a recorded ACP probe failure.
 enforce_transport_ladder() {
   transport=$1
-  kinds=$(registered_kind_count)
-  if [ "$kinds" -ge 2 ] && ! panel_has_single_product_waiver; then
-    [ "$transport" = multi-agent ] \
-      || die "refused: $kinds model kinds registered — use multi-agent transport (or PANEL LADDER_WAIVER: single-product)"
-  fi
   if [ "$transport" = subagent ]; then
     acp_probe_failed \
       || die "refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)"
   fi
+  case $transport in
+    multi-agent|acp|subagent) return 0 ;;
+    *) die "refused: transport must be multi-agent|acp|subagent" ;;
+  esac
 }
 
 cmd_contract_audit() {

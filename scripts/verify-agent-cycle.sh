@@ -180,7 +180,22 @@ if grep -q "claims/$cn/evidence/" "$scout_contract" && grep -q 'claim scout' "$s
 else
   bad 'scout contract omits report path or claim scout result'
 fi
-seal_claim_agent "$P" a1
+# Two kinds are registered (kindA + kindB). Same-product ACP hop must still
+# be labelable as acp — the cycle is multi-agent; this hop is not.
+scout_aid=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  item=$(awk -F '\t' 'NR==2 {print $2}' "$ad/meta.tsv")
+  agent=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+  role=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  [ "$item" = "$cn" ] && [ "$agent" = a1 ] && [ "$role" = scout ] && scout_aid=${ad##*/}
+done
+[ -n "$scout_aid" ] || { bad 'no scout attempt to label acp'; scout_aid=; }
+if [ -n "$scout_aid" ]; then
+  expect 'acp transport allowed on multi-kind panel' "transport acp" \
+    "$P/crucible" attempt transport "$scout_aid" acp
+fi
+seal_claim_agent "$P" a1 acp
 $P/crucible claim scout "$cn" ABSENT a1 >/dev/null
 refuses 'dispatch with no args prints usage' 'usage: crucible dispatch' \
   "$P/crucible" dispatch

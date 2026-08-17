@@ -11,6 +11,9 @@ All notable changes to this project are documented here. This project follows
   only) and they name `claims/CN/evidence/` as the scout report path.
 - `crucible dispatch` with missing args prints usage instead of crashing under `set -u`
   on a managed program.
+- `attempt transport acp` is legal on a multi-kind panel. The label describes this hop.
+  Forcing `multi-agent` onto a same-product ACP scout made contract-audit FIX the hop
+  as dishonest, then the engine refused the honest label.
 
 ## [1.3.5] - 2026-08-14
 
