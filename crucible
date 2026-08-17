@@ -2245,27 +2245,31 @@ assign_valid() {
 }
 
 # True if agent is cast for role in PANEL.ASSIGN.tsv (guided only).
+# Do not assign to `role` — POSIX functions share the caller's variables, and
+# cmd_dispatch_managed needs the dispatch role to stay `judge`.
 agent_cast_for_role() {
-  role=$(assign_role_normalize "$1"); agent=$2
+  lookup=$(assign_role_normalize "$1")
+  want=$2
   af=$(assign_file)
   [ -f "$af" ] || return 1
-  awk -F '\t' -v r="$role" -v a="$agent" '
+  awk -F '\t' -v r="$lookup" -v a="$want" '
     $1 ~ /^#/ || $1 == "role" { next }
     {
-      role=$1; agent=$2
-      if (role == "judge") role="reviewer"
-      if (role == r && agent == a) { found=1; exit }
+      assigned=$1; who=$2
+      if (assigned == "judge") assigned="reviewer"
+      if (assigned == r && who == a) { found=1; exit }
     }
     END { exit !found }
   ' "$af"
 }
 
 require_role_cast() {
-  role=$1; agent=$2
+  requested=$1
+  who=$2
   uses_guided_cycle || return 0
-  nrole=$(assign_role_normalize "$role")
-  agent_cast_for_role "$nrole" "$agent" \
-    || die "refused: agent $agent is not cast as $nrole in PANEL.ASSIGN.tsv — update casting and cycle approve-panel"
+  nrole=$(assign_role_normalize "$requested")
+  agent_cast_for_role "$nrole" "$who" \
+    || die "refused: agent $who is not cast as $nrole in PANEL.ASSIGN.tsv — update casting and cycle approve-panel"
 }
 
 panel_id() {
