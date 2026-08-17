@@ -15,7 +15,8 @@ installed prompt. This page is only the outer driver.
 | Actor | Runs | Does not run |
 | --- | --- | --- |
 | Operator | `adopt` / `adopt --refresh`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
-| Coordinator process | `cycle`, then one legal orchestrator action from `STATUS.md` | product edits, verdicts, merges, auto-approve |
+| Coordinator process | `cycle`, then one legal orchestrator action from `STATUS.md` (dispatch + seal) | product edits, verdicts, merges, auto-approve, starting ACP when drive is running |
+| Drive parent | After seal: run the exact `agents.tsv` line, `attempt start` pid, wait, `attempt finish` | write verdicts, mint approvals |
 | Maker / reviewer / auditor | only their dispatched contract | admit the next backlog row, merge, wear another hat |
 
 ## What one tick does
@@ -23,12 +24,12 @@ installed prompt. This page is only the outer driver.
 1. Run `cycle` first and rewrite `STATUS.md` (and print the line).
 2. If the line is `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, or `DONE`: print the exact human
    action and exit. Drive never auto-approves and never binds the next problem.
-3. Otherwise invoke the **cast coordinator** in a **new process** with the same brief every time:
-   read `START.md` and `STATUS.md`, run `cycle`, do the single next legal orchestrator action,
-   write nothing a maker/reviewer/auditor should write, exit.
-4. After the child exits, `cycle` again. Stop on no-progress (same status and no new
-   evidence/dispatch twice), an overdue attempt, or independence STOP. A coordinator
-   command that exits non-zero (missing adapter, ACP crash) is a **refuse**, not STOP.
+3. If a DISPATCHED attempt is already sealed, start that worker (`agents.tsv`), record pid,
+   wait, finish. One worker per tick. Then cycle.
+4. Otherwise invoke the **cast coordinator** to dispatch/seal. After the child, copy
+   isomorphic PASS audits (`--like`) and start one newly sealed worker if any.
+5. Stop on no-progress, overdue, or independence STOP. A coordinator command that exits
+   non-zero (missing adapter, ACP crash) is a **refuse**, not STOP.
 
 ```text
 .crucible/<program>/crucible drive        # loop until a human gate or stop
@@ -37,9 +38,9 @@ installed prompt. This page is only the outer driver.
 
 ## Legal coordinator actions
 
-Drive does **not** invoke makers, reviewers, or auditors. It babysits the coordinator: one
-orchestrator action per tick, then `cycle`. After a dispatch, the operator or a later tick
-must actually launch the worker named in the contract.
+Drive babysits the coordinator (dispatch + seal) and **starts one sealed worker per tick**.
+The coordinator does not implement and does not write verdicts. After PASS, do not paste
+`acp-brief.py` — the parent runs the `agents.tsv` line.
 
 | State | What drive does | Label |
 | --- | --- | --- |
@@ -47,7 +48,8 @@ must actually launch the worker named in the contract.
 | PROPOSE | Invokes coordinator; they may write `PROPOSAL.md`. Parent does not write the proposal | RULE |
 | PLAN, no ACTIVE item | Invokes coordinator; they may admit one item. Parent does not invent a slug | RULE |
 | PLAN, DRAFT/READY | Invokes coordinator; do not dispatch a maker. Parent does not dispatch a reviewer here (judge dispatch requires REVIEW) | RULE |
-| EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker (prints the invocation; does not start the process) | fallback |
+| EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker; a later tick starts it once sealed | fallback |
+| SEALED DISPATCHED | Parent runs `agents.tsv`, `attempt start` pid, wait, finish | CHECK |
 | WAIT inflight | Refuses a new live attempt id (DISPATCHED/RUNNING/OVERDUE) that was not in the pre-tick set | CHECK |
 | REVIEW RETURNED | If the inflight maker attempt is RETURNED and the item is REVIEW, parent may `dispatch` the judge | fallback |
 | reviewer FIX | Not implemented as a parent fallback | RULE |
@@ -64,8 +66,13 @@ Refuse + restore when the coordinator process, during a tick:
 - deletes `cycle: guided` from `PROGRAM`
 - introduces a **new** live attempt id while the cycle line is WAIT inflight
 
-Drive is still a **dispatch babysitter**, not a make/review runner: it does not invoke makers.
-A legitimate maker `TARGET` write during a coordinator tick is refused for the same reason.
+Drive **does** start a sealed worker (one per tick) after the coordinator exits. That start
+is the parent, not the coordinator child, so a maker `TARGET` write during the coordinator
+tick is still refused. The worker process may write its own verdicts after `attempt start`.
+
+Isomorphic claim contracts (same role; claim id normalized) may share one contract-auditor
+PASS via `contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2…`. Drive applies that copy
+automatically. The auditor still issued the PASS; the coordinator does not stamp it.
 
 ## STATUS.md
 

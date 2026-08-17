@@ -28,8 +28,8 @@ Write the audit with:
 ```text
 VERDICT: PASS | FIX | STOP
 TRANSPORT: multi-agent | acp | subagent | none
-FAILURES: ...
-REQUIRED_FIX: ...
+FAILURES: none   # PASS must say none; FIX/STOP name the failures
+REQUIRED_FIX: none
 INDEPENDENCE: ok | weak | unavailable
 ```
 

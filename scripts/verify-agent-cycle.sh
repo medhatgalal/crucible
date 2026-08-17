@@ -169,8 +169,61 @@ $P/crucible claim verdict "$cn" a1 TRUE >/dev/null
 $P/crucible claim verdict "$cn" a2 TRUE >/dev/null
 $P/crucible run-claim "$cn" a1 -- sh -c 'echo searched for existing enforcement' >/dev/null
 $P/crucible dispatch "$cn" scout a1 >/dev/null
-seal_claim_agent "$P" a1
+$P/crucible dispatch "$cn" scout a1 >/dev/null
+scout_contract=$(ls "$P/claims/$cn/dispatches/"2-scout-a1.md)
+if grep -E -q "claim verdict $cn a1" "$scout_contract"; then
+  bad 'scout contract embeds claim-auditor verdict surface'
+else
+  ok
+fi
+if grep -q "claims/$cn/evidence/" "$scout_contract" && grep -q 'claim scout' "$scout_contract"; then
+  ok
+else
+  bad 'scout contract omits report path or claim scout result'
+fi
+first_scout=
+last_scout=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  role=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  agent=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+  [ "$role" = scout ] && [ "$agent" = a1 ] || continue
+  [ -z "$first_scout" ] && first_scout=${ad##*/}
+  last_scout=${ad##*/}
+done
+[ -n "$first_scout" ] && [ "$first_scout" != "$last_scout" ] && ok \
+  || bad 'need two scout attempts to prove latest-sealed bind'
+if [ -n "$last_scout" ] && [ -f "$P/attempts/$last_scout/contract.md" ]; then
+  if grep -q 'Independence seal (before verdict)' "$P/attempts/$last_scout/contract.md"; then
+    bad 'scout contract.md still has independence-seal footer'
+  else
+    ok
+  fi
+fi
+# Two kinds are registered (kindA + kindB). Same-product ACP hop must still
+# be labelable as acp — the cycle is multi-agent; this hop is not.
+scout_aid=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  item=$(awk -F '\t' 'NR==2 {print $2}' "$ad/meta.tsv")
+  agent=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+  role=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  [ "$item" = "$cn" ] && [ "$agent" = a1 ] && [ "$role" = scout ] && scout_aid=${ad##*/}
+done
+[ -n "$scout_aid" ] || { bad 'no scout attempt to label acp'; scout_aid=; }
+if [ -n "$scout_aid" ]; then
+  expect 'acp transport allowed on multi-kind panel' "transport acp" \
+    "$P/crucible" attempt transport "$scout_aid" acp
+fi
+seal_claim_agent "$P" a1 acp
+if [ -n "$last_scout" ]; then
+  grep -q '^FAILURES: none$' "$P/attempts/$last_scout/contract-audit.md" \
+    && grep -q '^REQUIRED_FIX: none$' "$P/attempts/$last_scout/contract-audit.md" \
+    && ok || bad 'PASS must record FAILURES: none and REQUIRED_FIX: none'
+fi
 $P/crucible claim scout "$cn" ABSENT a1 >/dev/null
+refuses 'dispatch with no args prints usage' 'usage: crucible dispatch' \
+  "$P/crucible" dispatch
 expect 'verified claims advance to proposal' '^NEXT PROPOSE ' "$P/crucible" cycle
 
 cat > "$P/PROPOSAL.md" <<'EOF'
@@ -202,6 +255,8 @@ refuses 'work cannot be admitted before approval' 'not operator-approved' \
 expect 'explicit approval is content-bound' '^approved proposal ' "$P/crucible" cycle approve
 expect 'approval releases planning' '^NEXT PLAN ' "$P/crucible" cycle
 expect 'approved verified claim becomes bounded work' '^admitted C1 as item preserve-scope$' \
+  "$P/crucible" claim admit "$cn" preserve-scope
+expect 'second admit attaches to the ACTIVE slug' '^admitted C1 as item preserve-scope$' \
   "$P/crucible" claim admit "$cn" preserve-scope
 expect 'active bounded work stays in the loop' '^NEXT PLAN preserve-scope ' "$P/crucible" cycle
 
@@ -288,6 +343,44 @@ if [ ! -e "$Q/agents.tsv" ] && [ ! -e "$Q/worktrees/session" ] \
 else
   bad 'session cleanup removed durable evidence/branch or retained machine state'
 fi
+
+# --like copies a real PASS onto an isomorphic DISPATCHED scout
+like_base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-like.XXXXXX")
+like_repo="$like_base/repo"; mkdir -p "$like_repo"
+(
+  cd "$like_repo"
+  git init -q -b main
+  printf 'x\n' > t; git add t
+  git -c user.name=test -c user.email=test@example.invalid commit -qm i
+  "$C" adopt work --managed >/dev/null
+)
+L="$like_repo/.crucible/work"
+write_agents "$L"
+write_panel "$L"
+"$L/crucible" cycle approve-panel >/dev/null
+printf 'Two gaps exist.\nAlso a second gap.\n' > "$like_repo/report.md"
+"$L/crucible" cycle problem "$like_repo/report.md" >/dev/null
+c1=$("$L/crucible" claim add 'two gaps exist' 'Two gaps exist.')
+c2=$("$L/crucible" claim add 'also a second gap' 'Also a second gap.')
+"$L/crucible" dispatch "$c1" scout a1 >/dev/null
+"$L/crucible" dispatch "$c2" scout a1 >/dev/null
+id1=; id2=
+for ad in "$L"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  item=$(awk -F '\t' 'NR==2 {print $2}' "$ad/meta.tsv")
+  role=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  [ "$role" = scout ] || continue
+  [ "$item" = "$c1" ] && id1=${ad##*/}
+  [ "$item" = "$c2" ] && id2=${ad##*/}
+done
+[ -n "$id1" ] && [ -n "$id2" ] || bad 'like-test missing scout attempts'
+"$L/crucible" attempt transport "$id1" acp >/dev/null
+"$L/crucible" attempt transport "$id2" acp >/dev/null
+"$L/crucible" contract-audit "$id1" j2 PASS >/dev/null
+expect 'PASS --like copies isomorphic scout audit' 'like '"$id1" \
+  "$L/crucible" contract-audit "$id1" j2 PASS --like "$id2"
+grep -q '^VERDICT: PASS$' "$L/attempts/$id2/contract-audit.md" && ok \
+  || bad '--like did not write PASS onto the sibling attempt'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
