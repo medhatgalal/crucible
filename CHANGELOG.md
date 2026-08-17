@@ -5,18 +5,34 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-### Claim-scout contracts are role-faithful
+## [1.3.6] - 2026-08-17
 
-- Generated scout contracts no longer embed `claim verdict` (that surface is claim-auditor
-  only) and they name `claims/CN/evidence/` as the scout report path.
-- `crucible dispatch` with missing args prints usage instead of crashing under `set -u`
-  on a managed program.
+### Drive starts sealed workers
+
+- `drive` executed the coordinator and **printed** the `agents.tsv` line. Nobody started
+  grok/kiro ACP, so the DAG stopped after contract-audit PASS. Drive now runs the exact
+  registered command for one sealed DISPATCHED attempt per tick, records `attempt start`
+  with the observed pid, waits, and records `RETURNED|TIMEOUT|STOPPED`. It still does
+  not write verdicts or implement product code.
+- `contract-audit PASS --like ATTEMPT2…` copies a real auditor PASS onto isomorphic
+  DISPATCHED contracts (same role; claim id normalized). Drive applies that copy so
+  seven scout briefs do not need seven contract-auditor sessions. The coordinator
+  cannot stamp PASS.
+- `claim admit CN SLUG` attaches a second claim to the current ACTIVE item of that
+  slug. It no longer calls `add` and dies with `another item is current`.
+- PASS writes `FAILURES: none` and `REQUIRED_FIX: none`. Checklist prose in the note
+  is `NOTE:`, not a fake failure list. The file remains immutable.
+- Scout `contract.md` omits the “Independence seal (before verdict)” footer (P6).
+  Transport + audit still happen on the attempt ledger.
+
+### Claim-scout contracts are role-faithful (kept from the 1.3.6 review branch)
+
+- Generated scout contracts no longer embed `claim verdict` and they name
+  `claims/CN/evidence/` as the scout report path.
+- `crucible dispatch` with missing args prints usage instead of crashing under `set -u`.
 - `attempt transport acp` is legal on a multi-kind panel. The label describes this hop.
-  Forcing `multi-agent` onto a same-product ACP scout made contract-audit FIX the hop
-  as dishonest, then the engine refused the honest label.
 - `claim scout` / `claim verdict` bind the latest **sealed** dispatch, not the first
-  leftover file. Redispatch after FIX left `1-scout-*.md` unsealed; first-match made
-  scouts unable to record results.
+  leftover unsealed file.
 
 ## [1.3.5] - 2026-08-14
 

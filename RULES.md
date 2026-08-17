@@ -89,7 +89,10 @@ a RULE into a CHECK, do it and say so in the lesson.
     after each coordinator process and re-checks `cycle: guided` every tick. `WAIT PANEL`,
     `WAIT APPROVAL`, `ESCALATE`, and `DONE` exit without invoking the coordinator.
     Drive never binds the next PROBLEM (`cycle problem FILE --next` is a human gate).
-    `cycle approve-panel` and `cycle approve` refuse while `.drive.lock` exists. After the child,
+    Drive starts at most one sealed DISPATCHED worker per tick (`agents.tsv` command,
+    `attempt start` with the observed pid, wait, `attempt finish` RETURNED|TIMEOUT|STOPPED).
+    Drive does not write verdicts. `cycle approve-panel` and `cycle approve` refuse while
+    `.drive.lock` exists. After the child,
     these refuse (and restore): product `HEAD` movement (commit or completed merge), `MERGE_HEAD`,
     new or content-changed product porcelain (including already-dirty files), task-worktree
     writes, new or overwritten `items/*/verdicts` and `claims/*/verdicts` files, removing

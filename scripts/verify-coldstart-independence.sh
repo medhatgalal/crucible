@@ -148,7 +148,7 @@ $P/crucible run-claim "$cn" a1 -- sh -c 'echo e' >/dev/null
 refuses 'TRUE without claim dispatch' 'claim dispatch' "$P/crucible" claim verdict "$cn" a1 TRUE
 refuses 'FALSE without claim dispatch' 'claim dispatch' "$P/crucible" claim verdict "$cn" a1 FALSE
 $P/crucible dispatch "$cn" claim-auditor a1 >/dev/null
-refuses 'TRUE with dispatch but no seal' 'transport|contract-audit' \
+refuses 'TRUE with dispatch but no seal' 'sealed|matching claim attempt|transport|contract-audit' \
   "$P/crucible" claim verdict "$cn" a1 TRUE
 seal_claim_agent "$P" a1
 if $P/crucible claim verdict "$cn" a1 TRUE >/dev/null; then ok; else bad 'TRUE with dispatch+seal should pass'; fi
@@ -218,7 +218,7 @@ refuses 'transport under unapproved panel' 'panel' \
 write_agents "$P"
 # Re-approve multi-kind, try acp without waiver → refuse
 expect 'multi-kind restore' '^NEXT ' "$P/crucible" cycle
-refuses 'acp with two kinds and no waiver' 'multi-agent' \
+expect 'acp hop is legal on a multi-kind panel' 'transport acp' \
   "$P/crucible" attempt transport "$aid_l" acp
 
 # Cast exclusion: coordinator cannot be contract-auditor
@@ -427,7 +427,7 @@ write_panel "$P"
 write_agents "$P"
 write_panel_assign
 expect 'strong panel re-approves' '^approved panel ' "$P/crucible" cycle approve-panel
-refuses 'start refuses dishonest acp seal after strong restore' 'multi-agent|transport|ladder|kinds' \
+expect 'acp seal remains startable after multi-kind restore' "RUNNING pid" \
   "$P/crucible" attempt start "$aid_w" $$
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"

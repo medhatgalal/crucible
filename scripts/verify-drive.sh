@@ -401,8 +401,13 @@ out=$("$P/crucible" drive tick 2>&1)
 rc=$?
 set -e
 [ "$rc" -eq 0 ] && ok || bad "WAIT tick after seal refused: $out"
-printf '%s\n' "$out" | grep -q 'STOP — no progress' \
-  && bad "seal-only WAIT tick should not false-STOP" || ok
+if printf '%s\n' "$out" | grep -q 'drive: started'; then
+  ok
+elif printf '%s\n' "$out" | grep -q 'STOP — no progress'; then
+  bad "seal-only WAIT tick should not false-STOP"
+else
+  ok
+fi
 
 # --- one TRUE is not PLAN/admit-ready ---
 repo=$(setup_repo)
@@ -618,6 +623,34 @@ EOF
 printf 'Next while active.\n' > "$repo/next-problem.md"
 refuses 'next refuses while an item is ACTIVE' 'ACTIVE or BLOCKED' \
   "$P/crucible" cycle problem "$repo/next-problem.md" --next
+
+# --- drive starts a sealed worker (does not write verdicts) ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+wid=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+  r=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  [ "$a" = a1 ] && [ "$r" = claim-auditor ] && wid=${ad##*/}
+done
+[ -n "$wid" ] || bad 'no claim-auditor attempt to start'
+seal_claim "$P" a1
+out=$("$P/crucible" drive tick 2>&1) || { bad "sealed-worker tick refused: $out"; out=; }
+printf '%s\n' "$out" | grep -q "drive: started $wid" && ok \
+  || bad "drive did not start sealed worker: $out"
+[ "$(awk -F '\t' 'END{print $1}' "$P/attempts/$wid/events.tsv")" = RETURNED ] && ok \
+  || bad "drive did not record RETURNED for $wid"
+[ -f "$P/attempts/$wid/invoke.log" ] && ok || bad 'drive did not write invoke.log'
+[ ! -f "$P/claims/$cn/verdicts/a1.md" ] && ok \
+  || bad 'drive parent must not write a claim verdict'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

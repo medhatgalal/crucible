@@ -13,7 +13,7 @@
 #
 # Roles come from the brief an agent receives, never from which agent it is. Any CLI
 # can be maker; any 1+ CLIs can be judges, same kind or mixed. agents.tsv is two
-# columns: name<TAB>kind. Launching agents is the orchestrator's job, not this file's.
+# columns: name<TAB>kind. Drive starts sealed agents.tsv workers; it does not write verdicts.
 #
 # WHAT THIS ENFORCES (a missing or wrong file stops the run):
 #   work exists; no symlinks or newline filenames anywhere in the item; the falsifier
@@ -54,7 +54,7 @@ Crucible runs one durable problem-to-done cycle for a coordinating agent.
   crucible cycle problem FILE --next   same panel; archive this investigation; bind a new PROBLEM
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
-  crucible drive [tick]                Ralph-style outer loop: cycle, one legal action, stop for humans
+  crucible drive [tick]                Ralph-style outer loop: cycle, seal, start one worker, stop for humans
   crucible help protocol               show internal agent protocol primitives
 
 Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
@@ -71,6 +71,7 @@ not drive the cycle with them.
   dispatch / attempt / result         coordinate isolated agent attempts
   attempt transport                   record multi-agent|acp|subagent isolation
   contract-audit ATTEMPT AUDITOR …    file-based contract PASS|FIX|STOP by a distinct agent
+  contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2 …   copy PASS onto isomorphic DISPATCHED contracts
   probe-acp ok|failed|unavailable     record ACP availability for the ladder
   run / run-claim                     record work-bound evidence
   check / close                       refuse unsupported completion
@@ -439,23 +440,35 @@ cmd_attempt() {
       case $value in
         RETURNED) printf '%s RETURNED; record its result next\n' "$id" ;;
         TIMEOUT)
-          if [ "$task" != - ] && [ "$retry" = - ]; then
-            state_attempt_update "$slug" ACTIVE TASKS RETRY_AVAILABLE
-            printf '%s TIMEOUT; one task retry is available\n' "$id"
-          elif [ "$task" != - ]; then
-            state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
-            printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
-          elif [ "$retry" = - ]; then
-            state_attempt_update "$slug" ACTIVE "$id" RETRY_AVAILABLE
-            printf '%s TIMEOUT; one retry is available\n' "$id"
-          else
-            state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
-            printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
-          fi ;;
+          case $slug in C[0-9]*)
+            printf '%s TIMEOUT; claim attempt has no item state\n' "$id"
+            ;;
+          *)
+            if [ "$task" != - ] && [ "$retry" = - ]; then
+              state_attempt_update "$slug" ACTIVE TASKS RETRY_AVAILABLE
+              printf '%s TIMEOUT; one task retry is available\n' "$id"
+            elif [ "$task" != - ]; then
+              state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
+              printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
+            elif [ "$retry" = - ]; then
+              state_attempt_update "$slug" ACTIVE "$id" RETRY_AVAILABLE
+              printf '%s TIMEOUT; one retry is available\n' "$id"
+            else
+              state_attempt_update "$slug" BLOCKED - RETRY_EXHAUSTED
+              printf '%s TIMEOUT; item blocked RETRY_EXHAUSTED\n' "$id"
+            fi
+            ;;
+          esac ;;
         STOPPED|ABANDONED)
-          if [ "$task" != - ]; then block_code=TASK_BLOCKED; else block_code=OPERATOR_DECISION; fi
-          state_attempt_update "$slug" BLOCKED - "$block_code"
-          printf '%s %s; item blocked %s\n' "$id" "$value" "$block_code" ;;
+          case $slug in C[0-9]*)
+            printf '%s %s; claim attempt has no item state\n' "$id" "$value"
+            ;;
+          *)
+            if [ "$task" != - ]; then block_code=TASK_BLOCKED; else block_code=OPERATOR_DECISION; fi
+            state_attempt_update "$slug" BLOCKED - "$block_code"
+            printf '%s %s; item blocked %s\n' "$id" "$value" "$block_code"
+            ;;
+          esac ;;
       esac
       ;;
     *) die "usage: crucible attempt start|overdue|finish|transport ATTEMPT ..." ;;
@@ -512,15 +525,58 @@ enforce_transport_ladder() {
   esac
 }
 
+contract_normalize_file() {
+  awk '
+    /^## The claim/ { skip=1; print "## The claim"; print "CN"; next }
+    skip && /^## / { skip=0 }
+    skip { next }
+    { print }
+  ' "$1" | sed -e '/^attempt-id:/d' \
+               -e 's/C[0-9][0-9]*/CN/g' \
+               -e 's/A[0-9][0-9.][0-9.]*/ATTEMPT/g'
+}
+
+contracts_isomorphic() {
+  a=$(contract_normalize_file "$1" | h12)
+  b=$(contract_normalize_file "$2" | h12)
+  [ -n "$a" ] && [ "$a" = "$b" ]
+}
+
+contract_audit_copy_like() {
+  template=$1
+  target=$2
+  tad="$ROOT/attempts/$template"
+  dad=$(attempt_dir "$target")
+  [ -f "$tad/contract-audit.md" ] || return 1
+  grep -q '^VERDICT: PASS' "$tad/contract-audit.md" || return 1
+  [ ! -e "$dad/contract-audit.md" ] || return 1
+  [ "$(attempt_state "$target")" = DISPATCHED ] || return 1
+  [ -f "$tad/contract.md" ] && [ -f "$dad/contract.md" ] || return 1
+  [ "$(attempt_meta "$template" 5)" = "$(attempt_meta "$target" 5)" ] || return 1
+  contracts_isomorphic "$tad/contract.md" "$dad/contract.md" || return 1
+  sed "s/$template/$target/g" "$tad/contract-audit.md" > "$dad/.contract-audit.$$.tmp"
+  mv "$dad/.contract-audit.$$.tmp" "$dad/contract-audit.md"
+  printf '%s/contract-audit.md (like %s)\n' "$dad" "$template"
+}
+
 cmd_contract_audit() {
   uses_managed_lifecycle || die "contract-audit requires managed lifecycle behavior"
   id=${1:-}; auditor=${2:-}; verdict=${3:-}
   [ -n "$id" ] && [ -n "$auditor" ] && [ -n "$verdict" ] \
-    || die "usage: crucible contract-audit ATTEMPT AUDITOR PASS|FIX|STOP [note...]"
+    || die "usage: crucible contract-audit ATTEMPT AUDITOR PASS|FIX|STOP [note...] | PASS --like ATTEMPT2..."
   case $verdict in PASS|FIX|STOP) : ;; *) die "contract-audit verdict must be PASS, FIX, or STOP" ;; esac
   reg "$auditor"
   shift 3
-  note=${*:-NONE}
+  likes=
+  note=NONE
+  if [ "${1:-}" = --like ]; then
+    [ "$verdict" = PASS ] || die 'refused: --like requires PASS'
+    shift
+    [ $# -gt 0 ] || die 'usage: crucible contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2...'
+    likes=$*
+  else
+    [ $# -eq 0 ] || note=$*
+  fi
   ad=$(attempt_dir "$id")
   [ -f "$ad/contract.md" ] || die "attempt has no contract.md: $id"
   st=$(attempt_state "$id")
@@ -566,16 +622,31 @@ cmd_contract_audit() {
     existing_auditor=$(sed -n 's/^AUDITOR: //p' "$ad/contract-audit.md" | head -1)
     if [ "$existing" = "$verdict" ] && [ "$existing_auditor" = "$auditor" ]; then
       printf '%s/contract-audit.md (already %s by %s)\n' "$ad" "$verdict" "$auditor"
+      if [ -n "$likes" ]; then
+        role=$(attempt_meta "$id" 5)
+        for like_id in $likes; do
+          contract_audit_copy_like "$id" "$like_id" \
+            || die "refused: $like_id is not an isomorphic DISPATCHED $role contract of $id"
+        done
+      fi
       return
     fi
     die "contract-audit is immutable: $id (existing $existing by $existing_auditor)"
   fi
+  case $verdict in
+    PASS) failures=none; required_fix=none ;;
+    FIX) failures=$note; required_fix=$note ;;
+    STOP) failures=$note; required_fix=none ;;
+  esac
   tmp="$ad/.contract-audit.$$.tmp"
   {
     printf 'VERDICT: %s\nAUDITOR: %s\nAUDITOR-KIND: %s\nTRANSPORT: %s\nINDEPENDENCE: %s\n' \
       "$verdict" "$auditor" "$(kind_of "$auditor")" "$transport" "$independence"
-    printf 'FAILURES: %s\nREQUIRED_FIX: %s\n' "$note" "$note"
+    printf 'FAILURES: %s\nREQUIRED_FIX: %s\n' "$failures" "$required_fix"
     printf '\nFile-based contract audit for attempt %s by %s.\n' "$id" "$auditor"
+    if [ "$verdict" = PASS ] && [ "$note" != NONE ]; then
+      printf 'NOTE: %s\n' "$note"
+    fi
   } > "$tmp"
   mv "$tmp" "$ad/contract-audit.md"
   if [ "$verdict" = STOP ]; then
@@ -605,6 +676,12 @@ cmd_contract_audit() {
     return
   fi
   printf '%s/contract-audit.md\n' "$ad"
+  if [ -n "$likes" ]; then
+    for like_id in $likes; do
+      contract_audit_copy_like "$id" "$like_id" \
+        || die "refused: $like_id is not an isomorphic DISPATCHED $role contract of $id"
+    done
+  fi
 }
 
 cmd_probe_acp() {
@@ -1226,10 +1303,12 @@ cmd_dispatch_claim() {
     printf 'state\tepoch\tpid\treason\nDISPATCHED\t%s\t-\tdispatch-recorded\n' "$now" > "$staging/events.tsv"
     {
       cat "$out"
-      printf '\n## Independence seal (before verdict)\n\n'
-      printf 'While DISPATCHED, record transport and a contract-audit PASS:\n\n'
-      printf '    %s attempt transport %s multi-agent|acp|subagent\n' "$self" "$attempt_id"
-      printf '    %s contract-audit %s <contract-auditor> PASS\n' "$self" "$attempt_id"
+      if [ "$role" != scout ]; then
+        printf '\n## Independence seal (before verdict)\n\n'
+        printf 'While DISPATCHED, record transport and a contract-audit PASS:\n\n'
+        printf '    %s attempt transport %s multi-agent|acp|subagent\n' "$self" "$attempt_id"
+        printf '    %s contract-audit %s <contract-auditor> PASS\n' "$self" "$attempt_id"
+      fi
     } > "$staging/contract.md"
     printf 'claim-dispatch: %s\n' "${out#"$ROOT"/}" > "$staging/claim-dispatch.txt"
     mv "$staging" "$ROOT/attempts/$attempt_id"
@@ -2627,9 +2706,10 @@ If drive is running, only do the next cycle action. Conversational "keep looping
 1. Read START.md and STATUS.md.
 2. Run: $self cycle
 3. Perform only the single next legal orchestrator action for the current state.
-4. Write nothing a maker, reviewer, or auditor should write.
-5. Do not edit owned product paths. Do not write verdicts. Do not merge.
-6. Exit.
+4. Dispatch and seal (transport + contract-audit). Do not start ACP workers — drive starts sealed attempts.
+5. Write nothing a maker, reviewer, or auditor should write.
+6. Do not edit owned product paths. Do not write verdicts. Do not merge.
+7. Exit.
 
 Legal actions: see STATUS.md and docs/drive.md. INVESTIGATE fallback dispatches one missing claim contract. Do not implement, commit, merge, write verdicts, or flip cycle: guided.
 EOF
@@ -2881,6 +2961,138 @@ drive_live_attempt_count() {
   printf '%s' "$n"
 }
 
+drive_apply_isomorphic_audits() {
+  [ -d "$ROOT/attempts" ] || return 0
+  for tad in "$ROOT"/attempts/A*; do
+    [ -d "$tad" ] || continue
+    [ -f "$tad/contract-audit.md" ] || continue
+    grep -q '^VERDICT: PASS' "$tad/contract-audit.md" || continue
+    tid=${tad##*/}
+    for dad in "$ROOT"/attempts/A*; do
+      [ -d "$dad" ] || continue
+      did=${dad##*/}
+      [ "$did" = "$tid" ] && continue
+      [ -e "$dad/contract-audit.md" ] && continue
+      contract_audit_copy_like "$tid" "$did" >/dev/null || true
+    done
+  done
+}
+
+drive_attempt_is_runnable() {
+  id=$1
+  [ "$(attempt_state "$id")" = DISPATCHED ] || return 1
+  claim_attempt_is_sealed "$id"
+}
+
+drive_next_sealed_id() {
+  [ -d "$ROOT/attempts" ] || return 1
+  inflight=$(drive_inflight)
+  if [ -n "$inflight" ] && [ "$inflight" != - ] && drive_attempt_is_runnable "$inflight"; then
+    printf '%s' "$inflight"
+    return 0
+  fi
+  item=$(drive_active_item)
+  if [ -n "$item" ] && [ "$item" != - ]; then
+    for ad in "$ROOT"/attempts/A*; do
+      [ -d "$ad" ] || continue
+      id=${ad##*/}
+      [ "$(attempt_meta "$id" 2)" = "$item" ] || continue
+      drive_attempt_is_runnable "$id" || continue
+      printf '%s' "$id"
+      return 0
+    done
+  fi
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    drive_attempt_is_runnable "$id" || continue
+    printf '%s' "$id"
+    return 0
+  done
+  return 1
+}
+
+drive_invoke_sealed_worker() {
+  repo=$1
+  id=$(drive_next_sealed_id) || return 1
+  ad="$ROOT/attempts/$id"
+  agent=$(attempt_meta "$id" 6)
+  brief="$ad/contract.md"
+  [ -f "$brief" ] || return 1
+  cmd=$(invocation "$agent" "$brief")
+  case $cmd in
+    '(no command registered'*|'')
+      printf 'HUMAN — sealed attempt %s has no agents.tsv command for %s\n' "$id" "$agent"
+      return 1
+      ;;
+  esac
+  now=$(date +%s)
+  timeout=${CRUCIBLE_DRIVE_WORKER_TIMEOUT:-900}
+  posint "$timeout" || timeout=900
+  dl=$(attempt_meta "$id" 12)
+  if posint "$dl"; then
+    rem=$((dl - now))
+    if [ "$rem" -gt 0 ] && [ "$rem" -lt "$timeout" ]; then
+      timeout=$rem
+    fi
+  fi
+  ( cd "$repo" && sh -c "$cmd" ) > "$ad/invoke.log" 2>&1 &
+  pid=$!
+  cmd_attempt start "$id" "$pid" >/dev/null || {
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    return 1
+  }
+  elapsed=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$timeout" ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cmd_attempt finish "$id" TIMEOUT "drive worker exceeded ${timeout}s" >/dev/null
+      printf 'drive: %s TIMEOUT after %ss\n' "$id" "$timeout"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  rc=0
+  wait "$pid" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    cmd_attempt finish "$id" RETURNED "drive worker exit 0" >/dev/null
+  else
+    cmd_attempt finish "$id" STOPPED "drive worker exit $rc" >/dev/null
+  fi
+  printf 'drive: started %s pid %s (%s); finish recorded\n' "$id" "$pid" "$agent"
+}
+
+drive_finish_tick() {
+  line2=$(write_cycle_status)
+  state2=$(drive_state_name "$line2")
+  token=$(drive_progress_token "$line2")
+  prev=
+  [ -f "$ROOT/DRIVE.state" ] && prev=$(sed -n 's/^token: //p' "$ROOT/DRIVE.state" | head -1)
+  stalls=0
+  [ -f "$ROOT/DRIVE.state" ] && stalls=$(sed -n 's/^stalls: //p' "$ROOT/DRIVE.state" | head -1)
+  [ -n "$stalls" ] || stalls=0
+  if [ -n "$prev" ] && [ "$prev" = "$token" ]; then
+    stalls=$((stalls + 1))
+  else
+    stalls=0
+  fi
+  printf 'token: %s\nstalls: %s\n' "$token" "$stalls" > "$ROOT/DRIVE.state"
+  if [ "$stalls" -ge 1 ]; then
+    printf 'STOP — no progress (same status and no new evidence twice)\n'
+    drive_unlock; trap - 0 1 2 15
+    return 2
+  fi
+  if drive_is_human_gate "$state2"; then
+    drive_print_human "$state2" "$line2"
+    drive_unlock; trap - 0 1 2 15
+    return 2
+  fi
+  return 0
+}
+
 drive_perform_legal() {
   state=$1
   line=$2
@@ -2993,6 +3205,16 @@ cmd_drive() {
       return 0
     fi
     mkdir -p "$ROOT/items"
+    drive_apply_isomorphic_audits
+    if drive_invoke_sealed_worker "$repo"; then
+      if drive_finish_tick; then
+        case $sub in
+          tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
+        esac
+        continue
+      fi
+      return 0
+    fi
     drive_take_snapshot "$repo"
     before_disp=0
     [ -d "$ROOT/claims" ] && before_disp=$(find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | wc -l | tr -d ' ')
@@ -3018,33 +3240,23 @@ cmd_drive() {
     if [ "$after_disp" -le "$before_disp" ]; then
       drive_perform_legal "$state" "$line"
     fi
-    line2=$(write_cycle_status)
-    state2=$(drive_state_name "$line2")
-    token=$(drive_progress_token "$line2")
-    prev=
-    [ -f "$ROOT/DRIVE.state" ] && prev=$(sed -n 's/^token: //p' "$ROOT/DRIVE.state" | head -1)
-    stalls=0
-    [ -f "$ROOT/DRIVE.state" ] && stalls=$(sed -n 's/^stalls: //p' "$ROOT/DRIVE.state" | head -1)
-    [ -n "$stalls" ] || stalls=0
-    if [ -n "$prev" ] && [ "$prev" = "$token" ]; then
-      stalls=$((stalls + 1))
+    drive_apply_isomorphic_audits
+    if drive_invoke_sealed_worker "$repo"; then
+      if drive_finish_tick; then
+        case $sub in
+          tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
+        esac
+        continue
+      fi
+      return 0
+    fi
+    if drive_finish_tick; then
+      case $sub in
+        tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
+      esac
     else
-      stalls=0
-    fi
-    printf 'token: %s\nstalls: %s\n' "$token" "$stalls" > "$ROOT/DRIVE.state"
-    if [ "$stalls" -ge 1 ]; then
-      printf 'STOP — no progress (same status and no new evidence twice)\n'
-      drive_unlock; trap - 0 1 2 15
       return 0
     fi
-    if drive_is_human_gate "$state2"; then
-      drive_print_human "$state2" "$line2"
-      drive_unlock; trap - 0 1 2 15
-      return 0
-    fi
-    case $sub in
-      tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
-    esac
   done
 }
 
@@ -3832,7 +4044,15 @@ cmd_claim() {
       fi
       approval_current || die 'refused: the current PROPOSAL.md is not operator-approved'
     fi
-    cmd_add "$slug" "$(sed -n "/^### $n /s/^### $n — //p" "$(claims_file)" | head -1)"
+    if [ -d "$(D "$slug")" ]; then
+      if uses_managed_lifecycle; then
+        current=$(awk -F '\t' 'NR > 1 && $2 == "ACTIVE" { print $1; exit }' "$ROOT/STATE.tsv")
+        [ "$current" = "$slug" ] \
+          || die "refused: item $slug exists but is not the current ACTIVE item"
+      fi
+    else
+      cmd_add "$slug" "$(sed -n "/^### $n /s/^### $n — //p" "$(claims_file)" | head -1)"
+    fi
     awk -v c="### $n " -v s="$slug" '
       $0 ~ "^"c {inc=1} inc && /^    item:/ {print "    item: " s; inc=0; next}
       /^### C/ && $0 !~ "^"c {inc=0} {print}' "$(claims_file)" > "$ROOT/c.$$.tmp" \

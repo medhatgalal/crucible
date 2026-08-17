@@ -98,6 +98,10 @@ Babysit the coordinator:
 .crucible/work/crucible drive tick   # one iteration
 ```
 
+From 1.3.6, `drive` starts sealed `agents.tsv` workers (pid, start, finish). You do not
+paste `acp-brief.py` while drive is running. Refresh first (`adopt <program> --refresh`)
+or `engine:` in `STATUS.md` will stay `1.3.5` and workers will not start.
+
 | Who | Runs |
 | --- | --- |
 | Operator | `adopt` / `--refresh`, `drive`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE [--next]`, `cycle clean` |

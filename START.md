@@ -130,8 +130,11 @@ Every role dispatch:
 3. Run **contract-auditor** → `contract-audit ATTEMPT AUDITOR PASS|FIX|STOP` (still DISPATCHED).
 4. On FIX the attempt is SUPERSEDED — rewrite the contract via **redispatch**; on STOP escalate
    `INDEPENDENCE_UNAVAILABLE` — do not do the role yourself.
-5. Only after PASS: invoke the agent with only “read the contract and follow it exactly.”
-6. Record observed outcomes (`attempt start|finish`, `result`).
+5. Only after PASS: if `drive` is running, **do not** start the worker — drive executes the
+   exact `agents.tsv` command, records `attempt start` with the pid, waits, and records
+   finish. If drive is not running, invoke that command yourself, then `attempt start|finish`.
+6. Record observed outcomes (`result`) after the worker returns. Do not write verdicts for
+   another role.
 
 Dispatch makers into isolated contexts/worktrees. Bind attempts and evidence to the current work id.
 Give reviewers the approved contract, current work, and evidence—not maker rationale. A rejection
