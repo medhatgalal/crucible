@@ -43,5 +43,6 @@ record a typed escalation and stop.
 
 At DONE, report the current work id and evidence (and `INDEPENDENCE.md` when attempts exist). Do not
 run `cycle problem FILE --next` and do not recast the panel. Tell the operator: another PROBLEM on
-this panel uses `--next`; otherwise preview `cycle clean --dry-run`. Do not write project knowledge
+this panel uses `--next`; junk INVESTIGATE uses `--abandon REASON` (no PASS); otherwise preview
+`cycle clean --dry-run`. Do not write project knowledge
 or persona state into global agent memory.

@@ -14,7 +14,7 @@ installed prompt. This page is only the outer driver.
 
 | Actor | Runs | Does not run |
 | --- | --- | --- |
-| Operator | `adopt` / `adopt --refresh`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
+| Operator | `adopt` / `adopt --refresh`, `drive` / `drive tick`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next`, `cycle problem --abandon REASON`, `cycle clean` | protocol verbs (`dispatch`, `attempt`, `result`) |
 | Coordinator process | `cycle`, then one legal orchestrator action from `STATUS.md` (dispatch + seal) | product edits, verdicts, merges, auto-approve, starting ACP when drive is running |
 | Drive parent | After seal: run the exact `agents.tsv` line, `attempt start` pid, wait, `attempt finish` | write verdicts, mint approvals |
 | Maker / reviewer / auditor | only their dispatched contract | admit the next backlog row, merge, wear another hat |
@@ -52,7 +52,7 @@ The coordinator does not implement and does not write verdicts. After PASS, do n
 | SEALED DISPATCHED | Parent runs `agents.tsv`, `attempt start` pid, wait, finish | CHECK |
 | WAIT inflight | Refuses a new live attempt id (DISPATCHED/RUNNING/OVERDUE) that was not in the pre-tick set | CHECK |
 | REVIEW RETURNED | If the inflight maker attempt is RETURNED and the item is REVIEW, parent may `dispatch` the judge | fallback |
-| reviewer FIX | Not implemented as a parent fallback | RULE |
+| reviewer FIX | Judge `NEXT:FIX`: parent `phase ITEM BUILD` and may dispatch the maker. Coordinator does not start ACP after seal. | CHECK |
 
 ### What the implement CHECK covers
 
