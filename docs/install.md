@@ -106,7 +106,9 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` stop drive. Conversational
 “keep looping” is not implement.
 
-After `DONE`: `--next` or `cycle clean --dry-run`. Apply cleanup only with approval.
+After `DONE`: **`cycle clean --dry-run` is the next verb** (CLEANUP card). Drive
+stops and never `--apply`. Then `--next` or `--apply` (human only). Jira leftovers
+and ignored `.validation/` are not cycle clean.
 
 `STATUS.md` `worth:` is `BUILD` (scout ABSENT), `DOCS` (only PARTLY-EXISTS),
 `NO-BUILD` (no ABSENT/PARTLY), or `UNKNOWN` (investigation incomplete).

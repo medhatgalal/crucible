@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.5.1] - 2026-08-18
+
+### Cleanup is a first-class DONE step
+
+- `DONE` next verb is `cycle clean --dry-run` (or human `--next`). Drive stops
+  and never `--apply`, never `--next`, never deletes Jira.
+- `cycle` prints a CLEANUP card: closed items, stale evidence, dead pids,
+  stale panel title, CLAIMS still NEW. Not husks, not `.validation/`, not Jira.
+- `close` refuses leftover `evidence/*` work-ids (run `evidence archive`) and
+  work-id ≠ branch HEAD unless `--successor SHA`.
+- `--next` refuses leftover `pr-status` titles and refreshes PANEL title/risk
+  (cast unchanged; PANEL.APPROVAL rewritten to the new panel-id).
+
 ## [1.5.0] - 2026-08-18
 
 ### Claim polarity, verdicts, close, and FIX re-entry

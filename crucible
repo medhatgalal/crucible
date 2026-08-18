@@ -2705,7 +2705,7 @@ drive_human_gate() {
     WAIT_PANEL) printf 'approve-panel' ;;
     WAIT_APPROVAL) printf 'approve' ;;
     ESCALATE) printf 'escalate' ;;
-    DONE) printf 'done' ;;
+    DONE) printf 'cycle-clean' ;;
     *) printf 'none' ;;
   esac
 }
@@ -2764,9 +2764,16 @@ write_cycle_status() {
     printf 'next-human-gate: %s\n' "$gate"
     printf 'updated-epoch: %s\n' "$(date +%s)"
     printf '\nRead this after `cycle`. If drive is running, perform only the single next legal orchestrator action.\n'
+    if [ "$state" = DONE ]; then
+      printf '\n'
+      cycle_cleanup_report
+    fi
   } > "$tmp"
   mv "$tmp" "$ROOT/STATUS.md"
   printf '%s\n' "$line"
+  if [ "$state" = DONE ]; then
+    cycle_cleanup_report
+  fi
 }
 
 drive_snap_dir() { printf '%s/.drive-snap' "$ROOT"; }
@@ -3265,8 +3272,9 @@ drive_print_human() {
     ESCALATE)
       printf 'HUMAN — %s\n' "$line" ;;
     DONE)
-      printf 'HUMAN — cycle is DONE (no admittable claim). Same panel, next problem: %s cycle problem FILE --next\n' "$self"
-      printf 'HUMAN — or preview cleanup: %s cycle clean --dry-run\n' "$self" ;;
+      printf 'HUMAN — cycle is DONE. Next: %s cycle clean --dry-run\n' "$self"
+      printf 'HUMAN — or bind the next problem: %s cycle problem FILE --next\n' "$self"
+      printf 'HUMAN — drive never runs cycle clean --apply and never --nexts\n' "$self" ;;
   esac
 }
 
@@ -3470,7 +3478,7 @@ cmd_cycle_status() {
     return
   fi
   write_independence_receipt
-  printf 'DONE — no admittable claim remains; leftover items/ dirs are not work. Same panel, next problem: cycle problem FILE --next\n'
+  printf 'DONE — no admittable claim remains. Next: cycle clean --dry-run (or cycle problem FILE --next). Drive never --apply.\n'
 }
 
 cycle_worktree_records() {
@@ -3501,6 +3509,72 @@ cycle_worktree_records() {
   done
 }
 
+item_stale_evidence_files() {
+  slug=$1
+  wid=$2
+  d=$(D "$slug")
+  [ -d "$d/evidence" ] || return 1
+  found=0
+  for f in "$d/evidence"/*; do
+    [ -f "$f" ] || continue
+    b=${f##*/}
+    case $b in .partial.*) continue ;; *.txt) : ;; *) continue ;; esac
+    stem=${b%.txt}
+    id=${stem##*.}
+    [ "$id" = "$wid" ] && continue
+    printf '%s\n' "${f#"$ROOT"/}"
+    found=1
+  done
+  [ "$found" -eq 1 ]
+}
+
+cycle_cleanup_report() {
+  printf 'CLEANUP — next verb: cycle clean --dry-run (drive never --apply). Or cycle problem FILE --next.\n'
+  if [ -f "$ROOT/STATE.tsv" ]; then
+    awk -F '\t' 'NR > 1 && $2 == "CLOSED" { printf "closed-item: %s work %s\n", $1, $4 }' "$ROOT/STATE.tsv"
+  fi
+  if [ -d "$ROOT/items" ]; then
+    for idir in "$ROOT"/items/*; do
+      [ -d "$idir" ] || continue
+      slug=${idir##*/}
+      [ -d "$idir/evidence" ] || continue
+      wid=$(workid "$slug" 2>/dev/null || printf '')
+      item_stale_evidence_files "$slug" "$wid" 2>/dev/null | while IFS= read -r p; do
+        printf 'stale-evidence: %s\n' "$p"
+      done
+    done
+  fi
+  if [ -d "$ROOT/.drive.lock" ]; then
+    printf 'stale-lock: .drive.lock\n'
+  fi
+  if [ -d "$ROOT/attempts" ]; then
+    for attempt_path in "$ROOT"/attempts/A*; do
+      [ -d "$attempt_path" ] || continue
+      aid=${attempt_path##*/}
+      ast=$(attempt_state "$aid" 2>/dev/null || true)
+      case $ast in
+        RUNNING|OVERDUE)
+          if attempt_pid_alive "$aid"; then
+            printf 'live-attempt: %s %s\n' "$aid" "$ast"
+          else
+            printf 'dead-pid: %s %s (attempt reclaim)\n' "$aid" "$ast"
+          fi
+          ;;
+      esac
+    done
+  fi
+  if [ -f "$ROOT/PROBLEM.md" ] && [ -f "$ROOT/PANEL.CONTEXT.md" ]; then
+    ptitle=$(sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;p;q;}' "$ROOT/PROBLEM.md")
+    ctitle=$(sed -n 's/^problem-title: //p' "$ROOT/PANEL.CONTEXT.md" | head -1)
+    [ "$ptitle" = "$ctitle" ] || printf 'panel-title-stale: context %s vs PROBLEM %s\n' "$ctitle" "$ptitle"
+  fi
+  if [ -f "$(claims_file)" ]; then
+    grep -n '^    status: NEW$' "$(claims_file)" >/dev/null 2>&1 \
+      && printf 'claims-status-new: CLAIMS.md still has status NEW after close/audit\n'
+  fi
+  printf 'NOT cycle clean: Jira leftovers, ignored .validation/, husk programs (work/, b3/).\n'
+}
+
 cycle_cleanup() {
   flag=${1:-}; case $flag in --dry-run|--apply) : ;; *) die 'usage: crucible cycle clean --dry-run|--apply' ;; esac
   uses_guided_cycle || die 'cleanup requires a guided cycle'
@@ -3510,10 +3584,22 @@ cycle_cleanup() {
     for attempt_path in "$ROOT"/attempts/*; do
       [ -d "$attempt_path" ] || continue
       attempt_id=${attempt_path##*/}; attempt_status=$(attempt_state "$attempt_id")
-      attempt_terminal "$attempt_status" \
-        || die "cleanup refuses while attempt $attempt_id is $attempt_status"
+      case $attempt_status in
+        RUNNING|OVERDUE)
+          if attempt_pid_alive "$attempt_id"; then
+            die "cleanup refuses while attempt $attempt_id is $attempt_status (live pid)"
+          fi
+          cmd_attempt reclaim "$attempt_id" >/dev/null
+          ;;
+        DISPATCHED) : ;;
+        *)
+          attempt_terminal "$attempt_status" \
+            || die "cleanup refuses while attempt $attempt_id is $attempt_status"
+          ;;
+      esac
     done
   fi
+  cycle_cleanup_report
   found=0
   if [ -f "$ROOT/agents.tsv" ]; then
     printf 'DELETE %s\n' "$ROOT/agents.tsv"; found=1
@@ -3608,10 +3694,25 @@ cycle_bind_problem() {
   printf '%s/PROBLEM.md\n' "$ROOT"
 }
 
+cycle_problem_title() {
+  sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;s/`//g;p;q;}' "$1" 2>/dev/null
+}
+
+cycle_refuse_leftover_title() {
+  title=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case $title in
+    *pr-status*|prstatus)
+      die "refused: leftover pr-status title — bind the real PROBLEM, not a leftover title"
+      ;;
+  esac
+}
+
 cycle_refresh_panel_context() {
-  # Title/risk overlay only. PANEL.md + ASSIGN + agents stay; cast is not recast.
-  title=$(sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;p;q;}' "$ROOT/PROBLEM.md" 2>/dev/null)
+  # Title/risk overlay. Cast (ASSIGN + agents) stays. First PANEL.md heading
+  # is refreshed and PANEL.APPROVAL is rewritten to the new panel-id.
+  title=$(cycle_problem_title "$ROOT/PROBLEM.md")
   [ -n "$title" ] || title='(untitled)'
+  cycle_refuse_leftover_title "$title"
   risk=LOW
   if grep -qiE '\bHIGH\b' "$ROOT/PROBLEM.md" 2>/dev/null; then
     risk=HIGH
@@ -3622,8 +3723,21 @@ cycle_refresh_panel_context() {
     printf 'problem-title: %s\n' "$title"
     printf 'risk: %s\n' "$risk"
     printf 'refreshed-epoch: %s\n' "$(date +%s)"
-    printf '\nRefreshed by cycle problem --next. Not part of panel-id.\n'
+    printf '\nRefreshed by cycle problem --next. Cast is unchanged.\n'
   } > "$ROOT/PANEL.CONTEXT.md"
+  pf=$(panel_file)
+  if [ -f "$pf" ]; then
+    awk -v t="$title" 'BEGIN{d=0} /^# / && !d { print "# " t; d=1; next } { print }' "$pf" \
+      > "$pf.$$.tmp" && mv "$pf.$$.tmp" "$pf"
+    if uses_guided_cycle && [ -f "$ROOT/PANEL.APPROVAL" ]; then
+      pid=$(panel_id) || pid=
+      if [ -n "$pid" ]; then
+        now=$(date +%s)
+        printf 'panel-id: %s\napproved-epoch: %s\ndecision: APPROVED\nrefreshed-by: cycle-problem-next\n' \
+          "$pid" "$now" > "$ROOT/PANEL.APPROVAL"
+      fi
+    fi
+  fi
 }
 
 cmd_cycle() {
@@ -3656,6 +3770,7 @@ cmd_cycle() {
         cycle_no_current_item \
           || die 'refused: an ACTIVE or BLOCKED item is current — close or escalate it first'
         cycle_live_attempts_terminal
+        cycle_refuse_leftover_title "$(cycle_problem_title "$src")"
         dest=$(cycle_archive_investigation)
         printf 'archived %s\n' "$dest"
         cycle_bind_problem "$src"
@@ -4636,8 +4751,28 @@ cmd_evidence() {
 }
 
 cmd_close() {
-  need "${1:-}"; slug=$1; shift; lesson=${*:-}; d=$(D "$slug")
-  [ -n "$lesson" ] || die 'usage: crucible close SLUG "one-line lesson, or NONE"'
+  need "${1:-}"; slug=$1; shift
+  successor=
+  lesson=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --successor)
+        shift
+        successor=${1:-}
+        [ -n "$successor" ] || die 'usage: crucible close SLUG "lesson" [--successor SHA]'
+        ;;
+      *)
+        if [ -z "$lesson" ]; then
+          lesson=$1
+        else
+          lesson="$lesson $1"
+        fi
+        ;;
+    esac
+    shift
+  done
+  d=$(D "$slug")
+  [ -n "$lesson" ] || die 'usage: crucible close SLUG "one-line lesson, or NONE" [--successor SHA]'
   [ "$(printf '%s' "$lesson" | wc -l | tr -d ' ')" = 0 ] || die "lesson must be one line"
   if uses_managed_lifecycle; then
     state_validate_file "$ROOT/STATE.tsv"
@@ -4658,8 +4793,13 @@ cmd_close() {
     r=$(tgt "$slug" repo); b=$(tgt "$slug" branch)
     head=$(git -C "$r" rev-parse --verify --quiet "$b" 2>/dev/null | cut -c1-12)
     if [ -n "$head" ] && [ "$after" != "$head" ]; then
-      rmdir "$d/.closing" 2>/dev/null
-      die "refused: close work-id $after is not $b HEAD $head"
+      succ12=$(printf '%s' "$successor" | cut -c1-12)
+      if [ -n "$successor" ] && [ "$succ12" = "$head" ]; then
+        :
+      else
+        rmdir "$d/.closing" 2>/dev/null
+        die "refused: close work-id $after is not $b HEAD $head (new attempt or --successor SHA)"
+      fi
     fi
   fi
   last_pass=
@@ -4671,8 +4811,17 @@ cmd_close() {
     done
   fi
   if [ -n "$last_pass" ] && [ "$after" != "$last_pass" ]; then
+    succ12=$(printf '%s' "$successor" | cut -c1-12)
+    if [ -n "$successor" ] && { [ "$succ12" = "$after" ] || [ "$succ12" = "$last_pass" ]; }; then
+      :
+    else
+      rmdir "$d/.closing" 2>/dev/null
+      die "refused: close work-id $after is not last PASS $last_pass (record a successor review or --successor SHA)"
+    fi
+  fi
+  if stale=$(item_stale_evidence_files "$slug" "$after"); then
     rmdir "$d/.closing" 2>/dev/null
-    die "refused: close work-id $after is not last PASS $last_pass (record a successor review)"
+    die "refused: stale evidence still in items/$slug/evidence (run: evidence archive $slug): $stale"
   fi
   reject_fp=
   for rf in "$ROOT"/attempts/*/result.md; do
