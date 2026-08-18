@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.4.0] - 2026-08-17
+
+### Long-horizon loop
+
+- `drive tick` no longer continues after the first worker. `cmd_attempt` was
+  overwriting `sub`; drive now uses `drive_mode`.
+- `attempt reclaim ATTEMPT` records `STOPPED` when RUNNING/OVERDUE and the pid
+  is dead. Claim attempts do not BLOCK the item. `--next` reclaims dead pids
+  instead of trapping the operator.
+- `evidence archive SLUG` moves item evidence whose work-id is not current into
+  `evidence/history/` so `check` can close.
+- Guided admit/close bars follow **required** `claim-auditor` / `reviewer` rows
+  unless `CRUCIBLE_MIN_AUDITORS` / `CRUCIBLE_MIN_JUDGES` is set.
+- `STATUS.md` has `worth: BUILD|DOCS|NO-BUILD|UNKNOWN`. After a complete
+  investigation with no ABSENT scout, `cycle` asks for NO-BUILD / DOCS-ONLY /
+  live-observation, not a silent build.
+- `adopt --refresh` on a directory without `PROGRAM` refuses as a **husk**.
+- [docs/install.md](docs/install.md) is first-install vs upgrade from 1.3.x.
+
 ## [1.3.7] - 2026-08-17
 
 ### `dispatch ITEM judge` is usable on a guided panel

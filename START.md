@@ -10,13 +10,12 @@ do not make the operator read them.
 ## How to use an installed cycle
 
 The program is `.crucible/<program>/crucible` (after `adopt work --managed`, `<program>` is `work`).
-Cwd is the **target repository root**, not the program directory. Install, refresh, and
-`--next` copy-paste: [docs/install.md](docs/install.md).
+Cwd is the **target repository root**, not the program directory. First install vs upgrade: [docs/install.md](docs/install.md).
 
 | Who | Command | Why |
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
-| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop: cycle → one coordinator tick → cycle. `drive tick` is one iteration |
+| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker or one coordinator action |
 | Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Does not delete local adapters such as `scripts/acp-brief.py`. Cwd is the target repository. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
