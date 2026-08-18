@@ -54,6 +54,7 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | Keep the coordinator from skipping `cycle` or implementing | `.crucible/work/crucible drive` ([docs/drive.md](docs/drive.md)) |
 | Refresh the installed engine | From the **newer** Crucible checkout, cwd = target repo: `adopt work --refresh` — see [docs/install.md](docs/install.md) |
 | Start the next problem on the same panel | After this investigation should end: `cycle problem FILE --next` |
+| Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
 
 Conversational “keep looping” is not a waiver to implement.

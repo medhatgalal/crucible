@@ -32,8 +32,10 @@ marks `cycle: guided`. Guided cycles require panel configure/approval before inv
 # Replace placeholder agents.tsv rows, write PANEL.md + PANEL.ASSIGN.tsv, then:
 $CP cycle approve-panel
 $CP cycle problem /path/to/report.md
-# After this PROBLEM is finished (or should be abandoned) — same panel, new investigation:
+# After this PROBLEM is finished — same panel, new investigation:
 $CP cycle problem /path/to/next-report.md --next
+# Junk INVESTIGATE (not a problem): archive without PASS or a new PROBLEM
+$CP cycle problem --abandon "leftover FILE --next of a non-problem"
 ```
 
 `PANEL.md` must include: Agents, Roles, Risk posture, Isolation transport, Independence ladder,

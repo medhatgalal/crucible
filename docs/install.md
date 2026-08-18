@@ -98,9 +98,9 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 
 | Who | Runs |
 | --- | --- |
-| Operator | `adopt` / `--refresh`, `drive`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE [--next]`, `cycle clean`, `evidence archive` |
-| Coordinator | `cycle`, dispatch, transport, `contract-audit` — not ACP start when drive is running |
-| Drive parent | Sealed `agents.tsv` command, `attempt start` / finish. One worker per `drive tick` |
+| Operator | `adopt` / `--refresh`, `drive`, `cycle approve-panel`, `cycle approve`, `cycle problem FILE [--next]`, `cycle problem --abandon REASON`, `cycle clean`, `evidence archive` |
+| Coordinator | `cycle`, dispatch, transport, `contract-audit` — never start ACP after seal |
+| Drive parent | Sealed worker `agents.tsv` command, `attempt start` / finish. One worker per `drive tick`. Does not invoke the coordinator while a sealed worker exists. |
 | Maker / reviewer / auditor | only their contract |
 
 `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` stop drive. Conversational

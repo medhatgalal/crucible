@@ -464,6 +464,10 @@ printf 'OUTCOME: REJECT\nITEM: fix-item\nROLE: judge\nNEXT: FIX\nFINDING-FINGERP
 printf 'state\tpid\treason\nRETURNED\t-\tfixture\n' > "$G/attempts/A1787070000.1.1/events.tsv"
 expect 'REVIEW->BUILD after judge FIX' 'is now in BUILD' \
   "$G/crucible" phase fix-item BUILD
+awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="fix-item"{$3="REVIEW";$6="A1787070000.1.1"} {print}' \
+  "$G/STATE.tsv" > "$G/STATE.tsv.tmp" && mv "$G/STATE.tsv.tmp" "$G/STATE.tsv"
+expect 'REVIEW->BUILD while RETURNED judge is inflight' 'is now in BUILD' \
+  "$G/crucible" phase fix-item BUILD
 # --next context after close-less archive: close would need full check; just call refresh via --next
 # after making item not ACTIVE
 awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="fix-item"{$2="CLOSED"} {print}' \
@@ -480,6 +484,24 @@ fi
 printf 'pr-status leftover\n' > "$grepo/pr-status.md"
 refuses '--next refuses leftover pr-status title' 'pr-status' \
   "$G/crucible" cycle problem "$grepo/pr-status.md" --next
+
+printf '`workgraph nosuchverb` is not a CLI verb.\n' > "$grepo/nosuch.md"
+refuses 'FILE refuses nosuchverb non-problem' 'not a CLI verb|not a PROBLEM' \
+  "$G/crucible" cycle problem "$grepo/nosuch.md" --next
+printf 'RFC leftover remainder\n\n- assess ABSENT\n- reset ABSENT\n' > "$grepo/rfc-left.md"
+refuses 'FILE refuses leftover remainder catalog' 'leftover|remainder|not a PROBLEM' \
+  "$G/crucible" cycle problem "$grepo/rfc-left.md" --next
+
+abd=$("$G/crucible" cycle problem --abandon 'leftover FILE --next of a non-problem' 2>&1) || {
+  bad "abandon refused: $abd"; abd=
+}
+if printf '%s\n' "$abd" | grep -q abandoned && [ ! -f "$G/PROBLEM.md" ]; then
+  ok
+else
+  bad "abandon did not archive PROBLEM.md ($abd)"
+fi
+ls "$G"/history/*/ABANDON.md >/dev/null 2>&1 && ok || bad 'abandon missing ABANDON.md'
+"$G/crucible" cycle 2>&1 | grep -q 'NEXT INTAKE' && ok || bad 'abandon did not return to INTAKE'
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

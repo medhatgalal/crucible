@@ -10,6 +10,7 @@ CONFIGURE → WAIT PANEL → INTAKE → INVESTIGATE ⇄ challenge → PROPOSE �
                  │       └────────────→ ESCALATE when bounded recovery ends
                  │                      (includes INDEPENDENCE_UNAVAILABLE)
                  └─ cycle problem FILE --next (human) → INTAKE   same panel
+                    cycle problem --abandon REASON (human) → INTAKE  no PASS
 ```
 
 `crucible cycle` derives the current position from repository artifacts. The coordinating agent uses

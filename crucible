@@ -6,6 +6,7 @@
 #   crucible cycle [status]                resume the durable problem-to-done loop
 #   crucible cycle problem FILE            bind the cycle to a problem report
 #   crucible cycle problem FILE --next     same panel, archive closed investigation, new PROBLEM
+#   crucible cycle problem --abandon REASON archive junk INVESTIGATE; no PASS; no new PROBLEM
 #   crucible cycle approve-panel           record approval of the agent panel
 #   crucible cycle approve                 record approval of the current proposal
 #   crucible drive [tick]                  Ralph-style outer loop (guided+managed)
@@ -52,6 +53,7 @@ Crucible runs one durable problem-to-done cycle for a coordinating agent.
   crucible cycle [status]              resume from repository evidence
   crucible cycle problem FILE          bind a problem report to the cycle
   crucible cycle problem FILE --next   same panel; archive this investigation; bind a new PROBLEM
+  crucible cycle problem --abandon R   archive junk INVESTIGATE without PASS or a new PROBLEM
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
   crucible drive [tick]                Ralph-style outer loop: cycle, seal, start one worker, stop for humans
@@ -3244,15 +3246,24 @@ drive_perform_legal() {
       [ -n "$slug" ] && [ "$slug" != — ] || slug=$item
       if [ -n "$slug" ] && [ "$slug" != - ]; then
         inflight=$(drive_inflight)
+        ast=; role=
         if [ -n "$inflight" ] && [ "$inflight" != - ]; then
           ast=$(attempt_state "$inflight" 2>/dev/null || true)
           role=$(attempt_meta "$inflight" 5 2>/dev/null || true)
-          if [ "$ast" = RETURNED ] && [ "$role" = maker ]; then
-            reviewer=$(drive_cast_agents reviewer | head -1)
-            [ -z "$reviewer" ] && reviewer=$(drive_cast_agents judge | head -1)
-            if [ -n "$reviewer" ] && [ "$(state_value "$slug" 3 2>/dev/null || true)" = REVIEW ]; then
-              cmd_dispatch "$slug" judge "$reviewer" || true
-            fi
+        fi
+        if judge_requested_fix "$slug" \
+          && [ "$(state_value "$slug" 3 2>/dev/null || true)" = REVIEW ]; then
+          if [ -z "$inflight" ] || [ "$inflight" = - ] \
+            || { [ "$ast" = RETURNED ] && [ "$role" = judge ]; }; then
+            cmd_phase "$slug" BUILD || true
+            maker=$(drive_cast_agents maker | head -1)
+            [ -n "$maker" ] && cmd_dispatch "$slug" maker "$maker" || true
+          fi
+        elif [ "$ast" = RETURNED ] && [ "$role" = maker ]; then
+          reviewer=$(drive_cast_agents reviewer | head -1)
+          [ -z "$reviewer" ] && reviewer=$(drive_cast_agents judge | head -1)
+          if [ -n "$reviewer" ] && [ "$(state_value "$slug" 3 2>/dev/null || true)" = REVIEW ]; then
+            cmd_dispatch "$slug" judge "$reviewer" || true
           fi
         fi
       fi
@@ -3284,6 +3295,10 @@ drive_is_human_gate() {
 
 drive_invoke_coordinator() {
   repo=$1
+  # After seal, the parent starts the worker. Do not start coordinator ACP.
+  if drive_next_sealed_id >/dev/null 2>&1; then
+    return 0
+  fi
   agent=$(drive_coordinator_agent) || agent=
   [ -n "$agent" ] || return 0
   drive_write_brief
@@ -3335,9 +3350,14 @@ cmd_drive() {
       if [ -n "$inflight" ] && [ "$inflight" != - ]; then
         ast=$(attempt_state "$inflight" 2>/dev/null || true)
         if [ "$ast" = RETURNED ] && ! drive_next_sealed_id >/dev/null 2>&1; then
-          printf 'drive: attempt %s already RETURNED\n' "$inflight"
-          drive_unlock; trap - 0 1 2 15
-          return 0
+          if [ -f "$ROOT/attempts/$inflight/result.md" ]; then
+            nxta=$(sed -n 's/^NEXT: //p' "$ROOT/attempts/$inflight/result.md" | head -1)
+            if [ "$nxta" != FIX ]; then
+              printf 'drive: attempt %s already RETURNED\n' "$inflight"
+              drive_unlock; trap - 0 1 2 15
+              return 0
+            fi
+          fi
         fi
       fi
     fi
@@ -3707,6 +3727,27 @@ cycle_refuse_leftover_title() {
   esac
 }
 
+cycle_refuse_non_problem() {
+  # A PROBLEM is a falsifiable outcome in current behavior. One-line
+  # "X is not a CLI verb" is claim polarity. Leftover RFC catalogs are
+  # not a PROBLEM unless the file names one outcome.
+  src=$1
+  title=$(cycle_problem_title "$src")
+  cycle_refuse_leftover_title "$title"
+  nlines=$(grep -c '[^[:space:]]' "$src" 2>/dev/null || true)
+  nlines=${nlines:-0}
+  folded=$(tr '\n' ' ' < "$src")
+  if printf '%s' "$title $folded" | grep -qiE 'is not a CLI verb'; then
+    [ "$nlines" -gt 3 ] \
+      || die "refused: 'is not a CLI verb' is claim polarity, not a PROBLEM"
+  fi
+  lt=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
+  if printf '%s' "$lt" | grep -Eq 'leftover|remainder|what.?s left'; then
+    grep -qiE 'falsif|## outcome|must [a-z]' "$src" \
+      || die "refused: leftover/remainder catalog is not a PROBLEM — file one falsifiable outcome"
+  fi
+}
+
 cycle_refresh_panel_context() {
   # Title/risk overlay. Cast (ASSIGN + agents) stays. First PANEL.md heading
   # is refreshed and PANEL.APPROVAL is rewritten to the new panel-id.
@@ -3745,20 +3786,42 @@ cmd_cycle() {
   case $sub in
     status) [ $# -eq 0 ] || die 'usage: crucible cycle [status]'; write_cycle_status ;;
     problem)
-      src=; next=0
+      src=; next=0; abandon=0; reason=
       while [ $# -gt 0 ]; do
         case $1 in
           --next) next=1 ;;
-          -*) die 'usage: crucible cycle problem FILE [--next]' ;;
+          --abandon)
+            abandon=1
+            shift
+            reason=$*
+            break
+            ;;
+          -*) die 'usage: crucible cycle problem FILE [--next] | --abandon REASON' ;;
           *)
-            [ -z "$src" ] || die 'usage: crucible cycle problem FILE [--next]'
+            [ -z "$src" ] || die 'usage: crucible cycle problem FILE [--next] | --abandon REASON'
             src=$1
             ;;
         esac
         shift
       done
-      [ -n "$src" ] || die 'usage: crucible cycle problem FILE [--next]'
+      if [ "$abandon" -eq 1 ]; then
+        [ "$next" -eq 0 ] || die 'usage: crucible cycle problem FILE [--next] | --abandon REASON'
+        [ -n "$reason" ] || die 'usage: crucible cycle problem --abandon REASON'
+        [ -d "$ROOT/.drive.lock" ] \
+          && die 'refused: cycle problem --abandon is a human gate — stop drive first'
+        uses_guided_cycle || die 'cycle problem --abandon requires a guided cycle'
+        uses_managed_lifecycle || die 'cycle problem --abandon requires managed lifecycle behavior'
+        cycle_no_current_item \
+          || die 'refused: an ACTIVE or BLOCKED item is current — close or escalate it first'
+        dest=$(cycle_archive_investigation)
+        printf 'reason: %s\nepoch: %s\ndecision: ABANDONED\n' "$reason" "$(date +%s)" \
+          > "$dest/ABANDON.md"
+        printf 'abandoned %s\n' "$dest"
+        return
+      fi
+      [ -n "$src" ] || die 'usage: crucible cycle problem FILE [--next] | --abandon REASON'
       [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
+      cycle_refuse_non_problem "$src"
       if uses_guided_cycle; then
         panel_approval_current || die 'refused: approve the agent panel before binding a problem (cycle approve-panel)'
       fi
@@ -3770,7 +3833,6 @@ cmd_cycle() {
         cycle_no_current_item \
           || die 'refused: an ACTIVE or BLOCKED item is current — close or escalate it first'
         cycle_live_attempts_terminal
-        cycle_refuse_leftover_title "$(cycle_problem_title "$src")"
         dest=$(cycle_archive_investigation)
         printf 'archived %s\n' "$dest"
         cycle_bind_problem "$src"
@@ -3831,7 +3893,7 @@ cmd_cycle() {
       mv "$tmp" "$ROOT/APPROVAL"; trap - 0 1 2 15
       printf 'approved proposal %s\n' "$pid" ;;
     clean) [ $# -eq 1 ] || die 'usage: crucible cycle clean --dry-run|--apply'; cycle_cleanup "$1" ;;
-    *) die 'usage: crucible cycle [status]|problem FILE|approve-panel|approve|clean --dry-run|--apply' ;;
+    *) die 'usage: crucible cycle [status]|problem FILE [--next]|problem --abandon REASON|approve-panel|approve|clean --dry-run|--apply' ;;
   esac
 }
 
@@ -3857,7 +3919,14 @@ cmd_phase() {
     old=$(phase_of "$slug")
     [ ! -f "$d/TASKS.tsv" ] || { validate_task_dag "$slug"; task_assert_frozen "$slug"; }
     inflight=$(state_value "$slug" 6)
-    [ "$inflight" = - ] || die "refused: attempt $inflight is still in flight"
+    if [ "$inflight" != - ]; then
+      ast=$(attempt_state "$inflight" 2>/dev/null || true)
+      if [ "$old:$new" = REVIEW:BUILD ] && [ "$ast" = RETURNED ] && judge_requested_fix "$slug"; then
+        :
+      else
+        die "refused: attempt $inflight is still in flight"
+      fi
+    fi
     case "$old:$new" in
       READY:BUILD|BUILD:REVIEW) : ;;
       REVIEW:BUILD)

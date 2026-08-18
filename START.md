@@ -19,6 +19,7 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Does not delete local adapters such as `scripts/acp-brief.py`. Cwd is the target repository. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
+| Human only | `cycle problem --abandon REASON` | Archive junk INVESTIGATE with no PASS and no new PROBLEM. Same panel. |
 | Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
 
 `STATUS.md` is the next-action card (`state`, `engine`, active item, inflight attempt, last evidence,

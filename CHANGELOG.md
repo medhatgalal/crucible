@@ -5,6 +5,19 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Problem bind, abandon, and REVIEW FIX re-entry
+
+- `cycle problem FILE` and `--next` refuse a one-line “X is not a CLI verb”
+  (that is claim polarity, not a PROBLEM) and leftover/remainder catalogs that
+  name no falsifiable outcome. Leftover `pr-status` titles still refuse.
+- `cycle problem --abandon REASON` archives INVESTIGATE under `history/` with
+  `ABANDON.md`. No PASS. No new PROBLEM. Human gate; drive must be stopped.
+- Drive does not invoke the coordinator while a sealed worker exists. After a
+  judge `NEXT:FIX`, the parent runs `phase ITEM BUILD` (including when the
+  judge attempt is still `RETURNED` inflight) instead of stalling in REVIEW.
+- Drive no longer treats every `RETURNED` inflight as a successful tick when
+  `result` is missing or `NEXT:FIX`.
+
 ## [1.5.1] - 2026-08-18
 
 ### Cleanup is a first-class DONE step
