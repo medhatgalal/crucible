@@ -5,6 +5,24 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.5.0] - 2026-08-18
+
+### Claim polarity, verdicts, close, and FIX re-entry
+
+- `claim add` is one predicate with polarity `ABSENT|EXISTS|DEFECT`. Bundled
+  verbs (`and` / `+` / `;`) and present-tense desired-behavior-as-gap refuse.
+- `claim verdict` never clobbers a writeup (prior file goes to `verdicts/history/`)
+  and records `CITATION:`.
+- `CLAIMS.md` `status` is written: `AUDITED_FALSE`, `ADMITTED`, `CLOSED`.
+- `close` refuses unless work-id equals the item branch HEAD and the last
+  judge/maker PASS. `LESSONS.md` cannot stay `NONE` after a REJECT fingerprint.
+- Scout result `IN-FLIGHT`; `ABSENT` refuses when an unmerged `ai/*` branch
+  already has commits. Admit refuses `EXISTS` and `IN-FLIGHT`.
+- `phase REVIEW BUILD` is legal after a judge `NEXT:FIX`.
+- Maker `result` may only change `## Owned files` paths when that section exists.
+- `drive tick` exits 0 if the inflight attempt is already `RETURNED`.
+- `--next` writes `PANEL.CONTEXT.md` (title/risk) without recasting.
+
 ## [1.4.0] - 2026-08-17
 
 ### Long-horizon loop

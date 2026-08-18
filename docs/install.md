@@ -76,7 +76,10 @@ Do not copy the program directory by hand.
 
 From 1.3.6, drive starts sealed workers. From 1.3.7, `dispatch ITEM judge` stays
 `judge`. From 1.4.0: `attempt reclaim`, `evidence archive`, panel-bound judge/auditor
-minima, `worth:` on STATUS, `--next` reclaims dead RUNNING pids.
+minima, `worth:` on STATUS, `--next` reclaims dead RUNNING pids. From 1.5.0:
+one-predicate claims with polarity; verdicts append (history); `IN-FLIGHT` scout;
+`phase REVIEW BUILD` after judge FIX; close work-id must be HEAD/last PASS;
+`--next` writes `PANEL.CONTEXT.md`.
 
 ## Next problem (same panel)
 

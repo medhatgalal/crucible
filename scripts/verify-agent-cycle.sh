@@ -384,5 +384,90 @@ expect 'PASS --like copies isomorphic scout audit' 'like '"$id1" \
 grep -q '^VERDICT: PASS$' "$L/attempts/$id2/contract-audit.md" && ok \
   || bad '--like did not write PASS onto the sibling attempt'
 
+# --- 1.5.0 claim grammar, verdict history, polarity, REVIEW->BUILD, PANEL.CONTEXT ---
+gbase=$(mktemp -d "${TMPDIR:-/tmp}/crucible-gram.XXXXXX")
+grepo="$gbase/repo"; mkdir -p "$grepo"
+(
+  cd "$grepo"
+  git init -q -b main
+  printf 'x\n' > t; git add t
+  git -c user.name=test -c user.email=test@example.invalid commit -qm i
+  "$C" adopt work --managed >/dev/null
+)
+G="$grepo/.crucible/work"
+write_agents "$G"
+write_panel "$G"
+"$G/crucible" cycle approve-panel >/dev/null
+printf 'A report.\n' > "$grepo/report.md"
+"$G/crucible" cycle problem "$grepo/report.md" >/dev/null
+refuses 'bundled claim refuses' 'one predicate|bundle' \
+  "$G/crucible" claim add 'assess and status JSON and freshness' 'source'
+refuses 'desired-behavior claim refuses' 'desired behavior|not a gap' \
+  "$G/crucible" claim add 'Init writes AGENTS.md' 'Init writes AGENTS.md'
+cn=$("$G/crucible" claim add 'workgraph nosuchverb is not a CLI verb' \
+  'workgraph nosuchverb is not a CLI verb' ABSENT)
+grep -q 'polarity: ABSENT' "$G/CLAIMS.md" && ok || bad 'polarity not recorded'
+# verdict never clobbers
+"$G/crucible" run-claim "$cn" a1 -- sh -c 'echo ev' >/dev/null
+"$G/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+seal_claim_agent "$G" a1
+printf 'WRITEUP keep me\n' > "$G/claims/$cn/verdicts/a1.md"
+"$G/crucible" claim verdict "$cn" a1 FALSE >/dev/null
+[ -f "$G/claims/$cn/verdicts/a1.md" ] && grep -q 'CITATION:' "$G/claims/$cn/verdicts/a1.md" && ok \
+  || bad 'verdict missing CITATION'
+ls "$G/claims/$cn/verdicts/history/"a1.*.md >/dev/null 2>&1 && ok \
+  || bad 'prior verdict writeup was not archived'
+grep -q 'status: AUDITED_FALSE' "$G/CLAIMS.md" && ok || bad 'FALSE did not set AUDITED_FALSE'
+# REVIEW -> BUILD after judge FIX
+# reuse first cycle item path: admit needs 2 TRUEs + scout ABSENT
+# (a1 already FALSE — new claim)
+cfix=$("$G/crucible" claim add 'fixreentry is not a CLI verb' 'fixreentry is not a CLI verb' ABSENT)
+for agent in a1 a2; do
+  "$G/crucible" run-claim "$cfix" "$agent" -- sh -c 'echo checked' >/dev/null
+  "$G/crucible" dispatch "$cfix" claim-auditor "$agent" >/dev/null
+  seal_claim_agent "$G" "$agent"
+  "$G/crucible" claim verdict "$cfix" "$agent" TRUE >/dev/null
+done
+"$G/crucible" run-claim "$cfix" a1 -- sh -c 'echo searched' >/dev/null
+"$G/crucible" dispatch "$cfix" scout a1 >/dev/null
+seal_claim_agent "$G" a1
+"$G/crucible" claim scout "$cfix" ABSENT a1 >/dev/null
+cat > "$G/PROPOSAL.md" <<'EOF'
+# Proposal
+## Verified problem
+fixreentry is not a CLI verb.
+## Proposed outcome
+One item.
+## Non-goals
+None.
+## Backlog
+fix-item.
+## Verification
+Two TRUEs.
+EOF
+"$G/crucible" cycle approve >/dev/null
+"$G/crucible" claim admit "$cfix" fix-item >/dev/null
+grep -q 'status: ADMITTED' "$G/CLAIMS.md" && ok || bad 'admit did not set ADMITTED'
+# fake REVIEW + judge FIX result
+awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="fix-item"{$3="REVIEW"} {print}' \
+  "$G/STATE.tsv" > "$G/STATE.tsv.tmp" && mv "$G/STATE.tsv.tmp" "$G/STATE.tsv"
+mkdir -p "$G/attempts/A1787070000.1.1"
+printf 'item\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n' \
+  > "$G/attempts/A1787070000.1.1/meta.tsv"
+printf 'fix-item\t-\tWID\tjudge\tj1\tkindB\tA1\tlog\tRETURNED\t1\t2\t-\n' >> "$G/attempts/A1787070000.1.1/meta.tsv"
+printf 'OUTCOME: REJECT\nITEM: fix-item\nROLE: judge\nNEXT: FIX\nFINDING-FINGERPRINT: abcdef123456\n' \
+  > "$G/attempts/A1787070000.1.1/result.md"
+printf 'state\tpid\treason\nRETURNED\t-\tfixture\n' > "$G/attempts/A1787070000.1.1/events.tsv"
+expect 'REVIEW->BUILD after judge FIX' 'is now in BUILD' \
+  "$G/crucible" phase fix-item BUILD
+# --next context after close-less archive: close would need full check; just call refresh via --next
+# after making item not ACTIVE
+awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="fix-item"{$2="CLOSED"} {print}' \
+  "$G/STATE.tsv" > "$G/STATE.tsv.tmp" && mv "$G/STATE.tsv.tmp" "$G/STATE.tsv"
+printf 'Next title here.\n' > "$grepo/next-p.md"
+"$G/crucible" cycle problem "$grepo/next-p.md" --next >/dev/null
+grep -q 'problem-title: Next title here.' "$G/PANEL.CONTEXT.md" && ok \
+  || bad '--next did not write PANEL.CONTEXT.md'
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
