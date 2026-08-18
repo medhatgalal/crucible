@@ -66,6 +66,7 @@ Agent protocol primitives. These are implementation details used by START.md; th
 not drive the cycle with them.
 
   claim add|list|verdict|scout|admit   verify a report before it becomes work
+                                      claim add requires one predicate [ABSENT|EXISTS|DEFECT]
   triage                              render the evidence-grounded proposal input
   add / ready / phase / task          create and advance bounded work
   dispatch / attempt / result         coordinate isolated agent attempts
@@ -833,6 +834,24 @@ EOF
           || die "maker result requires current work"
         [ "$current_wid" != "$dispatch_wid" ] || die "maker result requires work to change after dispatch"
         wid=$current_wid
+        if [ -f "$d/TARGET" ] && grep -q '^## Owned files' "$d/ITEM.md" 2>/dev/null; then
+          r=$(tgt "$slug" repo); br=$(tgt "$slug" branch); base=$(tgt "$slug" base)
+          owned=$(awk '/^## Owned files/{p=1;next} p && /^## /{exit} p && /^- /{sub(/^-[[:space:]]*/,""); print}' "$d/ITEM.md")
+          if [ -n "$owned" ]; then
+            changed_paths=$(git -C "$r" diff --name-only "${dispatch_wid}..${wid}" 2>/dev/null)
+            while IFS= read -r changed_path; do
+              [ -n "$changed_path" ] || continue
+              okp=0
+              for op in $owned; do
+                case $changed_path in "$op"|"$op"/*) okp=1; break ;; esac
+              done
+              [ "$okp" -eq 1 ] \
+                || die "refused: admitting this item does not authorize $changed_path (not in Owned files)"
+            done <<EOF
+$changed_paths
+EOF
+          fi
+        fi
       fi ;;
     judge|adversary)
       [ "$current_wid" = "$dispatch_wid" ] \
@@ -3146,6 +3165,7 @@ drive_invoke_sealed_worker() {
   wait "$pid" || rc=$?
   if [ "$rc" -eq 0 ]; then
     cmd_attempt finish "$id" RETURNED "drive worker exit 0" >/dev/null
+    drive_worker_returned=1
   else
     cmd_attempt finish "$id" STOPPED "drive worker exit $rc" >/dev/null
   fi
@@ -3167,6 +3187,14 @@ drive_finish_tick() {
     stalls=0
   fi
   printf 'token: %s\nstalls: %s\n' "$token" "$stalls" > "$ROOT/DRIVE.state"
+  if [ "${drive_worker_returned:-0}" -eq 1 ]; then
+    stalls=0
+    printf 'token: %s\nstalls: %s\n' "$token" "$stalls" > "$ROOT/DRIVE.state"
+    if drive_is_human_gate "$state2"; then
+      drive_print_human "$state2" "$line2"
+    fi
+    return 0
+  fi
   if [ "$stalls" -ge 1 ]; then
     printf 'STOP — no progress (same status and no new evidence twice)\n'
     drive_unlock; trap - 0 1 2 15
@@ -3281,6 +3309,7 @@ cmd_drive() {
   while :; do
     n=$((n + 1))
     [ "$n" -le "$max" ] || die "drive stopped: iteration cap $max"
+    drive_worker_returned=0
     uses_guided_cycle || die 'drive requires a guided cycle (PROGRAM cycle: guided was removed)'
     uses_managed_lifecycle || die 'drive requires managed lifecycle behavior'
     repo=$(drive_product_repo)
@@ -3291,6 +3320,18 @@ cmd_drive() {
       drive_print_human "$state" "$line"
       drive_unlock; trap - 0 1 2 15
       return 0
+    fi
+    # P2: a tick whose last inflight attempt is already RETURNED is success.
+    if [ "$drive_mode" = tick ]; then
+      inflight=$(drive_inflight)
+      if [ -n "$inflight" ] && [ "$inflight" != - ]; then
+        ast=$(attempt_state "$inflight" 2>/dev/null || true)
+        if [ "$ast" = RETURNED ] && ! drive_next_sealed_id >/dev/null 2>&1; then
+          printf 'drive: attempt %s already RETURNED\n' "$inflight"
+          drive_unlock; trap - 0 1 2 15
+          return 0
+        fi
+      fi
     fi
     mkdir -p "$ROOT/items"
     drive_apply_isomorphic_audits
@@ -3567,6 +3608,24 @@ cycle_bind_problem() {
   printf '%s/PROBLEM.md\n' "$ROOT"
 }
 
+cycle_refresh_panel_context() {
+  # Title/risk overlay only. PANEL.md + ASSIGN + agents stay; cast is not recast.
+  title=$(sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;p;q;}' "$ROOT/PROBLEM.md" 2>/dev/null)
+  [ -n "$title" ] || title='(untitled)'
+  risk=LOW
+  if grep -qiE '\bHIGH\b' "$ROOT/PROBLEM.md" 2>/dev/null; then
+    risk=HIGH
+  elif grep -qiE '\bMEDIUM\b' "$ROOT/PROBLEM.md" 2>/dev/null; then
+    risk=MEDIUM
+  fi
+  {
+    printf 'problem-title: %s\n' "$title"
+    printf 'risk: %s\n' "$risk"
+    printf 'refreshed-epoch: %s\n' "$(date +%s)"
+    printf '\nRefreshed by cycle problem --next. Not part of panel-id.\n'
+  } > "$ROOT/PANEL.CONTEXT.md"
+}
+
 cmd_cycle() {
   sub=${1:-status}; [ $# -eq 0 ] || shift
   case $sub in
@@ -3600,6 +3659,7 @@ cmd_cycle() {
         dest=$(cycle_archive_investigation)
         printf 'archived %s\n' "$dest"
         cycle_bind_problem "$src"
+        cycle_refresh_panel_context
         return
       fi
       [ "$(cycle_investigation_state)" = EMPTY ] || die 'refused: investigation already has claims'
@@ -3660,6 +3720,20 @@ cmd_cycle() {
   esac
 }
 
+judge_requested_fix() {
+  slug=$1
+  [ -d "$ROOT/attempts" ] || return 1
+  latest=
+  for rf in "$ROOT"/attempts/*/result.md; do
+    [ -f "$rf" ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$rf" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^ROLE: //p' "$rf" | head -1)" = judge ] || continue
+    latest=$rf
+  done
+  [ -n "$latest" ] || return 1
+  [ "$(sed -n 's/^NEXT: //p' "$latest" | head -1)" = FIX ]
+}
+
 cmd_phase() {
   need "${1:-}"; slug=$1; new=${2:-}
   d=$(D "$slug")
@@ -3671,6 +3745,10 @@ cmd_phase() {
     [ "$inflight" = - ] || die "refused: attempt $inflight is still in flight"
     case "$old:$new" in
       READY:BUILD|BUILD:REVIEW) : ;;
+      REVIEW:BUILD)
+        judge_requested_fix "$slug" \
+          || die "refused: REVIEW -> BUILD requires a judge result NEXT:FIX"
+        ;;
       *) die "refused: invalid transition $old -> $new" ;;
     esac
     if [ "$old:$new" = BUILD:REVIEW ]; then
@@ -3944,6 +4022,44 @@ EOF
 
 # Claims: the outer loop. The script keeps the ledger honest; the agent supplies meaning.
 claims_file() { printf '%s/CLAIMS.md' "$ROOT"; }
+claim_looks_bundled() {
+  printf '%s' "$1" | grep -qiE ' and |; | \+ | / | as well as | along with |, .* and '
+}
+
+claim_present_desired() {
+  printf '%s' "$1" | grep -qiE ' writes | should | must | will | needs to | ought to ' \
+    && ! printf '%s' "$1" | grep -qiE ' not | never | no | isn.t | does not | do not | cannot '
+}
+
+claim_infer_polarity() {
+  t=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case $t in
+    *' is not '*|*' does not exist'*|*' has no '*|*' missing '*|*' not a '*) printf 'ABSENT'; return ;;
+    *' already '*|*' exists '*|*' ships '*) printf 'EXISTS'; return ;;
+    *' wrong '*|*' broken '*|*' defect'*|*' incorrect '*) printf 'DEFECT'; return ;;
+  esac
+  if claim_present_desired "$1"; then
+    printf 'REFUSE-DESIRED'
+    return
+  fi
+  printf 'ABSENT'
+}
+
+claims_set_status() {
+  n=$1; st=$2; f=$(claims_file)
+  [ -f "$f" ] || return 0
+  awk -v c="### $n " -v s="$st" '
+    $0 ~ "^"c {inc=1}
+    inc && /^    status:/ {print "    status: " s; inc=0; next}
+    /^### C/ && $0 !~ "^"c {inc=0}
+    {print}' "$f" > "$ROOT/c.$$.tmp" && mv "$ROOT/c.$$.tmp" "$f"
+}
+
+claims_field() {
+  n=$1; field=$2
+  sed -n "/^### $n /,/^### C[0-9]/{s/^    $field: //p;}" "$(claims_file)" | head -1
+}
+
 cmd_claim() {
   sub=${1:-}; [ $# -eq 0 ] || shift
   f=$(claims_file)
@@ -3952,16 +4068,26 @@ cmd_claim() {
   [ -f "$f" ] || printf '# CLAIMS\n\nOne heading per finding, quoting its source sentence verbatim.\nNothing becomes an item until it survives audit.\n' > "$f"
   case $sub in
   add)
-    txt=${1:-}; src=${2:-}
-    [ -n "$txt" ] || die 'usage: crucible claim add "CLAIM" "EXACT SOURCE SENTENCE"'
+    txt=${1:-}; src=${2:-}; pol=${3:-}
+    [ -n "$txt" ] || die 'usage: crucible claim add "CLAIM" "EXACT SOURCE SENTENCE" [ABSENT|EXISTS|DEFECT]'
     [ -n "$src" ] || die 'refused: a claim needs its source sentence quoted verbatim'
     if uses_guided_cycle; then
       panel_approval_current || die 'refused: approve the agent panel before investigation (cycle approve-panel)'
+    fi
+    claim_looks_bundled "$txt" \
+      && die 'refused: claim must be one predicate — do not bundle verbs or clauses (and/+/,/;)'
+    if [ -n "$pol" ]; then
+      case $pol in ABSENT|EXISTS|DEFECT) : ;; *) die 'polarity must be ABSENT, EXISTS, or DEFECT' ;; esac
+    else
+      pol=$(claim_infer_polarity "$txt")
+      [ "$pol" != REFUSE-DESIRED ] \
+        || die 'refused: present-tense desired behavior is not a gap — state ABSENT/DEFECT (e.g. "X is not a CLI verb")'
     fi
     cnt=$(grep -c '^### C' "$f" 2>/dev/null || true); cnt=${cnt:-0}
     n=$((cnt + 1))
     { printf '\n### C%s — %s\n\n' "$n" "$txt"
       printf '    source: "%s"\n' "$src"
+      printf '    polarity: %s\n' "$pol"
       printf '    status: NEW\n    audited-by:\n    scout:\n    item:\n' ; } >> "$f"
     mkdir -p "$ROOT/claims/C$n/verdicts"
     printf 'C%s\n' "$n" ;;
@@ -4020,12 +4146,33 @@ cmd_claim() {
         DISPATCHED) attempt_event "$claim_attempt" SUPERSEDED - "claim-verdict-$word" ;;
       esac
     fi
-    printf 'CLAIM-VERDICT: %s\nAGENT: %s\nKIND: %s\n' "$word" "$who" "$(kind_of "$who")" > "$d/$who.md"
+    cite=${4:-}
+    if [ -z "$cite" ]; then
+      last=
+      for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
+        [ -s "$ef" ] || continue
+        last=$ef
+      done
+      cite=${last#"$ROOT/"}
+    fi
+    [ -n "$cite" ] || die 'refused: claim verdict requires a citation (evidence path or quote)'
+    if [ -s "$d/$who.md" ]; then
+      mkdir -p "$d/history"
+      ts=$(date +%s)
+      mv "$d/$who.md" "$d/history/$who.$ts.md"
+    fi
+    {
+      printf 'CLAIM-VERDICT: %s\nAGENT: %s\nKIND: %s\nCITATION: %s\n' \
+        "$word" "$who" "$(kind_of "$who")" "$cite"
+    } > "$d/$who.md"
+    case $word in
+      FALSE|STALE|UNVERIFIABLE) claims_set_status "$n" AUDITED_FALSE ;;
+    esac
     printf '%s\n' "$d/$who.md" ;;
   scout)
     n=${1:-}; res=${2:-}; who=${3:-}
-    [ -n "$n" ] && [ -n "$res" ] || die 'usage: crucible claim scout CN ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT'
-    case $res in ABSENT|PARTLY-EXISTS|FULLY-EXISTS) : ;; *) die "scout result must be ABSENT, PARTLY-EXISTS or FULLY-EXISTS" ;; esac
+    [ -n "$n" ] && [ -n "$res" ] || die 'usage: crucible claim scout CN ABSENT|PARTLY-EXISTS|FULLY-EXISTS|IN-FLIGHT AGENT'
+    case $res in ABSENT|PARTLY-EXISTS|FULLY-EXISTS|IN-FLIGHT) : ;; *) die "scout result must be ABSENT, PARTLY-EXISTS, FULLY-EXISTS, or IN-FLIGHT" ;; esac
     grep -q "^### $n " "$f" || die "no such claim: $n"
     [ -n "$who" ] || die 'usage: crucible claim scout CN RESULT AGENT — name the scout that searched'
     [ -n "$(kind_of "$who")" ] || die "unregistered agent: $who"
@@ -4036,6 +4183,22 @@ cmd_claim() {
     done
     [ "$se" -gt 0 ] \
       || die "refused: $who recorded no usable searches for $n — run: crucible run-claim $n $who -- <search>"
+    if [ "$res" = ABSENT ] && [ -f "$ROOT/PROGRAM" ]; then
+      r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM")
+      b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM"); b=${b:-main}
+      if [ -n "$r" ] && [ -d "$r/.git" ] || [ -f "$r/.git" ]; then
+        inflight_br=
+        for br in $(git -C "$r" branch --list 'ai/*' 2>/dev/null | sed 's/^[* ]*//'); do
+          [ -n "$br" ] || continue
+          ahead=$(git -C "$r" rev-list --count "${b}..${br}" 2>/dev/null || echo 0)
+          [ "${ahead:-0}" -gt 0 ] || continue
+          inflight_br=$br
+          break
+        done
+        [ -z "$inflight_br" ] \
+          || die "refused: unmerged branch $inflight_br implements work — record IN-FLIGHT, not ABSENT"
+      fi
+    fi
     if uses_guided_cycle; then
       require_panel_approval
       cdir="$ROOT/claims/$n/dispatches"
@@ -4130,13 +4293,26 @@ cmd_claim() {
     # the code did not check it, so a claim the scout had closed could still become work —
     # exactly the "proposing to build machinery that already exists" failure the role exists for.
     sc=$(sed -n "/^### $n /,/^### C[0-9]/{s/^    scout: //p;}" "$(claims_file)" | head -1)
+    pol=$(claims_field "$n" polarity)
+    [ -n "$pol" ] || pol=ABSENT
     case $sc in
       FULLY-EXISTS) die "refused: the scout found $n already implemented. Drop it, or record a narrowed claim for the gap." ;;
+      IN-FLIGHT) die "refused: $n is IN-FLIGHT on an unmerged branch — merge or drop, do not admit" ;;
       ABSENT|PARTLY-EXISTS) : ;;
-      # LOOP.md says admission requires a scout report and this did not check for one, so a
-      # claim could become work with nobody having looked for an existing implementation —
-      # which is the single most repeated failure this whole role exists to prevent.
-      *) die "refused: $n has no scout report. Dispatch a scout, then: crucible claim scout $n ABSENT|PARTLY-EXISTS|FULLY-EXISTS AGENT" ;;
+      *) die "refused: $n has no scout report. Dispatch a scout, then: crucible claim scout $n ABSENT|PARTLY-EXISTS|FULLY-EXISTS|IN-FLIGHT AGENT" ;;
+    esac
+    case $pol in
+      EXISTS) die "refused: polarity EXISTS is not a gap — drop it or record ABSENT/DEFECT" ;;
+      ABSENT)
+        [ "$sc" = ABSENT ] \
+          || die "refused: polarity ABSENT requires scout ABSENT (got $sc)"
+        ;;
+      DEFECT)
+        case $sc in
+          PARTLY-EXISTS|ABSENT) : ;;
+          *) die "refused: polarity DEFECT requires scout PARTLY-EXISTS or ABSENT (got $sc)" ;;
+        esac
+        ;;
     esac
     if uses_managed_lifecycle; then
       if uses_guided_cycle; then
@@ -4161,8 +4337,9 @@ cmd_claim() {
       r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM"); b=$(sed -n 's/^base: //p' "$ROOT/PROGRAM")
       [ -n "$r" ] && cmd_target "$slug" "$r" "ai/$slug" "${b:-main}" >/dev/null 2>&1 || true
     fi
+    claims_set_status "$n" ADMITTED
     printf 'admitted %s as item %s\n' "$n" "$slug" ;;
-  *) die "usage: crucible claim add|list|verdict|admit ..." ;;
+  *) die "usage: crucible claim add|list|verdict|admit|scout ..." ;;
   esac
 }
 
@@ -4477,12 +4654,53 @@ cmd_close() {
   after=$(workid "$slug")
   [ "$before" = "$after" ] || { rmdir "$d/.closing" 2>/dev/null
     die "refused: work changed during check ($before -> $after)"; }
+  if [ -f "$d/TARGET" ]; then
+    r=$(tgt "$slug" repo); b=$(tgt "$slug" branch)
+    head=$(git -C "$r" rev-parse --verify --quiet "$b" 2>/dev/null | cut -c1-12)
+    if [ -n "$head" ] && [ "$after" != "$head" ]; then
+      rmdir "$d/.closing" 2>/dev/null
+      die "refused: close work-id $after is not $b HEAD $head"
+    fi
+  fi
+  last_pass=
+  if [ -d "$d/verdicts" ]; then
+    for vf in "$d/verdicts"/*.md; do
+      [ -f "$vf" ] || continue
+      [ "$(sed -n 's/^VERDICT: //p' "$vf" | head -1)" = PASS ] || continue
+      last_pass=$(sed -n 's/^WORK-ID: //p' "$vf" | head -1)
+    done
+  fi
+  if [ -n "$last_pass" ] && [ "$after" != "$last_pass" ]; then
+    rmdir "$d/.closing" 2>/dev/null
+    die "refused: close work-id $after is not last PASS $last_pass (record a successor review)"
+  fi
+  reject_fp=
+  for rf in "$ROOT"/attempts/*/result.md; do
+    [ -f "$rf" ] || continue
+    [ "$(sed -n 's/^ITEM: //p' "$rf" | head -1)" = "$slug" ] || continue
+    [ "$(sed -n 's/^OUTCOME: //p' "$rf" | head -1)" = REJECT ] || continue
+    fp=$(sed -n 's/^FINDING-FINGERPRINT: //p' "$rf" | head -1)
+    [ -n "$fp" ] && [ "$fp" != - ] && reject_fp=$fp
+  done
+  if [ -n "$reject_fp" ] && [ "$lesson" = NONE ]; then
+    rmdir "$d/.closing" 2>/dev/null
+    die "refused: LESSONS.md cannot stay NONE when REJECT fingerprint $reject_fp exists"
+  fi
   printf -- '- [%s] %s (item %s, work %s)\n' "$(date +%Y-%m-%d)" "$lesson" "$slug" "$after" >> "$ROOT/LESSONS.md"
   if uses_managed_lifecycle; then
     risk=$(state_value "$slug" 5)
     state_update_item "$slug" CLOSED REVIEW "$after" "$risk" - -
   else
     sed "s|^STATUS: OPEN.*|STATUS: CLOSED $after|" "$d/ITEM.md" > "$d/ITEM.$$.tmp" && mv "$d/ITEM.$$.tmp" "$d/ITEM.md"
+  fi
+  if [ -f "$(claims_file)" ]; then
+    tot=$(grep -c '^### C' "$(claims_file)" 2>/dev/null || true)
+    i=1
+    while [ "$i" -le "${tot:-0}" ]; do
+      it=$(claims_field "C$i" item)
+      [ "$it" = "$slug" ] && claims_set_status "C$i" CLOSED
+      i=$((i + 1))
+    done
   fi
   printf 'closed %s at %s\n' "$slug" "$after"
 }
