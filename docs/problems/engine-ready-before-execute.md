@@ -2,7 +2,7 @@ PROBLEM: Guided+managed Crucible must keep problem-bind, abandon, and
 REVIEW→BUILD working after 1.5.2. Do not invent leftover RFC rows as the
 next PROBLEM. Coordinator must not start ACP after seal.
 
-Shipped on this branch (Unreleased / 1.5.2 candidate) — do not re-admit:
+Shipped in 1.5.2 — do not re-admit:
 
 1. FILE / `--next` refuse a one-line “X is not a CLI verb” and leftover
    remainder catalogs that name no falsifiable outcome.

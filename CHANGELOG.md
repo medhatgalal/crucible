@@ -5,6 +5,8 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.5.2] - 2026-08-18
+
 ### Problem bind, abandon, and REVIEW FIX re-entry
 
 - `cycle problem FILE` and `--next` refuse a one-line “X is not a CLI verb”
