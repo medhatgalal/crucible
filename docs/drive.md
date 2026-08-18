@@ -33,7 +33,7 @@ installed prompt. This page is only the outer driver.
 
 ```text
 .crucible/<program>/crucible drive        # loop until a human gate or stop
-.crucible/<program>/crucible drive tick   # one iteration (tests and babysitting)
+.crucible/<program>/crucible drive tick   # one sealed worker or one coordinator action
 ```
 
 ## Legal coordinator actions

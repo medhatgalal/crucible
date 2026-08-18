@@ -158,7 +158,7 @@ and [RULES.md](RULES.md).
 ## 📚 Go deeper
 
 - [BOOTSTRAP.md](BOOTSTRAP.md) — cold start in a target repo (what a fresh agent should read first)
-- [docs/install.md](docs/install.md) — install, confirm `engine:`, refresh, next PROBLEM, `drive`
+- [docs/install.md](docs/install.md) — first install vs upgrade; confirm `engine:`; `--next`; `drive`
 - [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
 - [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement
 - [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria

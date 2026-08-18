@@ -70,6 +70,8 @@ not drive the cycle with them.
   add / ready / phase / task          create and advance bounded work
   dispatch / attempt / result         coordinate isolated agent attempts
   attempt transport                   record multi-agent|acp|subagent isolation
+  attempt reclaim ATTEMPT             STOPPED a RUNNING attempt whose pid is dead
+  evidence archive SLUG               park item evidence whose work-id is not current
   contract-audit ATTEMPT AUDITOR …    file-based contract PASS|FIX|STOP by a distinct agent
   contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2 …   copy PASS onto isomorphic DISPATCHED contracts
   probe-acp ok|failed|unavailable     record ACP availability for the ladder
@@ -295,6 +297,13 @@ attempt_pid() {
   awk -F '\t' 'NR > 1 && $3 != "-" { pid=$3 } END { print (pid ? pid : "-") }' "$ad/events.tsv"
 }
 
+attempt_pid_alive() {
+  pid=$(attempt_pid "$1")
+  [ -n "$pid" ] && [ "$pid" != - ] || return 1
+  # kill -0 fails with EPERM on pid 1; ps -p is the existence check.
+  ps -p "$pid" >/dev/null 2>&1
+}
+
 attempt_terminal() {
   case $1 in RETURNED|TIMEOUT|STOPPED|ABANDONED|SUPERSEDED) return 0 ;; *) return 1 ;; esac
 }
@@ -385,7 +394,7 @@ cmd_attempt() {
   uses_managed_lifecycle || die "attempt requires managed lifecycle behavior"
   sub=${1:-}; [ $# -eq 0 ] || shift
   id=${1:-}; [ $# -eq 0 ] || shift
-  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish|transport ATTEMPT ..."
+  [ -n "$id" ] || die "usage: crucible attempt start|overdue|finish|transport|reclaim ATTEMPT ..."
   ad=$(attempt_dir "$id"); slug=$(attempt_meta "$id" 2)
   case $sub in
     start)
@@ -471,7 +480,26 @@ cmd_attempt() {
           esac ;;
       esac
       ;;
-    *) die "usage: crucible attempt start|overdue|finish|transport ATTEMPT ..." ;;
+    reclaim)
+      [ $# -eq 0 ] || die "usage: crucible attempt reclaim ATTEMPT"
+      current=$(attempt_state "$id")
+      case $current in RUNNING|OVERDUE) : ;; *) die "attempt reclaim requires RUNNING or OVERDUE" ;; esac
+      if attempt_pid_alive "$id"; then
+        die "refused: attempt $id pid $(attempt_pid "$id") is still alive"
+      fi
+      attempt_event "$id" STOPPED "$(attempt_pid "$id")" dead-pid
+      retry=$(attempt_meta "$id" 13); task=$(attempt_meta "$id" 3)
+      case $slug in C[0-9]*)
+        printf '%s STOPPED; dead pid reclaimed (claim attempt)\n' "$id"
+        ;;
+      *)
+        if [ "$task" != - ]; then block_code=TASK_BLOCKED; else block_code=OPERATOR_DECISION; fi
+        state_attempt_update "$slug" BLOCKED - "$block_code"
+        printf '%s STOPPED; dead pid reclaimed; item blocked %s\n' "$id" "$block_code"
+        ;;
+      esac
+      ;;
+    *) die "usage: crucible attempt start|overdue|finish|transport|reclaim ATTEMPT ..." ;;
   esac
 }
 
@@ -2176,6 +2204,60 @@ assign_role_normalize() {
   esac
 }
 
+panel_required_count() {
+  want=$1
+  af=$(assign_file)
+  [ -f "$af" ] || { printf '0'; return; }
+  awk -F '\t' -v r="$want" '
+    $1 ~ /^#/ || $1 == "role" { next }
+    {
+      role=$1; req=tolower($3)
+      if (role == "judge") role="reviewer"
+      if (role == r && (req == "yes" || req == "required")) n++
+    }
+    END { print n+0 }
+  ' "$af"
+}
+
+guided_min_auditors() {
+  if [ -n "${CRUCIBLE_MIN_AUDITORS:-}" ]; then
+    printf '%s' "$CRUCIBLE_MIN_AUDITORS"
+    return
+  fi
+  if uses_guided_cycle; then
+    n=$(panel_required_count claim-auditor)
+    [ "$n" -ge 1 ] && { printf '%s' "$n"; return; }
+  fi
+  printf '2'
+}
+
+guided_min_judges() {
+  if [ -n "${CRUCIBLE_MIN_JUDGES:-}" ]; then
+    printf '%s' "$CRUCIBLE_MIN_JUDGES"
+    return
+  fi
+  if uses_guided_cycle; then
+    n=$(panel_required_count reviewer)
+    [ "$n" -ge 1 ] && { printf '%s' "$n"; return; }
+  fi
+  printf '%s' "$MIN_JUDGES"
+}
+
+cycle_worth() {
+  f=$(claims_file)
+  [ -f "$f" ] || { printf 'UNKNOWN'; return; }
+  st=$(cycle_investigation_state)
+  [ "$st" = COMPLETE ] || { printf 'UNKNOWN'; return; }
+  absent=0; partly=0
+  absent=$(grep -c '^    scout: ABSENT$' "$f" 2>/dev/null || true)
+  partly=$(grep -c '^    scout: PARTLY-EXISTS$' "$f" 2>/dev/null || true)
+  [ -n "$absent" ] || absent=0
+  [ -n "$partly" ] || partly=0
+  if [ "$absent" -gt 0 ]; then printf 'BUILD'; return; fi
+  if [ "$partly" -gt 0 ]; then printf 'DOCS'; return; fi
+  printf 'NO-BUILD'
+}
+
 panel_has_maker_reviewer_waiver() {
   [ -f "$(panel_file)" ] || return 1
   # Only explicit waiver lines count — "do not grant maker-reviewer-same-agent" must not grant it.
@@ -2656,6 +2738,7 @@ write_cycle_status() {
     printf 'line: %s\n' "$line"
     printf 'state: %s\n' "$state"
     printf 'engine: %s\n' "$(engine_version)"
+    printf 'worth: %s\n' "$(cycle_worth)"
     printf 'active-item: %s\n' "$item"
     printf 'inflight-attempt: %s\n' "$inflight"
     printf 'last-evidence: %s\n' "$evidence"
@@ -3180,8 +3263,9 @@ drive_invoke_coordinator() {
 cmd_drive() {
   uses_guided_cycle || die 'drive requires a guided cycle'
   uses_managed_lifecycle || die 'drive requires managed lifecycle behavior'
-  sub=${1:-loop}
-  case $sub in
+  # Do not name this `sub`: cmd_attempt/cmd_cycle overwrite `sub` in this shell.
+  drive_mode=${1:-loop}
+  case $drive_mode in
     tick|loop|'') : ;;
     *) die 'usage: crucible drive [tick|loop]' ;;
   esac
@@ -3212,7 +3296,7 @@ cmd_drive() {
     drive_apply_isomorphic_audits
     if drive_invoke_sealed_worker "$repo"; then
       if drive_finish_tick; then
-        case $sub in
+        case $drive_mode in
           tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
         esac
         continue
@@ -3247,7 +3331,7 @@ cmd_drive() {
     drive_apply_isomorphic_audits
     if drive_invoke_sealed_worker "$repo"; then
       if drive_finish_tick; then
-        case $sub in
+        case $drive_mode in
           tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
         esac
         continue
@@ -3255,7 +3339,7 @@ cmd_drive() {
       return 0
     fi
     if drive_finish_tick; then
-      case $sub in
+      case $drive_mode in
         tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
       esac
     else
@@ -3290,11 +3374,15 @@ cmd_cycle_status() {
   investigation=$(cycle_investigation_state)
   case $investigation in
     EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them via independent agents\n'; return ;;
-    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim (admit needs %s sealed TRUE verdicts)\n' "${CRUCIBLE_MIN_AUDITORS:-2}"; return ;;
+    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim (admit needs %s sealed TRUE verdicts)\n' "$(guided_min_auditors)"; return ;;
     NEEDS_SCOUT) printf 'NEXT INVESTIGATE — search for existing behavior before proposing work\n'; return ;;
   esac
   if ! proposal_valid; then
-    printf 'NEXT PROPOSE — write a refined, evidence-grounded PROPOSAL.md\n'
+    case $(cycle_worth) in
+      DOCS) printf 'NEXT PROPOSE — no ABSENT capability; propose DOCS-ONLY or live-observation\n' ;;
+      NO-BUILD) printf 'NEXT PROPOSE — no missing capability; propose NO-BUILD or stop\n' ;;
+      *) printf 'NEXT PROPOSE — write a refined, evidence-grounded PROPOSAL.md\n' ;;
+    esac
     return
   fi
   pid=$(proposal_id)
@@ -3426,7 +3514,12 @@ cycle_live_attempts_terminal() {
     # --next archives the investigation. Block only attempts that may still have a
     # process. DISPATCHED-never-started leftovers are not live workers.
     case $attempt_status in
-      RUNNING|OVERDUE) die "refused: attempt $attempt_id is $attempt_status" ;;
+      RUNNING|OVERDUE)
+        if attempt_pid_alive "$attempt_id"; then
+          die "refused: attempt $attempt_id is $attempt_status"
+        fi
+        cmd_attempt reclaim "$attempt_id" >/dev/null
+        ;;
     esac
   done
 }
@@ -3761,6 +3854,9 @@ cmd_adopt() {
   src=$(cd "$(dirname "$0")" && pwd)
   dst="$repo/.crucible/$prog"
   if [ "$refresh" -eq 1 ]; then
+    if [ -d "$dst" ] && [ ! -f "$dst/PROGRAM" ]; then
+      die "refused: $dst is a husk (no PROGRAM). Keep it, trash it, or adopt a different program name"
+    fi
     [ -d "$dst" ] && [ -f "$dst/PROGRAM" ] || die "program does not exist: $dst"
     old=unknown
     [ -s "$dst/VERSION" ] && old=$(sed -n '1p' "$dst/VERSION")
@@ -4027,7 +4123,7 @@ cmd_claim() {
         require_attempt_independence "$ca"
       fi
     done
-    [ "$t" -ge "${CRUCIBLE_MIN_AUDITORS:-2}" ] || die "refused: $n has $t TRUE verdicts, need ${CRUCIBLE_MIN_AUDITORS:-2}"
+    [ "$t" -ge "$(guided_min_auditors)" ] || die "refused: $n has $t TRUE verdicts, need $(guided_min_auditors)"
     kn=0; for k in $kinds; do kn=$((kn+1)); done
     [ "$kn" -ge "$MIN_KINDS" ] || die "refused: $n audited by $kn kind(s), need $MIN_KINDS"
     # A scout that found the work already implemented blocks admission. LOOP.md said this and
@@ -4329,12 +4425,37 @@ cmd_check() {
     case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
     vn=$((vn+1)); say "ok   $nm PASS on $wid (kind $k, recorded its own evidence)"
   done
-  [ "$vn" -lt "$MIN_JUDGES" ] && { say "FAIL $vn passing judges, need $MIN_JUDGES"; bad=1; }
+  need_j=$(guided_min_judges)
+  [ "$vn" -lt "$need_j" ] && { say "FAIL $vn passing judges, need $need_j"; bad=1; }
   kn=0; for k in $kinds; do kn=$((kn+1)); done
   [ "$kn" -lt "$MIN_KINDS" ] && { say "FAIL $kn distinct kinds, need $MIN_KINDS"; bad=1; }
 
   [ "$bad" -eq 0 ] || { printf 'NOT CLOSEABLE\n'; return 1; }
   printf 'CLOSEABLE %s\n' "$wid"; return 0
+}
+
+cmd_evidence() {
+  sub=${1:-}; slug=${2:-}
+  [ "$sub" = archive ] && [ -n "$slug" ] || die 'usage: crucible evidence archive SLUG'
+  need "$slug"
+  d=$(D "$slug"); wid=$(workid "$slug")
+  [ -d "$d/evidence" ] || die "no evidence directory: $slug"
+  mkdir -p "$d/evidence/history"
+  moved=0
+  for f in "$d/evidence"/*; do
+    [ -f "$f" ] || continue
+    b=${f##*/}
+    case $b in .partial.*) continue ;; esac
+    stem=${b%.txt}
+    case $b in *.txt) : ;; *) continue ;; esac
+    id=${stem##*.}
+    if [ "$id" != "$wid" ]; then
+      mv "$f" "$d/evidence/history/"
+      printf 'archived %s (work-id %s, current %s)\n' "$b" "$id" "$wid"
+      moved=$((moved + 1))
+    fi
+  done
+  [ "$moved" -gt 0 ] || printf 'no stale evidence to archive for %s (work id %s)\n' "$slug" "$wid"
 }
 
 cmd_close() {
@@ -4396,6 +4517,7 @@ run)      shift; cmd_run "$@" ;;
 run-claim) shift; cmd_run_claim "$@" ;;
 check)    shift; cmd_check "$@" ;;
 close)    shift; cmd_close "$@" ;;
+evidence) shift; cmd_evidence "$@" ;;
 workid)   shift; need "${1:-}"; workid "$1"; echo ;;
 help)     shift; if [ "${1:-}" = protocol ]; then protocol_usage; else [ $# -eq 0 ] || die 'usage: crucible help [protocol]'; usage; fi ;;
 -h|--help) usage ;;

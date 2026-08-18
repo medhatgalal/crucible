@@ -663,5 +663,107 @@ printf '%s\n' "$out" | grep -q "drive: started $wid" && ok \
 [ ! -f "$P/claims/$cn/verdicts/a1.md" ] && ok \
   || bad 'drive parent must not write a claim verdict'
 
+# --- drive tick starts exactly one of two sealed workers ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+"$P/crucible" dispatch "$cn" claim-auditor a2 >/dev/null
+seal_claim "$P" a1
+seal_claim "$P" a2
+out=$("$P/crucible" drive tick 2>&1) || { bad "two-sealed tick refused: $out"; out=; }
+nstart=$(printf '%s\n' "$out" | grep -c 'drive: started' || true)
+[ "$nstart" = 1 ] && ok || bad "drive tick started $nstart workers (want 1): $out"
+
+# --- reclaim dead RUNNING unblocks --next ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Old problem.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'old gap' 'Old problem.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
+zid=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  zid=${ad##*/}
+done
+"$P/crucible" attempt transport "$zid" multi-agent >/dev/null
+"$P/crucible" contract-audit "$zid" j2 PASS >/dev/null
+"$P/crucible" attempt start "$zid" 999999 >/dev/null
+"$P/crucible" attempt reclaim "$zid" >/dev/null
+[ "$(awk -F '\t' 'END{print $1}' "$P/attempts/$zid/events.tsv")" = STOPPED ] && ok \
+  || bad 'reclaim did not STOPPED a dead pid'
+# leftover RUNNING then --next auto-reclaims
+"$P/crucible" dispatch "$cn" scout a1 >/dev/null
+sid=
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  r=$(awk -F '\t' 'NR==2 {print $5}' "$ad/meta.tsv")
+  [ "$r" = scout ] && sid=${ad##*/}
+done
+"$P/crucible" attempt transport "$sid" acp >/dev/null
+"$P/crucible" contract-audit "$sid" j2 PASS >/dev/null
+"$P/crucible" attempt start "$sid" 999998 >/dev/null
+printf 'Next problem.\n' > "$repo/next-problem.md"
+expect 'next reclaims dead RUNNING' '/PROBLEM.md$' \
+  "$P/crucible" cycle problem "$repo/next-problem.md" --next
+
+# --- husk refresh refuses ---
+mkdir -p "$repo/.crucible/ghost"
+printf leftover > "$repo/.crucible/ghost/STATUS.md"
+( cd "$repo" && "$C" adopt ghost --refresh >/dev/null 2>&1 ) \
+  && bad 'refresh of husk was allowed' \
+  || ok
+
+# --- evidence archive ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Need a real gap.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+cn=$("$P/crucible" claim add 'a real gap' 'Need a real gap.')
+for agent in a1 a2; do
+  "$P/crucible" run-claim "$cn" "$agent" -- sh -c 'echo checked' >/dev/null
+  "$P/crucible" dispatch "$cn" claim-auditor "$agent" >/dev/null
+  seal_claim "$P" "$agent"
+  "$P/crucible" claim verdict "$cn" "$agent" TRUE >/dev/null
+done
+"$P/crucible" run-claim "$cn" a1 -- sh -c 'echo searched' >/dev/null
+"$P/crucible" dispatch "$cn" scout a1 >/dev/null
+seal_claim "$P" a1
+"$P/crucible" claim scout "$cn" ABSENT a1 >/dev/null
+cat > "$P/PROPOSAL.md" <<'EOF'
+# Proposal
+## Verified problem
+A real gap exists.
+## Proposed outcome
+One item.
+## Non-goals
+None.
+## Backlog
+arc-item.
+## Verification
+Two TRUEs.
+EOF
+"$P/crucible" cycle approve >/dev/null
+"$P/crucible" claim admit "$cn" arc-item >/dev/null
+printf 'stale\n' > "$P/items/arc-item/evidence/mk1.tok.DEADBEEF0001.txt"
+out=$("$P/crucible" evidence archive arc-item 2>&1) || {
+  bad "evidence archive refused: $out"; out=
+}
+printf '%s\n' "$out" | grep -q 'archived' && ok || bad "archive did not move stale file: $out"
+[ -f "$P/items/arc-item/evidence/history/mk1.tok.DEADBEEF0001.txt" ] && ok \
+  || bad 'stale evidence was not moved to evidence/history/'
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -327,6 +327,8 @@ Empty.
 ## Verification
 Two recorded falsifications.
 EOF
+expect 'FALSE complete waits approval' '^WAIT APPROVAL ' "$Q/crucible" cycle
+grep -q '^worth: NO-BUILD$' "$Q/STATUS.md" && ok || bad 'FALSE-complete should project worth: NO-BUILD'
 $Q/crucible cycle approve >/dev/null
 expect 'verified no-work proposal reaches done' '^DONE ' "$Q/crucible" cycle
 mkdir -p "$Q/worktrees"
