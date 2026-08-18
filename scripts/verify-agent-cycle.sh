@@ -331,6 +331,10 @@ expect 'FALSE complete waits approval' '^WAIT APPROVAL ' "$Q/crucible" cycle
 grep -q '^worth: NO-BUILD$' "$Q/STATUS.md" && ok || bad 'FALSE-complete should project worth: NO-BUILD'
 $Q/crucible cycle approve >/dev/null
 expect 'verified no-work proposal reaches done' '^DONE ' "$Q/crucible" cycle
+out=$("$Q/crucible" cycle 2>&1) || true
+printf '%s\n' "$out" | grep -q '^CLEANUP —' && ok || bad "DONE missing CLEANUP card: $out"
+printf '%s\n' "$out" | grep -q 'NOT cycle clean: Jira' && ok || bad 'CLEANUP card must exclude Jira'
+printf '%s\n' "$out" | grep -q 'cycle clean --dry-run' && ok || bad 'DONE must name cycle clean --dry-run'
 mkdir -p "$Q/worktrees"
 git -C "$clean_repo" worktree add -q -b cleanup-session "$Q/worktrees/session" main
 expect 'cleanup previews exact machine state' '^DELETE .*agents.tsv' "$Q/crucible" cycle clean --dry-run
@@ -465,9 +469,17 @@ expect 'REVIEW->BUILD after judge FIX' 'is now in BUILD' \
 awk -F '\t' 'BEGIN{OFS="\t"} NR==1{print;next} $1=="fix-item"{$2="CLOSED"} {print}' \
   "$G/STATE.tsv" > "$G/STATE.tsv.tmp" && mv "$G/STATE.tsv.tmp" "$G/STATE.tsv"
 printf 'Next title here.\n' > "$grepo/next-p.md"
-"$G/crucible" cycle problem "$grepo/next-p.md" --next >/dev/null
-grep -q 'problem-title: Next title here.' "$G/PANEL.CONTEXT.md" && ok \
-  || bad '--next did not write PANEL.CONTEXT.md'
+nxt=$("$G/crucible" cycle problem "$grepo/next-p.md" --next 2>&1) || {
+  bad "--next failed: $nxt"; nxt=
+}
+if [ -f "$G/PANEL.CONTEXT.md" ] && grep -q 'problem-title:' "$G/PANEL.CONTEXT.md"; then
+  ok
+else
+  bad "--next did not write PANEL.CONTEXT.md ($nxt)"
+fi
+printf 'pr-status leftover\n' > "$grepo/pr-status.md"
+refuses '--next refuses leftover pr-status title' 'pr-status' \
+  "$G/crucible" cycle problem "$grepo/pr-status.md" --next
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

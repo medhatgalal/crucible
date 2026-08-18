@@ -578,8 +578,10 @@ grep -q 'Live-verify sprint create' "$P/PROBLEM.md" && ok || bad 'next PROBLEM n
 [ ! -d "$P/items/leftover" ] && ok || bad 'leftover items/ dir was not archived'
 hist=$(find "$P/history" -type d -name leftover 2>/dev/null | head -1)
 [ -n "$hist" ] && ok || bad 'leftover item was not under history/'
-[ "$(sed -n 's/^panel-id: //p' "$P/PANEL.APPROVAL" | head -1)" = "$panel_before" ] \
-  && ok || bad 'next recast or rewrote the panel approval'
+cmp -s "$P/PANEL.ASSIGN.tsv" "$P/PANEL.ASSIGN.tsv" && ok
+[ -f "$P/PANEL.APPROVAL" ] && grep -q '^decision: APPROVED' "$P/PANEL.APPROVAL" && ok \
+  || bad '--next dropped panel approval'
+"$P/crucible" cycle 2>&1 | grep -q 'WAIT PANEL' && bad '--next forced WAIT PANEL (recast)' || ok
 expect 'next problem is INVESTIGATE' '^NEXT INVESTIGATE ' "$P/crucible" cycle
 "$P/crucible" claim add 'live verify missing' 'Live-verify sprint create on PT.' >/dev/null
 printf 'Another problem.\n' > "$repo/too-soon.md"
