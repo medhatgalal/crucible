@@ -503,5 +503,26 @@ fi
 ls "$G"/history/*/ABANDON.md >/dev/null 2>&1 && ok || bad 'abandon missing ABANDON.md'
 "$G/crucible" cycle 2>&1 | grep -q 'NEXT INTAKE' && ok || bad 'abandon did not return to INTAKE'
 
+{
+  printf '# leftover remainder catalog\n\n'
+  i=1
+  while [ "$i" -le 8 ]; do
+    printf 'workgraph verb%s is not a CLI verb.\n' "$i"
+    i=$((i + 1))
+  done
+  printf '\n## Falsifier\n\nuv run pytest -q\n'
+} > "$grepo/laundry.md"
+refuses 'FILE refuses 8+ CLI-verb catalog even with falsifier' 'leftover catalog|not a PROBLEM' \
+  "$G/crucible" cycle problem "$grepo/laundry.md"
+
+printf 'One bounded gap: help -h must stay non-zero for nosuch.\n' > "$grepo/one.md"
+"$G/crucible" cycle problem "$grepo/one.md" >/dev/null
+c1=$("$G/crucible" claim add 'alpha is not a CLI verb' 'alpha is not a CLI verb' ABSENT)
+c2=$("$G/crucible" claim add 'beta is not a CLI verb' 'beta is not a CLI verb' ABSENT)
+c3=$("$G/crucible" claim add 'gamma is not a CLI verb' 'gamma is not a CLI verb' ABSENT)
+[ -n "$c1$c2$c3" ] && ok || bad 'three NEW claims should add'
+refuses 'fourth NEW claim refuses over cap' 'NEW claims|CRUCIBLE_MAX_NEW_CLAIMS' \
+  "$G/crucible" claim add 'delta is not a CLI verb' 'delta is not a CLI verb' ABSENT
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

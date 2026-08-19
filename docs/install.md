@@ -79,7 +79,9 @@ From 1.3.6, drive starts sealed workers. From 1.3.7, `dispatch ITEM judge` stays
 minima, `worth:` on STATUS, `--next` reclaims dead RUNNING pids. From 1.5.0:
 one-predicate claims with polarity; verdicts append (history); `IN-FLIGHT` scout;
 `phase REVIEW BUILD` after judge FIX; close work-id must be HEAD/last PASS;
-`--next` writes `PANEL.CONTEXT.md`.
+`--next` writes `PANEL.CONTEXT.md`. From 1.6.0: at most 3 NEW claims;
+FILE refuses 8+ CLI-verb catalogs; `drive stop`; guided `plan-audit PASS`
+before maker dispatch.
 
 ## Next problem (same panel)
 

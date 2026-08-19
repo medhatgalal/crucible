@@ -5,6 +5,20 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.0] - 2026-08-19
+
+### Investigate fan-out cap, plan-audit, drive stop
+
+- FILE refuses a laundry list of 8+ “X is not a CLI verb” even with a trailing
+  falsifier paragraph (leftover catalog, not a PROBLEM).
+- `claim add` refuses a 4th `NEW` claim while 3 remain (`CRUCIBLE_MAX_NEW_CLAIMS`,
+  default 3). Audit or drop before adding more. Admit bar stays 2 TRUE.
+- `crucible drive stop` releases `.drive.lock` and reclaims dead RUNNING pids.
+  It does not kill a live worker and never `--next`s or `--apply`.
+- Guided maker dispatch requires `plan-audit SLUG AUDITOR PASS` (not the maker).
+- `result` while `.drive.lock` exists must come from a RUNNING worker, not the
+  coordinator.
+
 ## [1.5.2] - 2026-08-18
 
 ### Problem bind, abandon, and REVIEW FIX re-entry
