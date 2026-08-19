@@ -9,7 +9,7 @@
 #   crucible cycle problem --abandon REASON archive junk INVESTIGATE; no PASS; no new PROBLEM
 #   crucible cycle approve-panel           record approval of the agent panel
 #   crucible cycle approve                 record approval of the current proposal
-#   crucible drive [tick]                  Ralph-style outer loop (guided+managed)
+#   crucible drive [tick|stop]             Ralph-style outer loop; stop releases leftover lock
 #   crucible help protocol                 show the agent-facing protocol primitives
 #
 # Roles come from the brief an agent receives, never from which agent it is. Any CLI
@@ -56,7 +56,7 @@ Crucible runs one durable problem-to-done cycle for a coordinating agent.
   crucible cycle problem --abandon R   archive junk INVESTIGATE without PASS or a new PROBLEM
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
-  crucible drive [tick]                Ralph-style outer loop: cycle, seal, start one worker, stop for humans
+  crucible drive [tick|stop]           Ralph-style outer loop; stop releases leftover lock
   crucible help protocol               show internal agent protocol primitives
 
 Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
@@ -77,6 +77,7 @@ not drive the cycle with them.
   evidence archive SLUG               park item evidence whose work-id is not current
   contract-audit ATTEMPT AUDITOR …    file-based contract PASS|FIX|STOP by a distinct agent
   contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2 …   copy PASS onto isomorphic DISPATCHED contracts
+  plan-audit SLUG AUDITOR PASS|FIX|STOP  ITEM.md audit before maker dispatch (guided)
   probe-acp ok|failed|unavailable     record ACP availability for the ladder
   run / run-claim                     record work-bound evidence
   check / close                       refuse unsupported completion
@@ -715,6 +716,33 @@ cmd_contract_audit() {
   fi
 }
 
+cmd_plan_audit() {
+  uses_managed_lifecycle || die "plan-audit requires managed lifecycle behavior"
+  slug=${1:-}; auditor=${2:-}; verdict=${3:-}
+  [ -n "$slug" ] && [ -n "$auditor" ] && [ -n "$verdict" ] \
+    || die "usage: crucible plan-audit SLUG AUDITOR PASS|FIX|STOP"
+  case $verdict in PASS|FIX|STOP) : ;; *) die "plan-audit verdict must be PASS, FIX, or STOP" ;; esac
+  need "$slug"
+  reg "$auditor"
+  is_maker "$slug" "$auditor" && die "refused: $auditor is a maker of $slug — plan-audit must be independent"
+  d=$(D "$slug")
+  [ ! -e "$d/plan-audit.md" ] || [ ! -L "$d/plan-audit.md" ] \
+    || die "plan-audit.md must be a regular file"
+  if [ -f "$d/plan-audit.md" ]; then
+    [ ! -L "$d/plan-audit.md" ] || die "plan-audit.md must be a regular file"
+    existing=$(sed -n 's/^VERDICT: //p' "$d/plan-audit.md" | head -1)
+    [ "$existing" != "$verdict" ] \
+      || { printf '%s/plan-audit.md (already %s)\n' "$d" "$verdict"; return; }
+    die "refused: plan-audit.md is immutable (existing $existing)"
+  fi
+  {
+    printf 'VERDICT: %s\nAUDITOR: %s\nAUDITOR-KIND: %s\nITEM: %s\n' \
+      "$verdict" "$auditor" "$(kind_of "$auditor")" "$slug"
+    printf '\nPlan-audit of ITEM.md for %s by %s. Not a maker PASS.\n' "$slug" "$auditor"
+  } > "$d/plan-audit.md"
+  printf '%s/plan-audit.md\n' "$d"
+}
+
 cmd_probe_acp() {
   # Append-only ACP probe log. A prior ok cannot be unbound-overwritten into failed
   # to unlock weaker subagent transport.
@@ -801,7 +829,14 @@ cmd_result() {
   esac
   case $fingerprint in -|[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]) : ;; *) die "fingerprint must be - or 12 alphanumeric characters" ;; esac
   [ "$outcome" != REJECT ] || [ "$fingerprint" != - ] || die "REJECT requires a finding fingerprint"
-  ad=$(attempt_dir "$id"); [ "$(attempt_state "$id")" = RETURNED ] || die "result requires a RETURNED attempt"
+  ad=$(attempt_dir "$id")
+  rst=$(attempt_state "$id")
+  if [ -d "$ROOT/.drive.lock" ]; then
+    [ "$rst" = RUNNING ] \
+      || die "refused: result while drive.lock exists must come from the RUNNING worker, not the coordinator"
+  else
+    [ "$rst" = RETURNED ] || die "result requires a RETURNED attempt"
+  fi
   require_attempt_independence "$id"
   slug=$(attempt_meta "$id" 2); task=$(attempt_meta "$id" 3); dispatch_wid=$(attempt_meta "$id" 4)
   role=$(attempt_meta "$id" 5); agent=$(attempt_meta "$id" 6); kind=$(attempt_meta "$id" 7)
@@ -1406,6 +1441,10 @@ cmd_dispatch_managed() (
   d=$(D "$slug"); stage=$(phase_of "$slug"); wid=$(workid "$slug")
   case $role in
     maker) [ "$stage" = BUILD ] || die "maker dispatch requires BUILD"
+      if uses_guided_cycle; then
+        [ -f "$d/plan-audit.md" ] && grep -q '^VERDICT: PASS' "$d/plan-audit.md" \
+          || die "refused: maker dispatch requires plan-audit PASS"
+      fi
       if [ -f "$d/TASKS.tsv" ]; then
         [ "$task" != - ] || die "item uses a task DAG; dispatch through: $(self_path) task dispatch"
         [ -n "$(task_field "$slug" "$task" 1)" ] || die "no such task: $task"
@@ -3311,17 +3350,51 @@ drive_invoke_coordinator() {
   fi
 }
 
+drive_stop() {
+  # Human/operator: release a leftover lock. Reclaim dead RUNNING. Do not
+  # kill a live worker. Drive never --nexts or --apply.
+  if [ -d "$ROOT/attempts" ]; then
+    for ad in "$ROOT"/attempts/A*; do
+      [ -d "$ad" ] || continue
+      id=${ad##*/}
+      st=$(attempt_state "$id")
+      case $st in
+        RUNNING|OVERDUE)
+          if attempt_pid_alive "$id"; then
+            printf 'live-attempt: %s %s pid %s (not reclaimed)\n' "$id" "$st" "$(attempt_pid "$id")"
+          else
+            cmd_attempt reclaim "$id" >/dev/null
+            printf 'reclaimed %s (dead pid)\n' "$id"
+          fi
+          ;;
+      esac
+    done
+  fi
+  if [ -d "$ROOT/.drive.lock" ]; then
+    rmdir "$ROOT/.drive.lock" 2>/dev/null \
+      || die "refused: could not remove $ROOT/.drive.lock"
+    printf 'released %s/.drive.lock\n' "$ROOT"
+  else
+    printf 'no .drive.lock\n'
+  fi
+}
+
 cmd_drive() {
   uses_guided_cycle || die 'drive requires a guided cycle'
   uses_managed_lifecycle || die 'drive requires managed lifecycle behavior'
   # Do not name this `sub`: cmd_attempt/cmd_cycle overwrite `sub` in this shell.
   drive_mode=${1:-loop}
   case $drive_mode in
+    stop)
+      [ $# -eq 1 ] || die 'usage: crucible drive stop'
+      drive_stop
+      return
+      ;;
     tick|loop|'') : ;;
-    *) die 'usage: crucible drive [tick|loop]' ;;
+    *) die 'usage: crucible drive [tick|loop|stop]' ;;
   esac
   [ $# -eq 0 ] || shift
-  [ $# -eq 0 ] || die 'usage: crucible drive [tick|loop]'
+  [ $# -eq 0 ] || die 'usage: crucible drive [tick|loop|stop]'
   mkdir "$ROOT/.drive.lock" 2>/dev/null || die 'drive already running'
   # shellcheck disable=SC2329
   drive_unlock() { rmdir "$ROOT/.drive.lock" 2>/dev/null || true; }
@@ -3737,6 +3810,11 @@ cycle_refuse_non_problem() {
   nlines=$(grep -c '[^[:space:]]' "$src" 2>/dev/null || true)
   nlines=${nlines:-0}
   folded=$(tr '\n' ' ' < "$src")
+  ncli=$(grep -ciE 'is not a CLI verb' "$src" 2>/dev/null || true)
+  ncli=${ncli:-0}
+  if [ "$ncli" -ge 8 ]; then
+    die "refused: leftover catalog of CLI-verb claims is not a PROBLEM — file one falsifiable outcome"
+  fi
   if printf '%s' "$title $folded" | grep -qiE 'is not a CLI verb'; then
     [ "$nlines" -gt 3 ] \
       || die "refused: 'is not a CLI verb' is claim polarity, not a PROBLEM"
@@ -4258,6 +4336,11 @@ cmd_claim() {
     if uses_guided_cycle; then
       panel_approval_current || die 'refused: approve the agent panel before investigation (cycle approve-panel)'
     fi
+    max_new=${CRUCIBLE_MAX_NEW_CLAIMS:-3}
+    posint "$max_new" || die 'CRUCIBLE_MAX_NEW_CLAIMS must be a positive integer'
+    newc=$(grep -c '^    status: NEW$' "$f" 2>/dev/null || true); newc=${newc:-0}
+    [ "$newc" -lt "$max_new" ] \
+      || die "refused: at most $max_new NEW claims (CRUCIBLE_MAX_NEW_CLAIMS); audit or drop before adding more"
     claim_looks_bundled "$txt" \
       && die 'refused: claim must be one predicate — do not bundle verbs or clauses (and/+/,/;)'
     if [ -n "$pol" ]; then
@@ -4927,6 +5010,7 @@ case ${1:-help} in
 adopt)    shift; cmd_adopt "$@" ;;
 cycle)    shift; cmd_cycle "$@" ;;
 drive)    shift; cmd_drive "$@" ;;
+plan-audit) shift; cmd_plan_audit "$@" ;;
 claim)    shift; cmd_claim "$@" ;;
 triage)   shift; cmd_triage "$@" ;;
 panes)    shift; cmd_panes "$@" ;;

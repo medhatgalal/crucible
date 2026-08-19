@@ -370,6 +370,9 @@ Stop if the contract must change.
 EOF
 "$P/crucible" ready wait-item >/dev/null
 "$P/crucible" phase wait-item BUILD >/dev/null
+refuses 'maker dispatch without plan-audit PASS' 'plan-audit' \
+  "$P/crucible" dispatch wait-item maker mk1
+"$P/crucible" plan-audit wait-item j2 PASS >/dev/null
 "$P/crucible" dispatch wait-item maker mk1 >/dev/null
 expect 'item inflight is WAIT' '^WAIT wait-item ' "$P/crucible" cycle
 cat > "$P/coord.sh" <<'EOF'
@@ -766,6 +769,31 @@ out=$("$P/crucible" evidence archive arc-item 2>&1) || {
 printf '%s\n' "$out" | grep -q 'archived' && ok || bad "archive did not move stale file: $out"
 [ -f "$P/items/arc-item/evidence/history/mk1.tok.DEADBEEF0001.txt" ] && ok \
   || bad 'stale evidence was not moved to evidence/history/'
+
+# --- drive stop + result under lock ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Need a real gap.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+mkdir "$P/.drive.lock"
+mkdir -p "$P/attempts/A1788000000.1.1"
+printf 'attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n' \
+  > "$P/attempts/A1788000000.1.1/meta.tsv"
+printf 'A1788000000.1.1\tC1\t-\t-\tclaim-auditor\ta1\tkindA\t-\t-\tRUNNING\t1\t2\t-\n' \
+  >> "$P/attempts/A1788000000.1.1/meta.tsv"
+printf 'state\tepoch\tpid\treason\nRUNNING\t1\t999991\tdead\n' \
+  > "$P/attempts/A1788000000.1.1/events.tsv"
+out=$("$P/crucible" drive stop 2>&1) || { bad "drive stop refused: $out"; out=; }
+printf '%s\n' "$out" | grep -q 'released' && ok || bad "drive stop did not release lock: $out"
+[ ! -d "$P/.drive.lock" ] && ok || bad 'drive stop left .drive.lock'
+printf '%s\n' "$out" | grep -q 'reclaimed' && ok || bad "drive stop did not reclaim dead pid: $out"
+mkdir "$P/.drive.lock"
+refuses 'result while drive.lock from coordinator' 'drive.lock' \
+  "$P/crucible" result A1788000000.1.1 PASS ev.txt CLOSE -
+rmdir "$P/.drive.lock"
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
