@@ -3,6 +3,10 @@
 # solo-theatre refusal, and docs SSOT signals on public entrypoints.
 
 set -eu
+# This file is one long guided investigation with many NEW claims in one program.
+# Product default remains 3; the cap CHECK is in verify-agent-cycle.sh.
+CRUCIBLE_MAX_NEW_CLAIMS=${CRUCIBLE_MAX_NEW_CLAIMS:-32}
+export CRUCIBLE_MAX_NEW_CLAIMS
 
 HERE=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 C="$HERE/crucible"
