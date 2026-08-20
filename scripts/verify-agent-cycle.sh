@@ -37,6 +37,8 @@ write_agents() {
 
 seal_claim_agent() {
   # After claim dispatch, seal the independence ledger attempt for that agent.
+  # Pick an unsealed DISPATCHED attempt: glob order is lexical, not chronological,
+  # so "last A*" can be an already SUPERSEDED sibling.
   prog=$1; agent=$2; transport=${3:-multi-agent}
   id=
   for ad in "$prog"/attempts/A*; do
@@ -44,6 +46,9 @@ seal_claim_agent() {
     aid=${ad##*/}
     a=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
     [ "$a" = "$agent" ] || continue
+    st=$(awk -F '\t' 'END{print $1}' "$ad/events.tsv")
+    [ "$st" = DISPATCHED ] || continue
+    [ -f "$ad/transport" ] && [ -f "$ad/contract-audit.md" ] && continue
     id=$aid
   done
   [ -n "$id" ] || { echo "no claim attempt for $agent" >&2; return 1; }
