@@ -21,6 +21,8 @@ New cycles select the behavior during adoption (install/refresh/use: [install.md
 <engine>/crucible adopt <program> --managed
 # later, from a newer source, same program name:
 <engine>/crucible adopt <program> --refresh
+# leftover DONE occupying SRC, start real work without --next:
+<engine>/crucible adopt <name> --managed --panel-from <program>
 ```
 
 That creates `STATE.tsv` and its generated `STATE.md` atomically with the installed program, and

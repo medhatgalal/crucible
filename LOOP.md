@@ -11,6 +11,8 @@ CONFIGURE → WAIT PANEL → INTAKE → INVESTIGATE ⇄ challenge → PROPOSE �
                  │                      (includes INDEPENDENCE_UNAVAILABLE)
                  └─ cycle problem FILE --next (human) → INTAKE   same panel
                     cycle problem --abandon REASON (human) → INTAKE  no PASS
+                    adopt NAME --managed --panel-from SRC (human) → sibling INTAKE
+                      leftover PROBLEM stays on SRC; drive never --nexts
 ```
 
 `crucible cycle` derives the current position from repository artifacts. The coordinating agent uses

@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.2] - 2026-08-20
+
+### Cost-per-claim close and sibling cycle for leftover PROBLEM
+
+- After isomorphic `STALE`/`FALSE` copy, drive does not start a sibling
+  claim-auditor worker (the copied verdict already closed the claim). Parent
+  INVESTIGATE tick treats those copies as progress and does not fall through
+  to a coordinator ACP hop.
+- `adopt NAME --managed --panel-from SRC` installs a sibling cycle with the
+  same approved panel (`agents.tsv`, `PANEL.md`, `PANEL.ASSIGN.tsv`,
+  `PANEL.APPROVAL`). Leftover DONE on `SRC` stays put. Drive never `--next`s.
+- `cycle problem FILE` while an investigation is bound refuses with `--next`
+  (same panel, archive) and `--panel-from` (parallel cycle). Empty-claim
+  INVESTIGATE still uses the coordinator to split `PROBLEM.md`. Product-path
+  discipline still runs when a claim was already dispatched and is unsealed.
+
 ## [1.6.1] - 2026-08-20
 
 ### Fast isomorphic INVESTIGATE and panel-safe CLEANUP

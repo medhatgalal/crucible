@@ -15,8 +15,9 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Who | Command | Why |
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
-| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. INVESTIGATE parent-dispatches engine claim-auditor templates without coordinator ACP. `drive stop` releases a leftover lock |
+| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. INVESTIGATE parent-dispatches engine claim-auditor templates without coordinator ACP. After isomorphic STALE/FALSE copy, drive does not start a sibling worker. `drive stop` releases a leftover lock |
 | Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Does not delete local adapters such as `scripts/acp-brief.py`. Cwd is the target repository. |
+| Operator | `<source>/crucible adopt NAME --managed --panel-from SRC` | Sibling cycle with SRC's approved panel. Leftover DONE/PROBLEM stays on SRC. Drive never `--next`s. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
 | Human only | `cycle problem --abandon REASON` | Archive junk INVESTIGATE with no PASS and no new PROBLEM. Same panel. |
