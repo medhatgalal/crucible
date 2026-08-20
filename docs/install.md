@@ -27,6 +27,9 @@ seeds `PROGRAM`, `STATE.tsv`, `CLAIMS.md`, template `PROBLEM.md`. It does **not*
 approve a panel or bind a problem.
 
 A second name is a second cycle (`adopt prkey --managed`). Reusing a name refuses.
+When leftover DONE still occupies `SRC` and real work must start without
+`--next`ing it away: `adopt NAME --managed --panel-from SRC` copies the
+approved panel and leaves `SRC`'s PROBLEM in place.
 
 Then the coordinator (not the operator) writes `agents.tsv`, `PANEL.md`,
 `PANEL.ASSIGN.tsv`. Cast **enough required claim-auditors and reviewers** for the
@@ -81,7 +84,9 @@ one-predicate claims with polarity; verdicts append (history); `IN-FLIGHT` scout
 `phase REVIEW BUILD` after judge FIX; close work-id must be HEAD/last PASS;
 `--next` writes `PANEL.CONTEXT.md`. From 1.6.0: at most 3 NEW claims;
 FILE refuses 8+ CLI-verb catalogs; `drive stop`; guided `plan-audit PASS`
-before maker dispatch.
+before maker dispatch. From 1.6.2: isomorphic STALE/FALSE copy does not start
+a sibling worker; `adopt NAME --managed --panel-from SRC` copies an approved
+panel onto a sibling cycle.
 
 ## Next problem (same panel)
 
@@ -93,6 +98,16 @@ Archives under `history/`. Keeps the panel. Refuses `ACTIVE`/`BLOCKED` items and
 **live** `RUNNING`/`OVERDUE` pids. Dead RUNNING pids are reclaimed (`STOPPED`)
 then `--next` continues. Leftover `DISPATCHED` does not block. Drive never binds
 the next problem. Do not recast.
+
+To start real work **without** discarding the leftover PROBLEM, install a sibling:
+
+```sh
+<path-to-crucible>/crucible adopt live --managed --panel-from work
+.crucible/live/crucible cycle problem /abs/path/to/real-report.md
+```
+
+`--panel-from` copies `agents.tsv`, `PANEL.md`, `PANEL.ASSIGN.tsv`, and
+`PANEL.APPROVAL`. It does not copy `PROBLEM.md`. Drive never `--next`s.
 
 Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then `check`.
 

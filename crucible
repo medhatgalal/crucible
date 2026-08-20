@@ -2,6 +2,8 @@
 # crucible - a file-only refusal gate for maker/judge work. No dependencies.
 #
 #   crucible adopt [PROGRAM] --managed     install one self-contained cycle in this repo
+#   crucible adopt [PROGRAM] --managed --panel-from SRC
+#                                          sibling cycle; copy approved panel from SRC
 #   crucible adopt [PROGRAM] --refresh     additive engine update (keeps local adapters)
 #   crucible cycle [status]                resume the durable problem-to-done loop
 #   crucible cycle problem FILE            bind the cycle to a problem report
@@ -49,6 +51,8 @@ usage() {
 Crucible runs one durable problem-to-done cycle for a coordinating agent.
 
   crucible adopt [PROGRAM] --managed   install the cycle in the current repository
+  crucible adopt [PROGRAM] --managed --panel-from SRC
+                                       sibling cycle with SRC's approved panel; leftover PROBLEM stays on SRC
   crucible adopt [PROGRAM] --refresh   additive engine update; does not delete local adapters
   crucible cycle [status]              resume from repository evidence
   crucible cycle problem FILE          bind a problem report to the cycle
@@ -3208,7 +3212,9 @@ drive_apply_isomorphic_verdicts() {
       [ -f "$ROOT/attempts/$from_id/contract.md" ] || continue
       [ -f "$ROOT/attempts/$to_id/contract.md" ] || continue
       contracts_isomorphic "$ROOT/attempts/$from_id/contract.md" "$ROOT/attempts/$to_id/contract.md" || continue
-      claim_copy_verdict_like "$from" "$to" "$who" >/dev/null 2>&1 || true
+      if claim_copy_verdict_like "$from" "$to" "$who" >/dev/null 2>&1; then
+        drive_iso_copied=1
+      fi
     done
   done
 }
@@ -3221,6 +3227,7 @@ drive_any_claim_dispatch() {
 drive_investigate_parent_tick() {
   repo=$1
   dispatched=0
+  drive_iso_copied=0
   drive_investigate_dispatch && dispatched=1
   drive_parent_seal_unsealed "$dispatched"
   drive_apply_isomorphic_audits
@@ -3239,7 +3246,7 @@ drive_investigate_parent_tick() {
         ;;
     esac
   fi
-  [ "$dispatched" -eq 1 ] || [ "$started" -eq 1 ]
+  [ "$dispatched" -eq 1 ] || [ "$started" -eq 1 ] || [ "${drive_iso_copied:-0}" -eq 1 ]
 }
 
 drive_live_attempt_count() {
@@ -3266,15 +3273,30 @@ drive_apply_isomorphic_audits() {
       did=${dad##*/}
       [ "$did" = "$tid" ] && continue
       [ -e "$dad/contract-audit.md" ] && continue
-      contract_audit_copy_like "$tid" "$did" >/dev/null || true
+      if contract_audit_copy_like "$tid" "$did" >/dev/null; then
+        drive_iso_copied=1
+      fi
     done
   done
+}
+
+drive_claim_has_agent_verdict() {
+  cn=$1
+  agent=$2
+  [ -n "$cn" ] && [ -n "$agent" ] || return 1
+  [ -f "$ROOT/claims/$cn/verdicts/$agent.md" ]
 }
 
 drive_attempt_is_runnable() {
   id=$1
   [ "$(attempt_state "$id")" = DISPATCHED ] || return 1
-  claim_attempt_is_sealed "$id"
+  claim_attempt_is_sealed "$id" || return 1
+  cn=$(attempt_meta "$id" 2)
+  agent=$(attempt_meta "$id" 6)
+  if drive_claim_has_agent_verdict "$cn" "$agent"; then
+    return 1
+  fi
+  return 0
 }
 
 drive_next_sealed_id() {
@@ -3947,6 +3969,12 @@ cycle_bind_problem() {
   printf '%s/PROBLEM.md\n' "$ROOT"
 }
 
+cycle_refuse_bound_investigation() {
+  prog=$(sed -n 's/^program: //p' "$ROOT/PROGRAM" 2>/dev/null | head -1)
+  [ -n "$prog" ] || prog=${ROOT##*/}
+  die "refused: leftover PROBLEM is still bound (investigation already has claims). Next real PROBLEM on this panel: cycle problem FILE --next (human). Parallel cycle without discarding this one: adopt NAME --managed --panel-from $prog. Drive never --nexts."
+}
+
 cycle_problem_title() {
   sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;s/`//g;p;q;}' "$1" 2>/dev/null
 }
@@ -4099,7 +4127,7 @@ cmd_cycle() {
         cycle_refresh_panel_context
         return
       fi
-      [ "$(cycle_investigation_state)" = EMPTY ] || die 'refused: investigation already has claims'
+      [ "$(cycle_investigation_state)" = EMPTY ] || cycle_refuse_bound_investigation
       [ ! -f "$ROOT/APPROVAL" ] || die 'refused: a proposal is already approved'
       cycle_bind_problem "$src" ;;
     approve-panel)
@@ -4354,15 +4382,45 @@ adopt_install_engine() {
   chmod +x "$dst/scripts/"*.sh 2>/dev/null || true
 }
 
+adopt_copy_panel_from() {
+  srcprog=$1
+  dstdir=$2
+  repo=$3
+  srcdir="$repo/.crucible/$srcprog"
+  [ -d "$srcdir" ] && [ -f "$srcdir/PROGRAM" ] \
+    || die "refused: --panel-from program does not exist: $srcdir"
+  [ -s "$srcdir/PANEL.md" ] && [ -s "$srcdir/PANEL.ASSIGN.tsv" ] && [ -s "$srcdir/agents.tsv" ] \
+    || die "refused: --panel-from $srcprog has no panel to copy"
+  [ -f "$srcdir/PANEL.APPROVAL" ] \
+    || die "refused: --panel-from $srcprog panel is not approved"
+  cp "$srcdir/agents.tsv" "$dstdir/agents.tsv"
+  cp "$srcdir/PANEL.md" "$dstdir/PANEL.md"
+  cp "$srcdir/PANEL.ASSIGN.tsv" "$dstdir/PANEL.ASSIGN.tsv"
+  cp "$srcdir/PANEL.APPROVAL" "$dstdir/PANEL.APPROVAL"
+  [ -f "$srcdir/PANEL.AGENTS.tsv" ] && cp "$srcdir/PANEL.AGENTS.tsv" "$dstdir/PANEL.AGENTS.tsv"
+  if [ -d "$srcdir/panel-approvals" ]; then
+    mkdir -p "$dstdir/panel-approvals"
+    for rec in "$srcdir/panel-approvals"/*.md; do
+      [ -f "$rec" ] || continue
+      cp "$rec" "$dstdir/panel-approvals/"
+    done
+  fi
+}
+
 cmd_adopt() {
-  prog=; managed=0; refresh=0
+  prog=; managed=0; refresh=0; panel_from=
   while [ $# -gt 0 ]; do
     case $1 in
       --managed) managed=1 ;;
       --refresh) refresh=1 ;;
-      -*) die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh]' ;;
+      --panel-from)
+        shift
+        [ -n "${1:-}" ] || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM'
+        panel_from=$1
+        ;;
+      -*) die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--panel-from PROGRAM]' ;;
       *)
-        [ -z "$prog" ] || die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh]'
+        [ -z "$prog" ] || die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--panel-from PROGRAM]'
         prog=$1
         ;;
     esac
@@ -4371,6 +4429,10 @@ cmd_adopt() {
   [ -n "$prog" ] || prog=main
   [ "$refresh" -eq 0 ] || [ "$managed" -eq 0 ] \
     || die 'usage: crucible adopt [PROGRAM] --refresh  (--managed is install-only)'
+  [ -z "$panel_from" ] || [ "$refresh" -eq 0 ] \
+    || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM  (--refresh does not copy a panel)'
+  [ -z "$panel_from" ] || [ "$managed" -eq 1 ] \
+    || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM'
   case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
   repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
   src=$(cd "$(dirname "$0")" && pwd)
@@ -4390,6 +4452,16 @@ cmd_adopt() {
       printf 'kept local adapter: scripts/acp-brief.py\n'
     fi
     return
+  fi
+  if [ -n "$panel_from" ]; then
+    [ "$panel_from" != "$prog" ] || die 'refused: --panel-from cannot be the new program name'
+    srcdir="$repo/.crucible/$panel_from"
+    [ -d "$srcdir" ] && [ -f "$srcdir/PROGRAM" ] \
+      || die "refused: --panel-from program does not exist: $srcdir"
+    [ -s "$srcdir/PANEL.md" ] && [ -s "$srcdir/PANEL.ASSIGN.tsv" ] && [ -s "$srcdir/agents.tsv" ] \
+      || die "refused: --panel-from $panel_from has no panel to copy"
+    [ -f "$srcdir/PANEL.APPROVAL" ] \
+      || die "refused: --panel-from $panel_from panel is not approved"
   fi
   [ -d "$dst" ] && die "program already exists: $dst"
   mkdir -p "$dst"
@@ -4454,14 +4526,20 @@ EOF
   printf 'Fresh-agent entrypoint:\n  read .crucible/%s/START.md and execute it\n\n' "$prog"
   printf 'The agent will configure its panel, investigate the problem, ask for proposal approval,\n'
   printf 'and coordinate build/review iterations. The operator does not drive protocol commands.\n'
-  [ -f "$dst/agents.tsv" ] || {
+  if [ -n "$panel_from" ]; then
+    [ "$panel_from" != "$prog" ] || die 'refused: --panel-from cannot be the new program name'
+    adopt_copy_panel_from "$panel_from" "$dst" "$repo"
+    printf 'copied approved panel from .crucible/%s (leftover PROBLEM stays on %s)\n' \
+      "$panel_from" "$panel_from"
+  elif [ ! -f "$dst/agents.tsv" ]; then
     { printf '# name\tkind\tmodel\teffort\tcommand   ({BRIEF} {MODEL} {EFFORT} substituted)\n'
       printf '# Only names here may author a verdict. kind is the model family and is what\n'
       printf '# cross-model judging counts. Replace these with how YOUR agents are invoked.\n'
       printf 'mk1\tkindA\tMODEL\thigh\tAGENT_CLI --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
       printf 'j1\tkindA\tMODEL\thigh\tAGENT_CLI --model {MODEL} --effort {EFFORT} "read {BRIEF} and follow it exactly"\n'
       printf 'j2\tkindB\tMODEL\thigh\tOTHER_CLI --model {MODEL} "read {BRIEF} and follow it exactly"\n'
-    } > "$dst/agents.tsv"; }
+    } > "$dst/agents.tsv"
+  fi
 }
 
 # Claims: the outer loop. The script keeps the ledger honest; the agent supplies meaning.

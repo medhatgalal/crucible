@@ -91,8 +91,12 @@ grep -q 'adopt <program> --refresh' "$HERE/START.md" \
   && ok || bad 'START.md missing adopt --refresh'
 grep -q 'cycle problem FILE --next' "$HERE/START.md" \
   && ok || bad 'START.md missing cycle problem --next'
+grep -q 'adopt NAME --managed --panel-from SRC' "$HERE/START.md" \
+  && ok || bad 'START.md missing adopt --panel-from'
 [ -f "$HERE/docs/install.md" ] && grep -q 'adopt work --refresh' "$HERE/docs/install.md" \
   && ok || bad 'docs/install.md missing refresh contract'
+grep -q 'adopt NAME --managed --panel-from SRC' "$HERE/docs/install.md" \
+  && ok || bad 'docs/install.md missing --panel-from sibling cycle'
 
 # --- INVESTIGATE tick dispatches, does not edit src/ ---
 repo=$(setup_repo)
@@ -882,8 +886,54 @@ printf '%s\n' "$out" | grep -q 'coordinator invoke failed' && bad "stale-like ti
   || bad 'C2 did not receive isomorphic STALE verdict'
 [ -f "$P/claims/C3/verdicts/a1.md" ] && grep -q '^CLAIM-VERDICT: STALE$' "$P/claims/C3/verdicts/a1.md" && ok \
   || bad 'C3 did not receive isomorphic STALE verdict'
+nstart=$(printf '%s\n' "$out" | grep -c 'drive: started' || true)
+[ "$nstart" = 0 ] && ok || bad "stale-like tick started $nstart workers (want 0 after isomorphic close): $out"
 "$P/crucible" claim list 2>/dev/null | grep -q AUDITED_FALSE \
   && bad 'claim list said AUDITED_FALSE for STALE' || ok
+
+# bound investigation: FILE without --next names --next and --panel-from
+printf 'Hashed bulk rank is uncharged.\n' > "$repo/real.md"
+refuses 'bound leftover PROBLEM names --next and --panel-from' 'leftover PROBLEM|--next|--panel-from' \
+  "$P/crucible" cycle problem "$repo/real.md"
+
+# --- adopt --panel-from copies approved panel; leftover PROBLEM stays ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Assess flags are missing.\n' > "$repo/parked.md"
+"$P/crucible" cycle problem "$repo/parked.md" >/dev/null
+src_panel=$(sed -n 's/^panel-id: //p' "$P/PANEL.APPROVAL" | head -1)
+( cd "$repo" && "$C" adopt live --managed --panel-from work >/dev/null )
+Q="$repo/.crucible/live"
+[ -f "$Q/PROGRAM" ] && ok || bad 'sibling adopt did not write PROGRAM'
+[ -f "$Q/agents.tsv" ] && cmp -s "$P/agents.tsv" "$Q/agents.tsv" && ok \
+  || bad 'sibling did not copy agents.tsv'
+[ -f "$Q/PANEL.ASSIGN.tsv" ] && cmp -s "$P/PANEL.ASSIGN.tsv" "$Q/PANEL.ASSIGN.tsv" && ok \
+  || bad 'sibling did not copy PANEL.ASSIGN.tsv'
+[ -f "$Q/PANEL.APPROVAL" ] && ok || bad 'sibling missing PANEL.APPROVAL'
+dst_panel=$(sed -n 's/^panel-id: //p' "$Q/PANEL.APPROVAL" | head -1)
+[ "$src_panel" = "$dst_panel" ] && ok || bad "sibling panel-id $dst_panel != $src_panel"
+grep -q 'TEMPLATE-PROBLEM-NEEDS-INPUT' "$Q/PROBLEM.md" && ok \
+  || bad 'sibling copied leftover PROBLEM.md'
+grep -q 'Assess flags are missing' "$P/PROBLEM.md" && ok \
+  || bad 'panel-from mutated source PROBLEM.md'
+st=$("$Q/crucible" cycle 2>&1) || { bad "sibling cycle refused: $st"; st=; }
+printf '%s\n' "$st" | grep -q 'WAIT PANEL' && bad "sibling still WAIT PANEL: $st" || ok
+printf '%s\n' "$st" | grep -q 'INTAKE' && ok || bad "sibling should be INTAKE: $st"
+printf 'Two-key rank write charges the window.\n' > "$repo/real.md"
+"$Q/crucible" cycle problem "$repo/real.md" >/dev/null
+grep -q 'Two-key rank write charges the window' "$Q/PROBLEM.md" && ok \
+  || bad 'sibling did not bind real PROBLEM'
+grep -q 'Assess flags are missing' "$P/PROBLEM.md" && ok \
+  || bad 'binding sibling PROBLEM clobbered leftover'
+( cd "$repo" && "$C" adopt other --panel-from work >/dev/null 2>&1 ) \
+  && bad '--panel-from without --managed was allowed' || ok
+( cd "$repo" && "$C" adopt ghost --managed --panel-from missing >/dev/null 2>&1 ) \
+  && bad '--panel-from missing source was allowed' || ok
+( cd "$repo" && "$C" adopt work --refresh --panel-from live >/dev/null 2>&1 ) \
+  && bad '--refresh --panel-from was allowed' || ok
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
