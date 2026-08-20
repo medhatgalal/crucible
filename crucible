@@ -69,6 +69,7 @@ not drive the cycle with them.
 
   claim add|list|verdict|scout|admit   verify a report before it becomes work
                                       claim add requires one predicate [ABSENT|EXISTS|DEFECT]
+                                      claim verdict AGENT STALE|FALSE --like C2 C3 copies non-TRUE
   triage                              render the evidence-grounded proposal input
   add / ready / phase / task          create and advance bounded work
   dispatch / attempt / result         coordinate isolated agent attempts
@@ -2303,11 +2304,25 @@ guided_min_judges() {
   printf '%s' "$MIN_JUDGES"
 }
 
+claims_absent_only() {
+  f=$(claims_file)
+  [ -f "$f" ] || return 1
+  total=$(grep -c '^### C' "$f" 2>/dev/null || true); total=${total:-0}
+  [ "$total" -gt 0 ] || return 1
+  absent=$(grep -c '^    polarity: ABSENT$' "$f" 2>/dev/null || true); absent=${absent:-0}
+  [ "$absent" -eq "$total" ]
+}
+
 cycle_worth() {
   f=$(claims_file)
   [ -f "$f" ] || { printf 'UNKNOWN'; return; }
   st=$(cycle_investigation_state)
   [ "$st" = COMPLETE ] || { printf 'UNKNOWN'; return; }
+  truec=0
+  if [ -d "$ROOT/claims" ]; then
+    grep -l '^CLAIM-VERDICT: TRUE$' "$ROOT"/claims/*/verdicts/*.md >/dev/null 2>&1 && truec=1 || true
+  fi
+  if [ "$truec" -eq 0 ]; then printf 'NO-BUILD'; return; fi
   absent=0; partly=0
   absent=$(grep -c '^    scout: ABSENT$' "$f" 2>/dev/null || true)
   partly=$(grep -c '^    scout: PARTLY-EXISTS$' "$f" 2>/dev/null || true)
@@ -2786,6 +2801,7 @@ engine_version() {
 }
 
 write_cycle_status() {
+  cycle_sync_panel_context
   line=$(cmd_cycle_status)
   state=$(drive_state_name "$line")
   item=$(drive_active_item); [ -n "$item" ] || item=-
@@ -3071,36 +3087,159 @@ drive_has_claim_dispatch() {
   return 1
 }
 
+drive_claim_hop_transport() {
+  agent=$1
+  nk=$(registered_kind_count)
+  ak=$(kind_of "$agent")
+  coord=$(drive_coordinator_agent) || coord=
+  ck=
+  [ -n "$coord" ] && ck=$(kind_of "$coord")
+  if [ "$nk" -ge 2 ] && [ -n "$ak" ] && [ -n "$ck" ] && [ "$ak" != "$ck" ]; then
+    printf 'multi-agent'
+  else
+    printf 'acp'
+  fi
+}
+
+drive_claim_attempt_id() {
+  cn=$1; role=$2; agent=$3
+  [ -d "$ROOT/attempts" ] || return 1
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    claim_attempt_matches "$id" "$cn" "$agent" "$role" || continue
+    printf '%s' "$id"
+    return 0
+  done
+  return 1
+}
+
 drive_investigate_dispatch() {
   f=$(claims_file)
   [ -f "$f" ] || return 1
   total=$(grep -c '^### C' "$f" 2>/dev/null || true); total=${total:-0}
   [ "$total" -gt 0 ] || return 1
+  agent=$(drive_cast_agents claim-auditor | head -1)
+  [ -n "$agent" ] || return 1
+  dispatched=0
   i=1
   while [ "$i" -le "$total" ]; do
     cn="C$i"
-    for agent in $(drive_cast_agents claim-auditor); do
-      if ! drive_has_claim_dispatch "$cn" claim-auditor "$agent"; then
-        cmd_dispatch "$cn" claim-auditor "$agent"
-        return 0
-      fi
-    done
-    scout=$(sed -n "/^### $cn /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
+    if ! drive_has_claim_dispatch "$cn" claim-auditor "$agent"; then
+      cmd_dispatch "$cn" claim-auditor "$agent" || true
+      dispatched=1
+    fi
+    i=$((i + 1))
+  done
+  i=1
+  while [ "$i" -le "$total" ]; do
+    cn="C$i"
     truth=0
     if [ -d "$ROOT/claims/$cn/verdicts" ]; then
       grep -l '^CLAIM-VERDICT: TRUE$' "$ROOT/claims/$cn/verdicts"/*.md >/dev/null 2>&1 && truth=1 || true
     fi
+    scout=$(sed -n "/^### $cn /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
     if [ "$truth" -eq 1 ] && [ -z "$scout" ]; then
       scout_agent=$(drive_cast_agents scout | head -1)
-      [ -n "$scout_agent" ] || scout_agent=$(drive_cast_agents claim-auditor | head -1)
+      [ -n "$scout_agent" ] || scout_agent=$agent
       if [ -n "$scout_agent" ] && ! drive_has_claim_dispatch "$cn" scout "$scout_agent"; then
-        cmd_dispatch "$cn" scout "$scout_agent"
-        return 0
+        cmd_dispatch "$cn" scout "$scout_agent" || true
+        dispatched=1
       fi
     fi
     i=$((i + 1))
   done
-  return 1
+  [ "$dispatched" -eq 1 ]
+}
+
+drive_parent_seal_unsealed() {
+  auto_pass=${1:-0}
+  [ -d "$ROOT/attempts" ] || return 0
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    [ "$(attempt_state "$id")" = DISPATCHED ] || continue
+    role=$(attempt_meta "$id" 5)
+    case $role in claim-auditor|scout) : ;; *) continue ;; esac
+    agent=$(attempt_meta "$id" 6)
+    if ! attempt_transport "$id" >/dev/null 2>&1; then
+      hop=$(drive_claim_hop_transport "$agent")
+      ( cmd_attempt transport "$id" "$hop" >/dev/null ) || \
+        ( cmd_attempt transport "$id" multi-agent >/dev/null ) || true
+    fi
+  done
+  [ "$auto_pass" = 1 ] || return 0
+  auditor=$(suggest_contract_auditor)
+  [ -n "$auditor" ] && [ "$auditor" != '<auditor-name>' ] || return 0
+  for ad in "$ROOT"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    id=${ad##*/}
+    [ "$(attempt_state "$id")" = DISPATCHED ] || continue
+    role=$(attempt_meta "$id" 5)
+    case $role in claim-auditor|scout) : ;; *) continue ;; esac
+    claim_attempt_is_sealed "$id" && continue
+    agent=$(attempt_meta "$id" 6)
+    [ "$auditor" != "$agent" ] || continue
+    contract_structural_ok "$ad" "$role" || continue
+    attempt_transport "$id" >/dev/null 2>&1 || continue
+    if ( cmd_contract_audit "$id" "$auditor" PASS \
+      "engine-template INVESTIGATE fallback; parent sealed without coordinator ACP" >/dev/null ); then
+      break
+    fi
+  done
+}
+
+drive_apply_isomorphic_verdicts() {
+  [ -d "$ROOT/claims" ] || return 0
+  for vd in "$ROOT"/claims/C*/verdicts/*.md; do
+    [ -f "$vd" ] || continue
+    word=$(sed -n 's/^CLAIM-VERDICT: //p' "$vd" | head -1)
+    case $word in STALE|FALSE|UNVERIFIABLE) : ;; *) continue ;; esac
+    who=$(sed -n 's/^AGENT: //p' "$vd" | head -1)
+    from=${vd##*/claims/}; from=${from%%/*}
+    [ -n "$who" ] && [ -n "$from" ] || continue
+    from_id=$(drive_claim_attempt_id "$from" claim-auditor "$who") || continue
+    for cdir in "$ROOT"/claims/C*; do
+      [ -d "$cdir" ] || continue
+      to=${cdir##*/}
+      [ "$to" = "$from" ] && continue
+      [ -f "$cdir/verdicts/$who.md" ] && continue
+      to_id=$(drive_claim_attempt_id "$to" claim-auditor "$who") || continue
+      [ -f "$ROOT/attempts/$from_id/contract.md" ] || continue
+      [ -f "$ROOT/attempts/$to_id/contract.md" ] || continue
+      contracts_isomorphic "$ROOT/attempts/$from_id/contract.md" "$ROOT/attempts/$to_id/contract.md" || continue
+      claim_copy_verdict_like "$from" "$to" "$who" >/dev/null 2>&1 || true
+    done
+  done
+}
+
+drive_any_claim_dispatch() {
+  [ -d "$ROOT/claims" ] || return 1
+  find "$ROOT/claims" -path '*/dispatches/*' -type f 2>/dev/null | grep -q .
+}
+
+drive_investigate_parent_tick() {
+  repo=$1
+  dispatched=0
+  drive_investigate_dispatch && dispatched=1
+  drive_parent_seal_unsealed "$dispatched"
+  drive_apply_isomorphic_audits
+  drive_apply_isomorphic_verdicts
+  started=0
+  nid=$(drive_next_sealed_id) || nid=
+  if [ -n "$nid" ]; then
+    nrole=$(attempt_meta "$nid" 5)
+    case $nrole in
+      claim-auditor|scout)
+        if drive_invoke_sealed_worker "$repo"; then
+          started=1
+          drive_apply_isomorphic_audits
+          drive_apply_isomorphic_verdicts
+        fi
+        ;;
+    esac
+  fi
+  [ "$dispatched" -eq 1 ] || [ "$started" -eq 1 ]
 }
 
 drive_live_attempt_count() {
@@ -3435,6 +3574,17 @@ cmd_drive() {
       fi
     fi
     mkdir -p "$ROOT/items"
+    if [ "$state" = INVESTIGATE ]; then
+      if drive_investigate_parent_tick "$repo"; then
+        if drive_finish_tick; then
+          case $drive_mode in
+            tick) drive_unlock; trap - 0 1 2 15; return 0 ;;
+          esac
+          continue
+        fi
+        return 0
+      fi
+    fi
     drive_apply_isomorphic_audits
     if drive_invoke_sealed_worker "$repo"; then
       if drive_finish_tick; then
@@ -3516,7 +3666,13 @@ cmd_cycle_status() {
   investigation=$(cycle_investigation_state)
   case $investigation in
     EMPTY) printf 'NEXT INVESTIGATE — split PROBLEM.md into atomic claims and verify them via independent agents\n'; return ;;
-    NEEDS_AUDIT) printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim (admit needs %s sealed TRUE verdicts)\n' "$(guided_min_auditors)"; return ;;
+    NEEDS_AUDIT)
+      if claims_absent_only; then
+        printf 'NEXT INVESTIGATE — independently fact-check every unresolved ABSENT claim (NO-BUILD if all FALSE/STALE)\n'
+      else
+        printf 'NEXT INVESTIGATE — independently fact-check every unresolved claim (FALSE/STALE closes a claim; admit needs %s sealed TRUE to create work)\n' "$(guided_min_auditors)"
+      fi
+      return ;;
     NEEDS_SCOUT) printf 'NEXT INVESTIGATE — search for existing behavior before proposing work\n'; return ;;
   esac
   if ! proposal_valid; then
@@ -3623,6 +3779,7 @@ item_stale_evidence_files() {
 
 cycle_cleanup_report() {
   printf 'CLEANUP — next verb: cycle clean --dry-run (drive never --apply). Or cycle problem FILE --next.\n'
+  printf 'KEEP panel: agents.tsv and PANEL.ASSIGN.tsv (do not destroy the panel after NO-BUILD).\n'
   if [ -f "$ROOT/STATE.tsv" ]; then
     awk -F '\t' 'NR > 1 && $2 == "CLOSED" { printf "closed-item: %s work %s\n", $1, $4 }' "$ROOT/STATE.tsv"
   fi
@@ -3657,7 +3814,7 @@ cycle_cleanup_report() {
     done
   fi
   if [ -f "$ROOT/PROBLEM.md" ] && [ -f "$ROOT/PANEL.CONTEXT.md" ]; then
-    ptitle=$(sed -n '/[^[:space:]]/{s/^#[[:space:]]*//;p;q;}' "$ROOT/PROBLEM.md")
+    ptitle=$(cycle_problem_title "$ROOT/PROBLEM.md")
     ctitle=$(sed -n 's/^problem-title: //p' "$ROOT/PANEL.CONTEXT.md" | head -1)
     [ "$ptitle" = "$ctitle" ] || printf 'panel-title-stale: context %s vs PROBLEM %s\n' "$ctitle" "$ptitle"
   fi
@@ -3695,7 +3852,10 @@ cycle_cleanup() {
   cycle_cleanup_report
   found=0
   if [ -f "$ROOT/agents.tsv" ]; then
-    printf 'DELETE %s\n' "$ROOT/agents.tsv"; found=1
+    printf 'KEEP %s (panel identity — not leftover evidence)\n' "$ROOT/agents.tsv"
+  fi
+  if [ -f "$ROOT/PANEL.ASSIGN.tsv" ]; then
+    printf 'KEEP %s (panel identity — not leftover evidence)\n' "$ROOT/PANEL.ASSIGN.tsv"
   fi
   worktree_records=$(cycle_worktree_records)
   if [ -n "$worktree_records" ]; then
@@ -3721,8 +3881,7 @@ EOF
   fi
   [ ! -d "$ROOT/worktrees" ] \
     || { find "$ROOT/worktrees" -depth -type d -exec rmdir {} \; 2>/dev/null || true; }
-  [ ! -f "$ROOT/agents.tsv" ] || rm -f "$ROOT/agents.tsv"
-  printf 'session cleanup applied; durable work and evidence preserved\n'
+  printf 'session cleanup applied; panel identity and evidence preserved\n'
 }
 
 cycle_live_attempts_terminal() {
@@ -3784,6 +3943,7 @@ cycle_bind_problem() {
   [ -s "$src" ] && [ -f "$src" ] && [ ! -L "$src" ] || die "problem must be a non-empty regular file: $src"
   tmp="$ROOT/.PROBLEM.md.$$.tmp"; trap 'rm -f "$tmp"' 0 1 2 15
   cp "$src" "$tmp"; mv "$tmp" "$ROOT/PROBLEM.md"; trap - 0 1 2 15
+  cycle_sync_panel_context
   printf '%s/PROBLEM.md\n' "$ROOT"
 }
 
@@ -3792,8 +3952,8 @@ cycle_problem_title() {
 }
 
 cycle_refuse_leftover_title() {
-  title=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-  case $title in
+  leftover_title=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+  case $leftover_title in
     *pr-status*|prstatus)
       die "refused: leftover pr-status title — bind the real PROBLEM, not a leftover title"
       ;;
@@ -3824,6 +3984,28 @@ cycle_refuse_non_problem() {
     grep -qiE 'falsif|## outcome|must [a-z]' "$src" \
       || die "refused: leftover/remainder catalog is not a PROBLEM — file one falsifiable outcome"
   fi
+}
+
+cycle_sync_panel_context() {
+  [ -s "$ROOT/PROBLEM.md" ] || return 0
+  title=$(cycle_problem_title "$ROOT/PROBLEM.md")
+  [ -n "$title" ] || return 0
+  if [ -f "$ROOT/PANEL.CONTEXT.md" ]; then
+    ctitle=$(sed -n 's/^problem-title: //p' "$ROOT/PANEL.CONTEXT.md" | head -1)
+    [ "$title" = "$ctitle" ] && return 0
+  fi
+  risk=LOW
+  if grep -qiE '\bHIGH\b' "$ROOT/PROBLEM.md" 2>/dev/null; then
+    risk=HIGH
+  elif grep -qiE '\bMEDIUM\b' "$ROOT/PROBLEM.md" 2>/dev/null; then
+    risk=MEDIUM
+  fi
+  {
+    printf 'problem-title: %s\n' "$title"
+    printf 'risk: %s\n' "$risk"
+    printf 'refreshed-epoch: %s\n' "$(date +%s)"
+    printf '\nSynced from PROBLEM.md. Cast is unchanged.\n'
+  } > "$ROOT/PANEL.CONTEXT.md"
 }
 
 cycle_refresh_panel_context() {
@@ -4322,6 +4504,39 @@ claims_field() {
   sed -n "/^### $n /,/^### C[0-9]/{s/^    $field: //p;}" "$(claims_file)" | head -1
 }
 
+claim_copy_verdict_like() {
+  from=$1
+  to=$2
+  who=$3
+  src="$ROOT/claims/$from/verdicts/$who.md"
+  [ -f "$src" ] || return 1
+  word=$(sed -n 's/^CLAIM-VERDICT: //p' "$src" | head -1)
+  case $word in STALE|FALSE|UNVERIFIABLE) : ;; *) return 1 ;; esac
+  dest="$ROOT/claims/$to/verdicts"
+  mkdir -p "$dest"
+  [ ! -e "$dest/$who.md" ] || return 1
+  if uses_guided_cycle; then
+    sealed=0
+    if [ -d "$ROOT/attempts" ]; then
+      for ad in "$ROOT"/attempts/A*; do
+        [ -d "$ad" ] || continue
+        aid=${ad##*/}
+        claim_attempt_matches "$aid" "$to" "$who" || continue
+        claim_attempt_is_sealed "$aid" || continue
+        sealed=1
+        break
+      done
+    fi
+    [ "$sealed" -eq 1 ] || return 1
+  fi
+  cp "$src" "$dest/$who.md"
+  case $word in
+    STALE) claims_set_status "$to" STALE ;;
+    *) claims_set_status "$to" AUDITED_FALSE ;;
+  esac
+  printf '%s/%s.md\n' "$dest" "$who"
+}
+
 cmd_claim() {
   sub=${1:-}; [ $# -eq 0 ] || shift
   f=$(claims_file)
@@ -4362,7 +4577,7 @@ cmd_claim() {
     grep -E '^### C|^    status:' "$f" | paste - - 2>/dev/null || grep -E '^### C' "$f" ;;
   verdict)
     n=${1:-}; who=${2:-}; word=${3:-}
-    [ -n "$n" ] && [ -n "$who" ] && [ -n "$word" ] || die 'usage: crucible claim verdict N AGENT TRUE|FALSE|STALE|UNVERIFIABLE'
+    [ -n "$n" ] && [ -n "$who" ] && [ -n "$word" ] || die 'usage: crucible claim verdict N AGENT TRUE|FALSE|STALE|UNVERIFIABLE [CITE] [--like C2 C3]'
     [ -n "$(kind_of "$who")" ] || die "unregistered agent: $who"
     case $word in TRUE|FALSE|STALE|UNVERIFIABLE) : ;; *) die "verdict must be TRUE FALSE STALE or UNVERIFIABLE" ;; esac
     d="$ROOT/claims/$n/verdicts"; [ -d "$d" ] || die "no such claim: $n"
@@ -4413,7 +4628,15 @@ cmd_claim() {
         DISPATCHED) attempt_event "$claim_attempt" SUPERSEDED - "claim-verdict-$word" ;;
       esac
     fi
-    cite=${4:-}
+    likes=
+    cite=
+    shift 3
+    while [ $# -gt 0 ]; do
+      case $1 in
+        --like) shift; likes=$*; break ;;
+        *) cite=$1; shift ;;
+      esac
+    done
     if [ -z "$cite" ]; then
       last=
       for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
@@ -4433,8 +4656,15 @@ cmd_claim() {
         "$word" "$who" "$(kind_of "$who")" "$cite"
     } > "$d/$who.md"
     case $word in
-      FALSE|STALE|UNVERIFIABLE) claims_set_status "$n" AUDITED_FALSE ;;
+      STALE) claims_set_status "$n" STALE ;;
+      FALSE|UNVERIFIABLE) claims_set_status "$n" AUDITED_FALSE ;;
     esac
+    if [ -n "$likes" ]; then
+      for like_cn in $likes; do
+        claim_copy_verdict_like "$n" "$like_cn" "$who" \
+          || die "refused: cannot copy $word onto $like_cn from $n"
+      done
+    fi
     printf '%s\n' "$d/$who.md" ;;
   scout)
     n=${1:-}; res=${2:-}; who=${3:-}

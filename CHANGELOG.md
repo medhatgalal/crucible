@@ -5,6 +5,26 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.1] - 2026-08-20
+
+### Fast isomorphic INVESTIGATE and panel-safe CLEANUP
+
+- Drive INVESTIGATE parent-dispatches engine claim-auditor templates (all
+  sibling claims, first auditor) without a coordinator ACP hop. One worker
+  per tick. Engine-template contract-audit PASS is recorded by the parent
+  on the first newly dispatched claim; isomorphic `--like` copies the rest.
+- After one contract-audit PASS, `--like` copies onto isomorphic C2/C3 in
+  the same/next tick. `claim verdict CN AGENT STALE|FALSE --like C2 C3`
+  copies non-TRUE verdicts onto sealed siblings. Status STALE stays STALE.
+- STATUS for ABSENT-only claims no longer says “admit needs 2 TRUE”;
+  NO-BUILD when every verdict is FALSE/STALE even if scout said ABSENT.
+- `cycle clean --dry-run` KEEP agents.tsv and PANEL.ASSIGN.tsv. `--apply`
+  does not delete the panel. CLEANUP card says do not destroy the panel.
+- `cycle` syncs PANEL.CONTEXT.md title from PROBLEM.md (cast unchanged).
+  `--next` keeps the original title case (a POSIX helper no longer clobbers
+  `title`). CLEANUP compares titles with the same helper, so DONE does not
+  report panel-title-stale after a refresh.
+
 ## [1.6.0] - 2026-08-19
 
 ### Investigate fan-out cap, plan-audit, drive stop

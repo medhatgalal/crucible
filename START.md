@@ -15,17 +15,20 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Who | Command | Why |
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
-| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. `drive stop` releases a leftover lock |
+| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. INVESTIGATE parent-dispatches engine claim-auditor templates without coordinator ACP. `drive stop` releases a leftover lock |
 | Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Does not delete local adapters such as `scripts/acp-brief.py`. Cwd is the target repository. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
 | Human only | `cycle problem --abandon REASON` | Archive junk INVESTIGATE with no PASS and no new PROBLEM. Same panel. |
 | Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
 
-`STATUS.md` is the next-action card (`state`, `engine`, active item, inflight attempt, last evidence,
-human gate). Read it after every `cycle`. `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` are
-human gates — stop and show the operator the exact line. On `DONE`, the operator binds the next
-PROBLEM with `cycle problem FILE --next` or previews cleanup. Do not recast the panel.
+`STATUS.md` is the next-action card (`state`, `engine`, `worth`, active item, inflight
+attempt, last evidence, next human gate). FALSE/STALE closes a claim; TRUE is only
+required to admit work. ABSENT-only investigation says NO-BUILD if all FALSE/STALE.
+`engine:` must match the installed `VERSION` after `--refresh`. Read it after every
+`cycle`. `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` are human gates — stop
+and show the operator the exact line. On `DONE`, the operator binds the next PROBLEM
+with `cycle problem FILE --next` or previews cleanup. Do not recast the panel.
 
 Resume after every restart, compaction, agent return, review, or repository change with:
 
@@ -155,5 +158,6 @@ Do not persist personal memory. Do not recast the panel. Do not bind the next PR
 
 - Another problem on the same panel: stop and tell the operator to run
   `cycle problem FILE --next` (see [docs/install.md](docs/install.md)).
-- Program finished: run `cycle clean --dry-run` and show the exact preview. Run
+- Program finished: run `cycle clean --dry-run` and show the exact preview. KEEP
+  `agents.tsv` and `PANEL.ASSIGN.tsv` (panel identity, not leftover evidence). Run
   `cycle clean --apply` only after explicit approval.

@@ -113,6 +113,46 @@ disp=$(find "$P/claims" -path '*dispatches*claim-auditor*' -type f 2>/dev/null |
   [ "$(cat "$repo/src/keep.txt")" = product ] && \
   [ "$(find "$repo/src" -type f | wc -l | tr -d ' ')" = 1 ] && ok \
   || bad 'investigate tick edited src/ or invoked maker'
+[ ! -f "$P/DRIVE.BRIEF.md" ] && ok \
+  || bad 'investigate tick must not write DRIVE.BRIEF (coordinator ACP)'
+sealed_n=0
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  [ -f "$ad/transport" ] && grep -q '^VERDICT: PASS' "$ad/contract-audit.md" 2>/dev/null && sealed_n=$((sealed_n + 1))
+done
+[ "$sealed_n" -ge 1 ] && ok || bad "parent investigate tick did not seal ($sealed_n)"
+nstart=$(printf '%s\n' "$out" | grep -c 'drive: started' || true)
+[ "$nstart" -le 1 ] && ok || bad "investigate tick started $nstart workers (want <=1): $out"
+
+# --- Three isomorphic claims: one tick dispatches+seals all, no coordinator ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P"
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'Flags are missing.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+[ -f "$P/PANEL.CONTEXT.md" ] && grep -q 'problem-title:' "$P/PANEL.CONTEXT.md" && ok \
+  || bad 'problem bind did not sync PANEL.CONTEXT.md'
+"$P/crucible" claim add 'label flag missing' 'Flags are missing.' ABSENT >/dev/null
+"$P/crucible" claim add 'type flag missing' 'Flags are missing.' ABSENT >/dev/null
+"$P/crucible" claim add 'sprint flag missing' 'Flags are missing.' ABSENT >/dev/null
+st=$("$P/crucible" cycle 2>&1) || { bad "3-claim cycle refused: $st"; st=; }
+printf '%s\n' "$st" | grep -q 'NO-BUILD if all FALSE/STALE' && ok \
+  || bad "ABSENT-only STATUS missing NO-BUILD close: $st"
+printf '%s\n' "$st" | grep -q 'admit needs' && bad "ABSENT-only STATUS still says admit needs: $st" || ok
+out=$("$P/crucible" drive tick 2>&1) || { bad "3-claim investigate tick refused: $out"; out=; }
+disp=$(find "$P/claims" -path '*dispatches*claim-auditor-a1*' -type f 2>/dev/null | wc -l | tr -d ' ')
+[ "$disp" -ge 3 ] && ok || bad "3-claim tick should dispatch C1-C3 (count=$disp) out=$out"
+sealed_n=0
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  [ -f "$ad/transport" ] && grep -q '^VERDICT: PASS' "$ad/contract-audit.md" 2>/dev/null && sealed_n=$((sealed_n + 1))
+done
+[ "$sealed_n" -ge 3 ] && ok || bad "3-claim tick should seal C1-C3 ($sealed_n)"
+[ ! -f "$P/DRIVE.BRIEF.md" ] && ok || bad '3-claim tick wrote DRIVE.BRIEF'
+nstart=$(printf '%s\n' "$out" | grep -c 'drive: started' || true)
+[ "$nstart" = 1 ] && ok || bad "3-claim tick started $nstart workers (want 1): $out"
 
 # --- WAIT APPROVAL exits 0 without invoking maker ---
 repo=$(setup_repo)
@@ -174,7 +214,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'coordinator product-path write is refused' 'owned|product path|verdict|merge|src/' \
   "$P/crucible" drive tick
 [ ! -f "$repo/src/pwned" ] || bad 'owned-path refuse left the product write in place'
@@ -202,7 +243,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'committed product write is refused' 'committed|merged|product history|owned' \
   "$P/crucible" drive tick
 [ "$(git -C "$repo" rev-parse HEAD)" = "$before_head" ] && ok || bad 'commit tick left a product commit'
@@ -222,7 +264,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'dirty-file content change is refused' 'owned|product path|src/' \
   "$P/crucible" drive tick
 grep -q more "$repo/src/keep.txt" && bad 'dirty-file tick left extra content' || ok
@@ -241,7 +284,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'worktree write is refused' 'worktree|owned|product' \
   "$P/crucible" drive tick
 [ ! -f "$P/worktrees/sneak/x" ] && ok || bad 'worktree write was left in place'
@@ -254,7 +298,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 mkdir -p "$P/items/x/verdicts" "$P/claims/C1/verdicts"
 printf 'VERDICT: PASS\n' > "$P/items/x/verdicts/j1.md"
 cat > "$P/coord.sh" <<'EOF'
@@ -281,7 +326,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'removing cycle: guided is refused' 'guided' \
   "$P/crucible" drive tick
 grep -q '^cycle: guided$' "$P/PROGRAM" && ok || bad 'PROGRAM guided line was not restored'
@@ -464,7 +510,8 @@ write_panel "$P"
 "$P/crucible" cycle approve-panel >/dev/null
 printf 'The report alleges missing enforcement.\n' > "$repo/report.md"
 "$P/crucible" cycle problem "$repo/report.md" >/dev/null
-"$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.' >/dev/null
+cn=$("$P/crucible" claim add 'missing enforcement' 'The report alleges missing enforcement.')
+"$P/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 refuses 'failed coordinator invoke is refused' 'invoke failed|No such file|can.t open' \
   "$P/crucible" drive tick
 
@@ -794,6 +841,49 @@ mkdir "$P/.drive.lock"
 refuses 'result while drive.lock from coordinator' 'drive.lock' \
   "$P/crucible" result A1788000000.1.1 PASS ev.txt CLOSE -
 rmdir "$P/.drive.lock"
+
+# --- 1.6.1 parent INVESTIGATE dispatch (no coordinator ACP) + --like ---
+repo=$(setup_repo)
+P="$repo/.crucible/work"
+write_agents "$P" 'exit 1'
+write_panel "$P"
+"$P/crucible" cycle approve-panel >/dev/null
+printf 'assess flags missing.\n' > "$repo/report.md"
+"$P/crucible" cycle problem "$repo/report.md" >/dev/null
+"$P/crucible" claim add 'assess --label is not a CLI flag' 'assess --label is not a CLI flag' ABSENT >/dev/null
+"$P/crucible" claim add 'assess --type is not a CLI flag' 'assess --type is not a CLI flag' ABSENT >/dev/null
+"$P/crucible" claim add 'assess --sprint is not a CLI flag' 'assess --sprint is not a CLI flag' ABSENT >/dev/null
+out=$("$P/crucible" drive tick 2>&1) || { bad "parent investigate tick died (coordinator?): $out"; out=; }
+printf '%s\n' "$out" | grep -q 'coordinator invoke failed' && bad "INVESTIGATE invoked coordinator ACP: $out" || ok
+[ ! -f "$P/DRIVE.BRIEF.md" ] && ok || bad 'DRIVE.BRIEF.md means coordinator ACP ran'
+[ -f "$P/claims/C1/dispatches/"*-claim-auditor-a1.md ] && ok || bad 'C1 auditor not dispatched by parent'
+[ -f "$P/claims/C2/dispatches/"*-claim-auditor-a1.md ] && ok || bad 'C2 auditor not dispatched by parent'
+[ -f "$P/claims/C3/dispatches/"*-claim-auditor-a1.md ] && ok || bad 'C3 auditor not dispatched by parent'
+nstart=$(printf '%s\n' "$out" | grep -c 'drive: started' || true)
+[ "$nstart" = 1 ] && ok || bad "parent investigate started $nstart workers (want 1): $out"
+c2audit=0; c3audit=0
+for ad in "$P"/attempts/A*; do
+  [ -d "$ad" ] || continue
+  item=$(awk -F '\t' 'NR==2 {print $2}' "$ad/meta.tsv")
+  [ -f "$ad/contract-audit.md" ] && grep -q '^VERDICT: PASS' "$ad/contract-audit.md" || continue
+  [ "$item" = C2 ] && c2audit=1
+  [ "$item" = C3 ] && c3audit=1
+done
+[ "$c2audit" -eq 1 ] && ok || bad 'C2 did not receive isomorphic contract-audit PASS'
+[ "$c3audit" -eq 1 ] && ok || bad 'C3 did not receive isomorphic contract-audit PASS'
+# C1 STALE copies onto C2/C3 next tick without a coordinator ACP / kiro-ct hop
+"$P/crucible" run-claim C1 a1 -- sh -c 'echo argparse dests' >/dev/null
+"$P/crucible" claim verdict C1 a1 STALE >/dev/null
+grep -q 'status: STALE' "$P/CLAIMS.md" && ok || bad 'STALE verdict wrote AUDITED_FALSE instead of STALE'
+out=$("$P/crucible" drive tick 2>&1) || { bad "stale-like tick died: $out"; out=; }
+printf '%s\n' "$out" | grep -q 'coordinator invoke failed' && bad "stale-like tick invoked coordinator: $out" || ok
+[ ! -f "$P/DRIVE.BRIEF.md" ] && ok || bad 'stale-like tick wrote DRIVE.BRIEF'
+[ -f "$P/claims/C2/verdicts/a1.md" ] && grep -q '^CLAIM-VERDICT: STALE$' "$P/claims/C2/verdicts/a1.md" && ok \
+  || bad 'C2 did not receive isomorphic STALE verdict'
+[ -f "$P/claims/C3/verdicts/a1.md" ] && grep -q '^CLAIM-VERDICT: STALE$' "$P/claims/C3/verdicts/a1.md" && ok \
+  || bad 'C3 did not receive isomorphic STALE verdict'
+"$P/crucible" claim list 2>/dev/null | grep -q AUDITED_FALSE \
+  && bad 'claim list said AUDITED_FALSE for STALE' || ok
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

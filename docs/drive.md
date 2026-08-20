@@ -45,7 +45,7 @@ The coordinator does not implement and does not write verdicts. After PASS, do n
 
 | State | What drive does | Label |
 | --- | --- | --- |
-| INVESTIGATE | If the child did not add a dispatch file, parent dispatches the next missing claim-auditor/scout contract | CHECK |
+| INVESTIGATE | Parent dispatches **all** unaudited claims to the first claim-auditor, records transport, seals one engine-template contract (no kiro hop), copies isomorphic PASS/`STALE`/`FALSE`, and starts **one** claim worker. Coordinator ACP is not invoked for this fallback. Empty-claim INVESTIGATE still uses the coordinator to split PROBLEM.md | CHECK |
 | PROPOSE | Invokes coordinator; they may write `PROPOSAL.md`. Parent does not write the proposal | RULE |
 | PLAN, no ACTIVE item | Invokes coordinator; they may admit one item. Parent does not invent a slug | RULE |
 | PLAN, DRAFT/READY | Invokes coordinator; do not dispatch a maker. Parent does not dispatch a reviewer here (judge dispatch requires REVIEW) | RULE |
@@ -81,6 +81,7 @@ Rewritten on every `cycle` and every drive tick:
 
 - `line` / `state`
 - `engine` (from the installed `VERSION`; `unknown` if the program was never refreshed)
+- `worth` (`BUILD` / `DOCS` / `NO-BUILD` / `UNKNOWN`)
 - `active-item`
 - `inflight-attempt`
 - `last-evidence`
