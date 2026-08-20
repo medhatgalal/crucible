@@ -97,7 +97,10 @@ a RULE into a CHECK, do it and say so in the lesson.
     new or content-changed product porcelain (including already-dirty files), task-worktree
     writes, new or overwritten `items/*/verdicts` and `claims/*/verdicts` files, removing
     `cycle: guided`, and a new live attempt id while the cycle is WAIT inflight. INVESTIGATE
-    fallback dispatches one missing claim-auditor/scout contract. Conversational “keep looping”
+    fallback dispatches every unaudited claim to the first claim-auditor, records transport,
+    seals one engine-template contract without coordinator ACP, copies isomorphic
+    PASS/STALE/FALSE onto siblings, and starts at most one worker.
+    Conversational “keep looping”
     is a RULE, not this CHECK.
 22. **RULE — recorded state is the resume point.** In a managed program, `STATE.tsv` is authoritative
     and `STATE.md` is generated. In an item-file program, `STATE.md` remains the operator-maintained

@@ -333,21 +333,28 @@ $Q/crucible cycle approve >/dev/null
 expect 'verified no-work proposal reaches done' '^DONE ' "$Q/crucible" cycle
 out=$("$Q/crucible" cycle 2>&1) || true
 printf '%s\n' "$out" | grep -q '^CLEANUP —' && ok || bad "DONE missing CLEANUP card: $out"
+printf '%s\n' "$out" | grep -q 'panel-title-stale' \
+  && bad "DONE CLEANUP panel-title-stale after CONTEXT sync: $out" || ok
+printf '%s\n' "$out" | grep -q 'KEEP panel: agents.tsv' && ok \
+  || bad "CLEANUP card must KEEP panel: $out"
 printf '%s\n' "$out" | grep -q 'NOT cycle clean: Jira' && ok || bad 'CLEANUP card must exclude Jira'
 printf '%s\n' "$out" | grep -q 'cycle clean --dry-run' && ok || bad 'DONE must name cycle clean --dry-run'
 mkdir -p "$Q/worktrees"
 git -C "$clean_repo" worktree add -q -b cleanup-session "$Q/worktrees/session" main
-expect 'cleanup previews exact machine state' '^DELETE .*agents.tsv' "$Q/crucible" cycle clean --dry-run
+expect 'cleanup keeps panel identity' 'KEEP .*agents.tsv' "$Q/crucible" cycle clean --dry-run
+outc=$("$Q/crucible" cycle clean --dry-run 2>&1) || true
+printf '%s\n' "$outc" | grep -q 'DELETE .*agents.tsv' && bad 'NO-BUILD dry-run must not DELETE agents.tsv' || ok
+printf '%s\n' "$outc" | grep -q 'KEEP .*PANEL.ASSIGN.tsv' && ok || bad 'dry-run must KEEP PANEL.ASSIGN.tsv'
 expect 'cleanup preview includes isolated worktrees' 'REMOVE_WORKTREE .*worktrees/session' \
   "$Q/crucible" cycle clean --dry-run
 [ -f "$Q/agents.tsv" ] && ok || bad 'cleanup dry-run changed the agent registry'
 expect 'approved cleanup preserves durable evidence' 'session cleanup applied' "$Q/crucible" cycle clean --apply
-if [ ! -e "$Q/agents.tsv" ] && [ ! -e "$Q/worktrees/session" ] \
+if [ -f "$Q/agents.tsv" ] && [ ! -e "$Q/worktrees/session" ] \
   && [ -f "$Q/PROBLEM.md" ] && [ -f "$Q/PROPOSAL.md" ] \
   && git -C "$clean_repo" show-ref --verify --quiet refs/heads/cleanup-session; then
   ok
 else
-  bad 'session cleanup removed durable evidence/branch or retained machine state'
+  bad 'session cleanup must keep agents.tsv, drop worktree, keep PROBLEM/PROPOSAL'
 fi
 
 # --like copies a real PASS onto an isomorphic DISPATCHED scout
@@ -411,6 +418,12 @@ refuses 'desired-behavior claim refuses' 'desired behavior|not a gap' \
 cn=$("$G/crucible" claim add 'workgraph nosuchverb is not a CLI verb' \
   'workgraph nosuchverb is not a CLI verb' ABSENT)
 grep -q 'polarity: ABSENT' "$G/CLAIMS.md" && ok || bad 'polarity not recorded'
+[ -f "$G/PANEL.CONTEXT.md" ] && grep -q 'problem-title:' "$G/PANEL.CONTEXT.md" && ok \
+  || bad 'cycle problem did not sync PANEL.CONTEXT.md'
+st=$("$G/crucible" cycle 2>&1) || true
+printf '%s\n' "$st" | grep -q 'NO-BUILD if all FALSE/STALE' && ok \
+  || bad "ABSENT-only STATUS missing NO-BUILD close: $st"
+printf '%s\n' "$st" | grep -q 'admit needs' && bad "ABSENT-only STATUS still says admit needs: $st" || ok
 # verdict never clobbers
 "$G/crucible" run-claim "$cn" a1 -- sh -c 'echo ev' >/dev/null
 "$G/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
@@ -422,6 +435,33 @@ printf 'WRITEUP keep me\n' > "$G/claims/$cn/verdicts/a1.md"
 ls "$G/claims/$cn/verdicts/history/"a1.*.md >/dev/null 2>&1 && ok \
   || bad 'prior verdict writeup was not archived'
 grep -q 'status: AUDITED_FALSE' "$G/CLAIMS.md" && ok || bad 'FALSE did not set AUDITED_FALSE'
+cs=$("$G/crucible" claim add 'assess --label is not a CLI flag' \
+  'assess --label is not a CLI flag' ABSENT)
+cb=$("$G/crucible" claim add 'assess --type is not a CLI flag' \
+  'assess --type is not a CLI flag' ABSENT)
+"$G/crucible" run-claim "$cs" a1 -- sh -c 'echo argparse' >/dev/null
+"$G/crucible" run-claim "$cb" a1 -- sh -c 'echo argparse' >/dev/null
+"$G/crucible" dispatch "$cs" claim-auditor a1 >/dev/null
+"$G/crucible" dispatch "$cb" claim-auditor a1 >/dev/null
+for want in "$cs" "$cb"; do
+  wid=
+  for ad in "$G"/attempts/A*; do
+    [ -d "$ad" ] || continue
+    item=$(awk -F '\t' 'NR==2 {print $2}' "$ad/meta.tsv")
+    agent=$(awk -F '\t' 'NR==2 {print $6}' "$ad/meta.tsv")
+    [ "$item" = "$want" ] && [ "$agent" = a1 ] || continue
+    wid=${ad##*/}
+  done
+  [ -n "$wid" ] || { bad "missing $want attempt to seal"; continue; }
+  "$G/crucible" attempt transport "$wid" multi-agent >/dev/null 2>&1 || true
+  "$G/crucible" contract-audit "$wid" j2 PASS >/dev/null 2>&1 || true
+done
+"$G/crucible" claim verdict "$cs" a1 STALE --like "$cb" >/dev/null
+grep -q "### $cs " "$G/CLAIMS.md" && awk -v c="### $cs " '
+  $0 ~ "^"c {p=1} p && /^    status:/ {print; exit} /^### C/ && $0 !~ "^"c {p=0}
+' "$G/CLAIMS.md" | grep -q 'status: STALE' && ok || bad 'STALE did not set status STALE'
+[ -f "$G/claims/$cb/verdicts/a1.md" ] && grep -q '^CLAIM-VERDICT: STALE$' "$G/claims/$cb/verdicts/a1.md" && ok \
+  || bad 'claim verdict --like did not copy STALE onto sibling'
 # REVIEW -> BUILD after judge FIX
 # reuse first cycle item path: admit needs 2 TRUEs + scout ABSENT
 # (a1 already FALSE — new claim)
@@ -476,10 +516,12 @@ printf 'Next title here.\n' > "$grepo/next-p.md"
 nxt=$("$G/crucible" cycle problem "$grepo/next-p.md" --next 2>&1) || {
   bad "--next failed: $nxt"; nxt=
 }
-if [ -f "$G/PANEL.CONTEXT.md" ] && grep -q 'problem-title:' "$G/PANEL.CONTEXT.md"; then
+if [ -f "$G/PANEL.CONTEXT.md" ] && grep -q 'problem-title: Next title here' "$G/PANEL.CONTEXT.md"; then
   ok
 else
-  bad "--next did not write PANEL.CONTEXT.md ($nxt)"
+  ctx=
+  [ -f "$G/PANEL.CONTEXT.md" ] && ctx=$(cat "$G/PANEL.CONTEXT.md")
+  bad "--next did not refresh PANEL.CONTEXT.md ($nxt) context=[$ctx]"
 fi
 printf 'pr-status leftover\n' > "$grepo/pr-status.md"
 refuses '--next refuses leftover pr-status title' 'pr-status' \
