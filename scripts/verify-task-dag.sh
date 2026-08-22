@@ -55,6 +55,11 @@ fresh() {
   (
     cd "$repo"
     git init -q -b main
+    # Repo-local identity, not just -c on the fixture's own commits: the engine commits inside
+    # linked worktrees of this repo (integration cherry-pick), and those share this config.
+    # CI runners have no global identity, so without this the cherry-pick cannot commit at all.
+    git config user.name test
+    git config user.email test@example.invalid
     printf 'baseline\n' > tracked.txt
     git add tracked.txt
     git -c user.name=test -c user.email=test@example.invalid commit -qm baseline

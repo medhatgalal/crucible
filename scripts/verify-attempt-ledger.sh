@@ -5,6 +5,9 @@ set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 C="$HERE/crucible"
+# A real tab. `\t` inside a grep BRE is a literal `t` under GNU grep, so
+# tab-anchored assertions against STATE.tsv must interpolate this instead.
+tab=$(printf '\t')
 PASS=0
 FAIL=0
 
@@ -127,7 +130,7 @@ id=$(basename "$(dirname "$contract")")
   && ok || bad 'dispatch did not create attempt metadata and event ledger'
 [ "$(awk -F '\t' 'NR == 2 { print $10 }' "$P/attempts/$id/meta.tsv")" = DISPATCHED ] \
   && ok || bad 'attempt metadata does not bind the dispatch state'
-grep -q "\t$id\t" "$P/STATE.tsv" && ok || bad 'state does not name the in-flight attempt'
+grep -q "${tab}${id}${tab}" "$P/STATE.tsv" && ok || bad 'state does not name the in-flight attempt'
 refuses 'duplicate live attempt' 'in-flight attempt\|live attempt' "$P/crucible" dispatch alpha maker mk1 A1 FOCUSED
 refuses 'finish requires an observed start' 'requires RUNNING or OVERDUE' "$P/crucible" attempt finish "$id" RETURNED impossible-return
 refuses 'attempt ids cannot traverse paths' 'invalid attempt id' "$P/crucible" attempt start 'A1../../outside' 1
@@ -159,13 +162,13 @@ grep -q "^DISPATCH-WORK-ID: $(awk -F '\t' 'NR == 2 { print $4 }' "$P/attempts/$i
   && ok || bad 'maker result does not preserve its dispatch input work id'
 [ "$meta_before" = "$(cksum "$P/attempts/$id/meta.tsv")" ] && ok || bad 'attempt metadata changed after lifecycle events'
 refuses 'result is immutable' 'immutable' "$P/crucible" result "$id" PASS "$evidence" CLOSE -
-grep -q "\t-\t-\t" "$P/STATE.tsv" && ok || bad 'result did not clear the in-flight attempt'
+grep -q "${tab}-${tab}-${tab}" "$P/STATE.tsv" && ok || bad 'result did not clear the in-flight attempt'
 awk -F '\t' -v OFS='\t' -v a="$id" 'NR == 1 { print; next } { $6=a; print }' \
   "$P/STATE.tsv" > "$P/STATE.reconcile"
 mv "$P/STATE.reconcile" "$P/STATE.tsv"
 expect 'matching immutable result repairs interrupted state publication' 'reconciled publication' \
   "$P/crucible" result "$id" PASS "$evidence" CLOSE -
-grep -q "\t-\t-\t" "$P/STATE.tsv" && ok || bad 'result reconciliation did not clear the in-flight attempt'
+grep -q "${tab}-${tab}-${tab}" "$P/STATE.tsv" && ok || bad 'result reconciliation did not clear the in-flight attempt'
 refuses 'current-work pass refuses duplicate dispatch' 'current-work PASS' "$P/crucible" dispatch alpha maker mk1 A1 FOCUSED
 
 $P/crucible phase alpha REVIEW >/dev/null
@@ -216,7 +219,7 @@ r2out=$(cd "$repo" && .crucible/p/crucible run alpha j2 -- sh -c 'echo finding-t
 r2e=$(basename "$(printf '%s' "$r2out" | awk '{print $1}')")
 $P/crucible attempt finish "$r2" RETURNED observed-reject >/dev/null
 $P/crucible result "$r2" REJECT "$r2e" FIX abcdef123456 >/dev/null
-grep -q "^alpha\tBLOCKED\tREVIEW\t.*\tREPEATED_FINDING\t" "$P/STATE.tsv" \
+grep -q "^alpha${tab}BLOCKED${tab}REVIEW${tab}.*${tab}REPEATED_FINDING${tab}" "$P/STATE.tsv" \
   && ok || bad 'repeated finding did not block the item'
 expect 'next exposes repeated finding block' '^BLOCKED alpha REPEATED_FINDING ' "$P/crucible" next
 
@@ -243,7 +246,7 @@ retry_contract=$(CRUCIBLE_MAKER_SECONDS=1 $TP/crucible dispatch alpha maker mk1 
 retry=$(basename "$(dirname "$retry_contract")")
 $TP/crucible attempt start "$retry" "$$" >/dev/null
 expect 'second observed timeout exhausts retry' 'item blocked RETRY_EXHAUSTED' "$TP/crucible" attempt finish "$retry" TIMEOUT launcher-observed-timeout
-grep -q "^alpha\tBLOCKED\tBUILD\t.*\tRETRY_EXHAUSTED\t" "$TP/STATE.tsv" \
+grep -q "^alpha${tab}BLOCKED${tab}BUILD${tab}.*${tab}RETRY_EXHAUSTED${tab}" "$TP/STATE.tsv" \
   && ok || bad 'retry exhaustion did not persist a typed block'
 expect 'next exposes retry exhaustion' '^BLOCKED alpha RETRY_EXHAUSTED ' "$TP/crucible" next
 refuses 'retry of a retry refuses' 'only one infrastructure retry' "$TP/crucible" dispatch alpha maker mk1 A1 FOCUSED "$retry"
@@ -263,7 +266,7 @@ dout=$(cd "$decision_repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo 
 devidence=$(basename "$(printf '%s' "$dout" | awk '{print $1}')")
 $DP/crucible attempt finish "$did" RETURNED observed-needs-context >/dev/null
 $DP/crucible result "$did" NEEDS_CONTEXT "$devidence" DECIDE - >/dev/null
-grep -q "^alpha\tBLOCKED\tBUILD\t.*\tNEEDS_CONTEXT\t" "$DP/STATE.tsv" \
+grep -q "^alpha${tab}BLOCKED${tab}BUILD${tab}.*${tab}NEEDS_CONTEXT${tab}" "$DP/STATE.tsv" \
   && ok || bad 'NEEDS_CONTEXT did not persist a typed block'
 expect 'next exposes the returned decision block' '^BLOCKED alpha NEEDS_CONTEXT ' "$DP/crucible" next
 

@@ -2118,10 +2118,17 @@ cmd_integrate_tasks() {
     commits=$(git -C "$repo" rev-list --reverse "$dispatch_wid..$output_wid")
     [ -n "$commits" ] || { state_attempt_update "$slug" BLOCKED - TASK_BLOCKED; die "task $task has no commits to integrate"; }
     for commit in $commits; do
-      if ! git -C "$integration_worktree" cherry-pick "$commit" >/dev/null 2>&1; then
-        state_attempt_update "$slug" BLOCKED - INTEGRATION_CONFLICT
-        printf 'task %s conflict retained in %s\n' "$task" "$integration_worktree" >&2
-        die "integration conflict while applying $commit"
+      # 2>/dev/null discarded git's reason for refusing the cherry-pick, so every failure was
+      # reported as a conflict: an unset committer identity exited 128 and the user went hunting
+      # for conflicting hunks that did not exist. git writes CHERRY_PICK_HEAD for both outcomes,
+      # so only unmerged paths separate a real conflict from any other refusal.
+      if ! cherry_err=$(git -C "$integration_worktree" cherry-pick "$commit" 2>&1); then
+        if [ -n "$(git -C "$integration_worktree" diff --name-only --diff-filter=U)" ]; then
+          state_attempt_update "$slug" BLOCKED - INTEGRATION_CONFLICT
+          printf 'task %s conflict retained in %s\n' "$task" "$integration_worktree" >&2
+          die "integration conflict while applying $commit"
+        fi
+        die "could not apply $commit in $integration_worktree, which is left mid-cherry-pick, and git did not report a conflict: $cherry_err"
       fi
     done
     integrated=$(git -C "$integration_worktree" rev-parse --verify HEAD | cut -c1-12)
