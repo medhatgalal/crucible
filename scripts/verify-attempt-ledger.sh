@@ -82,6 +82,7 @@ MEDIUM
 
 - crucible
 - scripts/verify-attempt-ledger.sh
+- tracked.txt
 
 ## Acceptance criteria
 

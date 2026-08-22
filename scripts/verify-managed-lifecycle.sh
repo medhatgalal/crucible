@@ -54,7 +54,8 @@ bind_independence() {
   "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
 }
 
-tmp=$(mktemp -d)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/crucible-managed-lifecycle.XXXXXX")
+trap 'rm -rf "$tmp"' 0 1 2 15
 repo="$tmp/repo"
 mkdir -p "$repo"
 (
@@ -123,6 +124,7 @@ MEDIUM
 
 - crucible
 - scripts/verify-managed-lifecycle.sh
+- tracked.txt
 
 ## Acceptance criteria
 
@@ -167,7 +169,7 @@ refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
   "$P/crucible" run alpha j1 -- sh -c 'echo unbound-review'
 
 expect 'REVIEW transition' 'alpha is now in REVIEW' "$P/crucible" phase alpha REVIEW
-refuses 'cannot move backward' 'transition REVIEW -> BUILD' "$P/crucible" phase alpha BUILD
+refuses 'cannot move backward' 'REVIEW -> BUILD requires a judge result' "$P/crucible" phase alpha BUILD
 expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
 
 j1_contract=$($P/crucible dispatch alpha judge j1 A1 FOCUSED 2>/dev/null)

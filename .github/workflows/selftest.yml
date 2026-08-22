@@ -12,9 +12,10 @@ on:
   workflow_dispatch:
 
 # Linux gates every push: it is fast, and it is the harsher test — GNU sed and grep,
-# sha256sum instead of shasum, a stricter /bin/sh. macOS gates releases only, because
-# private-repo macOS runners cost ten times as much and queue for long enough that
-# they would make every push look broken while nothing is actually wrong.
+# sha256sum instead of shasum, a stricter /bin/sh. macOS gates releases and pull
+# requests — see refusals-bsd for why pull requests earned the exception — and not
+# every push, because private-repo macOS runners cost ten times as much and queue for
+# long enough that they would make every push look broken while nothing is actually wrong.
 jobs:
   refusals:
     runs-on: ubuntu-latest
@@ -60,13 +61,49 @@ jobs:
       - name: release package is reproducible and cold-start capable
         run: ./scripts/verify-package.sh
 
+      # Each verifier gets its own step so a red run names the broken invariant without
+      # anyone opening the log. Cheapest-first, so a trivial failure is not reported from
+      # behind the slowest script. The order is an estimate from what is visible in the
+      # sources — script length, number of crucible invocations, and how many throwaway
+      # repositories and worktrees each one builds — not from timing them. drive and
+      # agent-cycle are the clear tail; the middle three are close enough that their
+      # relative order is a guess. Reorder from real timings if a run ever proves it wrong.
+      - name: managed worktrees are created and torn down
+        run: ./scripts/verify-managed-lifecycle.sh
+
+      - name: the attempt ledger records every attempt
+        run: ./scripts/verify-attempt-ledger.sh
+
+      - name: the task DAG refuses cycles and dangling edges
+        run: ./scripts/verify-task-dag.sh
+
+      - name: a cold start needs nothing but the repository
+        run: ./scripts/verify-coldstart-independence.sh
+
+      - name: the quickstart a reader is given actually works
+        run: ./scripts/verify-quickstart.sh
+
+      - name: the agent cycle advances and terminates
+        run: ./scripts/verify-agent-cycle.sh
+
+      - name: drive runs a program end to end
+        run: ./scripts/verify-drive.sh
+
   refusals-bsd:
     # BSD userland differs from GNU in sed -i, grep -E and find, which is exactly where
     # a portability defect would hide. Gate releases on it rather than every push.
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    #
+    # One reason to also run on pull_request: verify-demand.sh. Its pairing predicate
+    # counts matches with grep -E, the precise construct where BSD and GNU disagree, so
+    # a tag-only job would only report the divergence after the merge that introduced it.
+    # That check is cheap; it is the exception that justifies paying for a macOS runner
+    # per pull request, and the rest of this job's steps come along with it.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: demand pairing holds under BSD grep
+        run: ./scripts/verify-demand.sh
       - name: every shell file parses under /bin/sh
         run: for f in crucible scripts/*.sh; do /bin/sh -n "$f" || exit 1; done
       - name: the gate refuses what it claims
