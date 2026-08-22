@@ -173,11 +173,32 @@ and [RULES.md](RULES.md).
 <details>
 <summary><strong>Maintainer verification</strong></summary>
 
+CI runs each of these as its own step on every push and every pull request, so a red run
+names the broken invariant:
+
 ```sh
-./scripts/selftest.sh --fast
-./scripts/verify-agent-cycle.sh
+./scripts/selftest.sh -v
 ./scripts/verify-package.sh
+./scripts/verify-managed-lifecycle.sh
+./scripts/verify-attempt-ledger.sh
+./scripts/verify-task-dag.sh
+./scripts/verify-coldstart-independence.sh
+./scripts/verify-quickstart.sh
+./scripts/verify-agent-cycle.sh
+./scripts/verify-drive.sh
 ```
+
+`./scripts/selftest.sh --fast` is the bounded gate to use between full runs.
+
+Before that, only `selftest.sh` and `verify-package.sh` were invoked directly; the rest ran
+nowhere, or only indirectly against the packaged tree. Two of them stayed red on `main`
+without anyone noticing.
+
+`scripts/verify-demand.sh` is not in that set and is not a gate. Its three assertions pass
+today because they record a hole rather than a guarantee: work can be admitted with no
+user-visible job named, and a rephrased capability catalog binds. A green
+`verify-demand.sh` is a documented defect. It runs on macOS at pull-request time because
+its pairing predicate counts matches with `grep -E`, where BSD and GNU userland diverge.
 
 </details>
 

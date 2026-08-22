@@ -55,7 +55,7 @@ Cwd = target repo. Run from the **newer** source (this checkout or a newer tarba
 .crucible/work/crucible cycle
 ```
 
-`STATUS.md` must show `engine: 1.4.0` (or current). `drive` must be a verb.
+`STATUS.md` must show `engine: 1.6.3` (or current). `drive` must be a verb.
 `--managed` is install-only; do not pass it with `--refresh`.
 
 **Overwrites:** `crucible`, `VERSION`, `START.md`, `BOOTSTRAP.md`, `RULES.md`,
@@ -66,16 +66,21 @@ Cwd = target repo. Run from the **newer** source (this checkout or a newer tarba
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
 `history/`, `LESSONS.md`, `scripts/acp-brief.py`.
 
+The copied scripts include `verify-demand.sh`. It passes, and it is not a gate: it records
+assertions about a known hole in admission, so a green run proves nothing about your cycle.
+Do not treat it as one of the install checks.
+
 Do not copy the program directory by hand.
 
 | You see | Do |
 | --- | --- |
-| `engine: 1.4.0` | Already current |
-| `engine: 1.3.7` or older | `--refresh` from this tree |
+| `engine: 1.6.3` | Already current |
+| `engine:` below this tree's `VERSION` | `--refresh` from this tree |
 | `engine: unknown` / no `STATUS.md` | Pre-1.3.5; `--refresh` |
 | `unknown verb: drive` | Pre-1.3.0; `--refresh` |
 | `is a husk (no PROGRAM)` | Not a program. Do not `--refresh`. Keep, trash, or adopt another name |
 | `unknown verb: reclaim` / `evidence` | Engine older than 1.4.0; `--refresh` |
+| `crucible result` exits 128 printing nothing, on the first maker result of a git-target item | Engine older than 1.6.3; `--refresh` |
 
 From 1.3.6, drive starts sealed workers. From 1.3.7, `dispatch ITEM judge` stays
 `judge`. From 1.4.0: `attempt reclaim`, `evidence archive`, panel-bound judge/auditor
@@ -86,7 +91,11 @@ one-predicate claims with polarity; verdicts append (history); `IN-FLIGHT` scout
 FILE refuses 8+ CLI-verb catalogs; `drive stop`; guided `plan-audit PASS`
 before maker dispatch. From 1.6.2: isomorphic STALE/FALSE copy does not start
 a sibling worker; `adopt NAME --managed --panel-from SRC` copies an approved
-panel onto a sibling cycle.
+panel onto a sibling cycle. From 1.6.3: the first maker `result` on a
+git-target item checks owned paths against the target base and either passes or
+refuses with a reason. Before that the dispatch work id was `NOBRANCH` until a
+work branch existed, it reached `git diff` unvalidated, and the engine exited
+128 with no message printed at all.
 
 ## Next problem (same panel)
 

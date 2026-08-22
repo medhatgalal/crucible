@@ -5,6 +5,36 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.3] - 2026-08-22
+
+### Maker result on NOBRANCH, and CI that actually runs the suites
+
+- `cmd_result` passed `dispatch_wid` to `git diff` without validating it as a
+  rev. `dispatch_wid` is legitimately `NOBRANCH` when a maker is dispatched
+  before a work branch exists (only judge and adversary refuse that state), so
+  the first maker result on a git-target item aborted at exit 128 with no
+  message — git's fatal output was swallowed by a `2>/dev/null` with no
+  matching `|| true`. `result` now validates the rev and falls back to the item
+  base, so it reaches the Owned-files scope gate and refuses with a
+  diagnosable message instead of crashing. The scope gate is still enforced on
+  the first commit.
+- Every verify suite runs on every push — `verify-agent-cycle`, `verify-drive`,
+  `verify-task-dag`, `verify-managed-lifecycle`, `verify-attempt-ledger`,
+  `verify-coldstart-independence`, `verify-quickstart`, `verify-package` —
+  alongside `selftest`. Seven of them previously ran nowhere, which let two stay
+  red on main unnoticed. The macOS job also runs on pull requests for one fast
+  script, where BSD and GNU `grep` diverge.
+- `verify-attempt-ledger` and `verify-managed-lifecycle` declared stale
+  owned-file scopes and one stale expected refusal message.
+  `verify-managed-lifecycle` also leaked a temp directory per run and now
+  cleans up.
+- `scripts/verify-demand.sh` records three assertions that pass today: work can
+  be admitted with no user-visible job named, and a rephrased capability
+  catalog binds. It is a recorded RED contract for a later release, **not** a
+  gate — a passing suite here is not enforcement. The demand gate itself is
+  planned in `docs/superpowers/plans/2026-08-22-demand-gate.md` and does not
+  exist yet.
+
 ## [1.6.2] - 2026-08-20
 
 ### Cost-per-claim close and sibling cycle for leftover PROBLEM

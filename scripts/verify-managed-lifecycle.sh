@@ -5,6 +5,9 @@ set -eu
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 C="$HERE/crucible"
+# A real tab. `\t` inside a grep BRE is a literal `t` under GNU grep, so
+# tab-anchored assertions against STATE.tsv must interpolate this instead.
+tab=$(printf '\t')
 PASS=0
 FAIL=0
 
@@ -54,7 +57,8 @@ bind_independence() {
   "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
 }
 
-tmp=$(mktemp -d)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/crucible-managed-lifecycle.XXXXXX")
+trap 'rm -rf "$tmp"' 0 1 2 15
 repo="$tmp/repo"
 mkdir -p "$repo"
 (
@@ -91,7 +95,7 @@ state_inode_after=$(ls -i "$P/STATE.tsv" | awk '{print $1}')
 )
 grep -q '^PHASE:' "$P/items/alpha/ITEM.md" && bad 'managed ITEM.md retained a PHASE header' || ok
 grep -q '^STATUS:' "$P/items/alpha/ITEM.md" && bad 'managed ITEM.md retained a STATUS header' || ok
-grep -q "^alpha\tACTIVE\tDRAFT\t" "$P/STATE.tsv" && ok || bad 'new item is not ACTIVE DRAFT'
+grep -q "^alpha${tab}ACTIVE${tab}DRAFT${tab}" "$P/STATE.tsv" && ok || bad 'new item is not ACTIVE DRAFT'
 
 cp "$P/STATE.tsv" "$P/STATE.keep"
 awk -F '\t' -v OFS='\t' 'NR == 1 { print; next } { $4="*"; print }' "$P/STATE.keep" > "$P/STATE.tsv"
@@ -123,6 +127,7 @@ MEDIUM
 
 - crucible
 - scripts/verify-managed-lifecycle.sh
+- tracked.txt
 
 ## Acceptance criteria
 
@@ -142,7 +147,7 @@ Stop if item-file compatibility breaks.
 EOF
 
 expect 'ready transition' 'alpha is now READY' "$P/crucible" ready alpha
-grep -q "^alpha\tACTIVE\tREADY\t" "$P/STATE.tsv" && ok || bad 'ready did not update STATE.tsv'
+grep -q "^alpha${tab}ACTIVE${tab}READY${tab}" "$P/STATE.tsv" && ok || bad 'ready did not update STATE.tsv'
 grep -q '| alpha | ACTIVE | READY |' "$P/STATE.md" && ok || bad 'ready did not regenerate STATE.md'
 refuses 'cannot skip BUILD' 'transition READY -> REVIEW' "$P/crucible" phase alpha REVIEW
 expect 'BUILD transition' 'alpha is now in BUILD' "$P/crucible" phase alpha BUILD
@@ -167,7 +172,7 @@ refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
   "$P/crucible" run alpha j1 -- sh -c 'echo unbound-review'
 
 expect 'REVIEW transition' 'alpha is now in REVIEW' "$P/crucible" phase alpha REVIEW
-refuses 'cannot move backward' 'transition REVIEW -> BUILD' "$P/crucible" phase alpha BUILD
+refuses 'cannot move backward' 'REVIEW -> BUILD requires a judge result' "$P/crucible" phase alpha BUILD
 expect 'REVIEW next action' '^NEXT alpha CHECK ' "$P/crucible" next
 
 j1_contract=$($P/crucible dispatch alpha judge j1 A1 FOCUSED 2>/dev/null)
@@ -195,7 +200,7 @@ $P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
 
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
 expect 'managed close' '^closed alpha at ' "$P/crucible" close alpha 'state is authoritative'
-grep -q "^alpha\tCLOSED\tREVIEW\t" "$P/STATE.tsv" && ok || bad 'close did not update authoritative state'
+grep -q "^alpha${tab}CLOSED${tab}REVIEW${tab}" "$P/STATE.tsv" && ok || bad 'close did not update authoritative state'
 expect 'closed program is done' '^DONE$' "$P/crucible" next
 
 item_file="$tmp/item-file"
