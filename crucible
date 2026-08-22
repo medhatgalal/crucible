@@ -880,7 +880,14 @@ EOF
           r=$(tgt "$slug" repo); br=$(tgt "$slug" branch); base=$(tgt "$slug" base)
           owned=$(awk '/^## Owned files/{p=1;next} p && /^## /{exit} p && /^- /{sub(/^-[[:space:]]*/,""); print}' "$d/ITEM.md")
           if [ -n "$owned" ]; then
-            changed_paths=$(git -C "$r" diff --name-only "${dispatch_wid}..${wid}" 2>/dev/null)
+            # A maker dispatched before the branch existed carries dispatch_wid NOBRANCH, which is
+            # no git rev: the diff exited 128 and set -eu aborted the engine before any die() could
+            # name a cause, so the first maker result of an item died silently. Fall back to the
+            # target base, which target verified, so the scope gate still runs on that first commit.
+            diff_base=$dispatch_wid
+            git -C "$r" rev-parse --verify --quiet "$dispatch_wid^{commit}" >/dev/null 2>&1 \
+              || diff_base=$base
+            changed_paths=$(git -C "$r" diff --name-only "${diff_base}..${wid}" 2>/dev/null || true)
             while IFS= read -r changed_path; do
               [ -n "$changed_path" ] || continue
               okp=0
