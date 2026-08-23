@@ -3,6 +3,18 @@
 This is the coordinating agent's low-level protocol reference. Operators use the conversational cycle
 described in `START.md`; they do not advance attempts, tasks, or phases themselves.
 
+## `$CP` in the examples below
+
+Every command on this page is written with `$CP`. It is the installed program's engine, not a
+Crucible verb. Define it once per shell, from the **target repository root**:
+
+```sh
+CP=.crucible/<program>/crucible     # after `adopt work --managed`: CP=.crucible/work/crucible
+```
+
+Then `$CP cycle` is `.crucible/work/crucible cycle`. Nothing exports this for you; a shell
+without it runs nothing.
+
 Managed lifecycle makes program state machine-readable and gives the agent one deterministic resume
 behavior. It is selected by behavior in `PROGRAM`:
 
@@ -42,8 +54,16 @@ $CP cycle problem --abandon "leftover FILE --next of a non-problem"
 
 `PANEL.md` must include: Agents, Roles, Risk posture, Isolation transport, Independence ladder,
 Waivers. `PANEL.ASSIGN.tsv` is authoritative role→agent casting (coordinator, claim-auditor, maker,
-reviewer, contract-auditor required). Placeholder `MODEL` / `AGENT_CLI` / `OTHER_CLI` rows refuse
+reviewer, contract-auditor required; scout required in practice — see [CONFIGURE.md](../CONFIGURE.md)).
+Every agent named there must also have a row in `agents.tsv`, coordinator included; a coordinator with
+no registry row makes `approve-panel` refuse. Placeholder `MODEL` / `AGENT_CLI` / `OTHER_CLI` rows refuse
 approval. Guided dispatches must use agents cast for that role.
+
+The admit bar is derived from the casting, not chosen at admit time: `claim admit` requires one TRUE
+verdict per `required=yes` `claim-auditor` row (`refused: C2 has 1 TRUE verdicts, need 3` with three
+such rows), across at least `CRUCIBLE_MIN_KINDS` model families. `close` reads `required=yes`
+`reviewer` rows the same way. `CRUCIBLE_MIN_AUDITORS` and `CRUCIBLE_MIN_JUDGES` override the derived
+numbers.
 
 ### Attempt transport and contract audit
 
@@ -65,6 +85,26 @@ $CP result <ATTEMPT> PASS <evidence-file> CLOSE -
 Independence ladder: multi-agent preferred; ACP for single-product isolation; subagent only after a
 recorded ACP probe failure (`ACP-PROBE.md` with `status: failed` or PANEL notes). `STOP` blocks the
 item as `INDEPENDENCE_UNAVAILABLE` — do not continue as solo theatre.
+
+### Investigate: claims before items
+
+INVESTIGATE has its own primitives, and none of them are item verbs. `claim add` creates the claim
+object; hand-written CLAIMS.md headings create nothing the engine can audit:
+
+```sh
+$CP claim add "CLAIM" "EXACT SOURCE SENTENCE" [ABSENT|EXISTS|DEFECT]
+$CP claim list
+$CP dispatch CN ROLE AGENT
+$CP run-claim CN NAME -- CMD...
+$CP claim verdict N AGENT TRUE|FALSE|STALE|UNVERIFIABLE [CITE] [--like C2 C3]
+$CP claim scout CN ABSENT|PARTLY-EXISTS|FULLY-EXISTS|IN-FLIGHT AGENT
+$CP triage
+$CP claim admit CN SLUG
+```
+
+The ordered walkthrough, with the seal steps between dispatch and verdict, is in
+[START.md](../START.md). `triage` prints one ADMIT/DROP recommendation per claim derived from
+recorded verdicts and exits non-zero while any claim has none.
 
 The `lifecycle enable` primitive remains only for converting an empty older installation before its first
 item; it is not an onboarding step.
@@ -208,9 +248,8 @@ Each dispatch is preserved under `attempts/<attempt-id>/`:
 - `result.md` is the write-once, evidence-bound outcome.
 
 After the guided cycle reports `DONE`, the coordinator can preview session cleanup with
-`cycle clean --dry-run`. `--apply` is allowed only after DONE and refuses while any attempt is live.
-It safely removes registered isolated worktrees and the machine-only `agents.tsv`, while preserving task
-branches and all durable problem, proposal, work, review, and evidence artifacts.
+`cycle clean --dry-run`. See [Session cleanup](#session-cleanup) for what it keeps, what it removes,
+and how to clear a worktree it refuses to remove.
 
 ## Optional task graph
 
@@ -248,6 +287,69 @@ binds its base and owned paths into the attempt, caps live makers at three by de
 task verifier against the returned commit, and refuses changes outside task ownership. Integration
 requires every task PASS, applies commits in stable dependency order, records `INTEGRATION.tsv`, and
 blocks on ancestry or cherry-pick conflict. These are agent protocol primitives, not operator steps.
+
+## Session cleanup
+
+Cleanup runs in the **target repository**, from its root, on the installed program:
+
+```sh
+CP=.crucible/<program>/crucible
+$CP cycle clean --dry-run
+$CP cycle clean --apply
+```
+
+`--dry-run` changes nothing and prints the exact write set. Run it first and show it to the operator;
+`--apply` only after explicit approval. Drive never runs `--apply`.
+
+Preconditions, each a refusal rather than a warning:
+
+- The cycle must report `DONE`. Anything else refuses with
+  `cleanup requires DONE; current cycle says: <line>`.
+- No attempt may be live. A `RUNNING` or `OVERDUE` attempt whose pid is still alive refuses with
+  `cleanup refuses while attempt <id> is RUNNING (live pid)`. Dead pids are reclaimed as `STOPPED`
+  and cleanup continues.
+- A leftover `.drive.lock` from a driver that did not exit cleanly is released by
+  `$CP drive stop`, which also reclaims dead pids and names any attempt still alive.
+
+What the preview prints, line by line:
+
+| Line | Meaning |
+| --- | --- |
+| `KEEP …/agents.tsv` | Panel identity, not leftover evidence. Cleanup does not delete it |
+| `KEEP …/PANEL.ASSIGN.tsv` | Same: the casting that produced the evidence stays |
+| `REMOVE_WORKTREE <path>` | A registered worktree under `.crucible/<program>/worktrees/` — task or integration |
+| `PRESERVE_BRANCH <repo> <branch>` | That worktree's branch survives; only the checkout is removed |
+| `PRESERVE <program dir>` | Problem, proposal, claims, items, attempts, reviews, and evidence |
+| `NO_SESSION_ARTIFACTS` | Nothing to remove; the panel and evidence lines still apply |
+
+`agents.tsv` is machine-local and stays out of Git through the generated `.crucible/.gitignore`, but
+cleanup keeps the file on disk. Destroying the panel after a `NO-BUILD` would destroy the identity
+behind the verdicts.
+
+### When a worktree refuses to be removed
+
+`--apply` removes each listed worktree with `git worktree remove`, and git refuses a worktree with an
+in-progress cherry-pick — which is how an integration worktree is left when
+`task integrate` hits a conflict. Cleanup then stops:
+
+```text
+crucible: could not safely remove worktree: /repo/.crucible/work/worktrees/int
+```
+
+Nothing was destroyed. Inspect the worktree, then clear the cherry-pick and retry:
+
+```sh
+git -C .crucible/<program>/worktrees/<name> status --short
+git -C .crucible/<program>/worktrees/<name> cherry-pick --abort
+$CP cycle clean --apply
+```
+
+`cherry-pick --abort` returns that worktree to the commit it was on and discards only the
+half-applied pick. The branch is still preserved by the retried `--apply`. If the worktree holds
+uncommitted work you want, commit it on its branch first — the branch survives cleanup, the checkout
+does not. Do not `rm -rf` the worktree directory instead: `--apply` skips a path that is already gone
+and reports success, while `git worktree list` keeps a `prunable` registration that the preview goes on
+listing as `REMOVE_WORKTREE`. Clear that with `git worktree prune`.
 
 ## Refusals that matter
 

@@ -23,6 +23,14 @@ done
 # --fast skips the two slow groups (tmux overlay, concurrency) for quick iteration. A full run
 # takes about three minutes, mostly waiting on tmux and on parallel processes; --fast is for
 # development and is never sufficient for a release.
+
+# One named scratch root, one trap. This suite used to leak nine `mktemp -d` trees per run, and
+# it is not free to collect them in a shell variable instead: mkrun() runs inside `$(…)`, so a
+# directory it appends to a list is recorded in a subshell that the parent's trap never sees.
+# Nesting every scratch tree under this root is what makes a single trap sufficient. The trap
+# removes and returns; it never calls exit, so it does not mask the suite's own status.
+SELFTEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-selftest.XXXXXX")
+trap 'rm -rf "$SELFTEST_TMP"' 0 1 2 15
 PASS=0; FAIL=0; FAILED=""
 
 say() { [ "$VERBOSE" = 1 ] && printf '    %s\n' "$*" || true; }
@@ -34,7 +42,7 @@ bad()  { FAIL=$((FAIL+1)); FAILED="$FAILED
 # Prints the directory. The caller must cd into it: `cd "$(fresh)"`.
 # Setup runs in a subshell so this function never changes the caller's directory.
 mkrun() {
-  d=$(mktemp -d)
+  d=$(mktemp -d "$SELFTEST_TMP/run.XXXXXX")
   ( cd "$d"
     cp "$C" ./crucible; cp -R "$HERE/roles" .; cp "$HERE/RULES.md" .
     printf 'mk\tkiro\tm\thigh\techo {BRIEF}\n'  > agents.tsv
@@ -219,7 +227,7 @@ refuses "a commit after the verdicts voids them"          "stale"
 
 printf '\nadopt into a target repo\n'
 cd "$HERE"
-tr=$(mktemp -d)/target; mkdir -p "$tr"
+tr=$(mktemp -d "$SELFTEST_TMP/adopt.XXXXXX")/target; mkdir -p "$tr"
 ( cd "$tr" && git init -q -b main && echo code > src.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null
 ( cd "$tr" && "$C" adopt prog >/dev/null 2>&1 )
@@ -236,14 +244,14 @@ grep -q "^branch: ai/thing" "$tr/.crucible/prog/items/thing/TARGET" 2>/dev/null 
 ( cd "$tr" && ./.crucible/prog/crucible adopt prog >/dev/null 2>&1 ) \
   && bad "adopting an existing program name was allowed" \
   || ok "adopting an existing program name refuses"
-out=$(cd "$(mktemp -d)" && "$C" adopt x 2>&1) && bad "adopt outside a git repo was allowed" \
+out=$(cd "$(mktemp -d "$SELFTEST_TMP/norepo.XXXXXX")" && "$C" adopt x 2>&1) && bad "adopt outside a git repo was allowed" \
   || { printf '%s' "$out" | grep -q 'not inside a git repository' \
        && ok "adopt outside a git repository refuses" || bad "wrong reason outside a repo"; }
 
 
 printf '\nouter loop: claims, scout, triage\n'
 cd "$HERE"
-ct=$(mktemp -d)/repo; mkdir -p "$ct"
+ct=$(mktemp -d "$SELFTEST_TMP/outer.XXXXXX")/repo; mkdir -p "$ct"
 ( cd "$ct" && git init -q -b main && echo c > s.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null
 ( cd "$ct" && "$C" adopt p >/dev/null 2>&1 )
@@ -737,7 +745,7 @@ o=$(./crucible claim admit "$scn" dupe 2>&1) && bad "a claim the scout found alr
   || bad "an audited, absent claim could not be admitted"
 
 # START.md and RULES.md referred to STATE.md and BACKLOG.md, and adopt did not create them.
-cd "$HERE"; st=$(mktemp -d)/t; mkdir -p "$st"
+cd "$HERE"; st=$(mktemp -d "$SELFTEST_TMP/state.XXXXXX")/t; mkdir -p "$st"
 ( cd "$st" && git init -q -b main && echo c > a.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$st" && "$C" adopt p >/dev/null 2>&1 )
@@ -787,7 +795,7 @@ cd "$HERE"
 
 # START.md said cwd is the repository root and then gave commands as if cwd were the program
 # directory, so its documented first commands exited 127 in a real adopted repo.
-sp=$(mktemp -d)/t; mkdir -p "$sp"
+sp=$(mktemp -d "$SELFTEST_TMP/startdoc.XXXXXX")/t; mkdir -p "$sp"
 ( cd "$sp" && git init -q -b main && echo c > a.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$sp" && "$C" adopt p >/dev/null 2>&1 )
@@ -813,7 +821,7 @@ done
 [ -z "$badinv" ] && ok "nothing adopt ships invokes ./crucible, which is invalid at the repo root" \
   || bad "shipped files invoke ./crucible:$badinv"
 # and the same property must hold after a real adopt, not just in the engine checkout
-ap=$(mktemp -d)/t; mkdir -p "$ap"
+ap=$(mktemp -d "$SELFTEST_TMP/adopted.XXXXXX")/t; mkdir -p "$ap"
 ( cd "$ap" && git init -q -b main && echo c > a.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$ap" && "$C" adopt p >/dev/null 2>&1 )
@@ -828,6 +836,157 @@ done
 grep -qE 'crucible (run|run-claim|attempt|result|phase|dispatch)' LOOP.md \
   && bad "LOOP.md exposes low-level protocol commands" \
   || ok "LOOP.md stays at the behavioral loop level"
+
+
+printf '\nthe documents that travel\n'
+cd "$HERE"
+# Both assertions below read an installed program, not this checkout, so the set of travelling
+# documents is not a list in this file: it is whatever adopt_install_engine copied. README.md and
+# CHANGELOG.md do not travel, they are therefore absent from TP, and they cannot count as
+# coverage here — which is the point, since both findings this section closes were invisible from
+# the checkout and visible only in what actually ships.
+TP="$ap/.crucible/p"
+travel=""
+for f in "$TP"/*.md "$TP"/roles/*.md "$TP"/docs/*.md; do
+  [ -f "$f" ] && travel="$travel $f"
+done
+
+# The cold-start audit's top finding. `crucible help protocol` prints
+# `claim add|list|verdict|scout|admit` and `triage`, and not one of those spellings appeared in
+# any document adopt copies, so an agent that read only what it was handed could not perform the
+# INVESTIGATE phase at all. The documents are written now; this is what stops the next release
+# from undoing them.
+#
+# The verbs are read out of the help text at runtime. A list written into this file would be
+# correct exactly until the next verb is added, and then it would rot silently in the direction
+# that passes — the failure mode RULES.md 3 names.
+#
+# A spelling is the verb plus its literal sub-words: `claim` followed by `add|list|…` yields
+# `claim`, `claim add` … `claim admit`. A slash separates sibling verbs, so `run / run-claim` is
+# two. A token that is not a bare lowercase word ends the spelling, which is how `ATTEMPT`,
+# `[ABSENT|EXISTS|DEFECT]`, `--like` and `…` are excluded without naming any of them. Matching is
+# word-bounded rather than substring, so `add` must appear as the word add and is not satisfied
+# by "address"; the multi-word spellings are the load-bearing ones and cannot be met by accident.
+#
+# Deliberately undocumented, in one place, each with its reason. None of these is a step in the
+# protocol, so shipping an agent a document that teaches it would be teaching the wrong thing:
+#   panes             tmux overlay for a human watching a run, not an action an agent takes
+#   selftest          engine verification, run by a maintainer or by CI, never by an agent
+#   workid            read-only derived value the gate computes for itself before every check
+#   lifecycle status  read-only variant of `lifecycle enable`, which docs/managed-lifecycle.md
+#                     does document; the setup step travels, the inspector does not
+# Adding a name here is a decision and must be argued, not a way to make this assertion green.
+# The assertion after it refuses any name that `help protocol` no longer prints, so the list
+# cannot decay into a blanket exemption that hides a verb nobody documents any more.
+protocol_exempt='panes
+selftest
+workid
+lifecycle status'
+vfile="$SELFTEST_TMP/protocol-verbs.txt"
+./crucible help protocol 2>/dev/null | awk '
+  /^  [a-z]/ {
+    spec = substr($0, 3)
+    sub(/  +.*$/, "", spec)                    # drop the description column
+    n = split(spec, alt, / *\/ */)             # a slash separates sibling verbs
+    for (a = 1; a <= n; a++) {
+      m = split(alt[a], tok, / +/)
+      chain = ""
+      for (t = 1; t <= m; t++) {
+        w = tok[t]
+        if (w !~ /^[a-z][a-z|-]*$/) break      # placeholder, option or ellipsis: spelling ends
+        k = split(w, opt, /\|/)
+        for (o = 1; o <= k; o++) print (chain == "" ? opt[o] : chain " " opt[o])
+        if (k > 1) break                       # alternatives are leaves
+        chain = (chain == "" ? w : chain " " w)
+      }
+    }
+  }' | sort -u > "$vfile"
+nverbs=$(awk 'END {print NR}' "$vfile" 2>/dev/null || echo 0)
+undocumented=""
+# Read from the file, never from a pipe: a `while` on the right of a pipe runs in a subshell in
+# every POSIX shell, and the accumulated list would be discarded along with it.
+while IFS= read -r v; do
+  [ -n "$v" ] || continue
+  printf '%s\n' "$protocol_exempt" | grep -qxF "$v" && continue
+  grep -qE "(^|[^A-Za-z0-9_-])$v([^A-Za-z0-9_-]|$)" $travel 2>/dev/null \
+    || undocumented="$undocumented, $v"
+done < "$vfile"
+if [ -z "$travel" ] || [ "${nverbs:-0}" -lt 10 ]; then
+  # A parser that matched nothing would print agreement it never checked. The help text names
+  # well over ten spellings, so too few means the extractor broke, not that the verbs are gone.
+  bad "protocol verb coverage was never checked: $nverbs verb(s) parsed from help protocol, $(printf '%s' "$travel" | wc -w | tr -d ' ') travelling document(s) found"
+elif [ -n "$undocumented" ]; then
+  bad "protocol verbs appear in no document adopt ships${undocumented}: document them, or record the exemption and why"
+else
+  ok "every protocol verb from help protocol appears in a travelling doc"
+fi
+# and the exemption list must not outlive the verbs it exempts
+stale_exempt=""
+while IFS= read -r v; do
+  [ -n "$v" ] || continue
+  grep -qF "$v" "$vfile" || stale_exempt="$stale_exempt, $v"
+done <<EOF
+$protocol_exempt
+EOF
+[ -z "$stale_exempt" ] && ok "every deliberately undocumented protocol verb is still a verb" \
+  || bad "the undocumented-verb exemption names things help protocol no longer prints${stale_exempt}: delete them"
+
+# The second audit finding. README.md linked CONTRIBUTING.md and RELEASE.md; both files exist in
+# this repository and neither one ships, so the break was invisible from the checkout and was the
+# only broken internal link in the package. Resolution therefore happens inside an installed
+# program. Absolute http(s) links are out of scope on purpose: the fix for the repo-only links
+# was to convert them to absolute GitHub URLs, and re-checking them here would undo that.
+#
+# Scoped to `[text](target)` and to nothing else. `scripts/acp-brief.py` is named in five
+# travelling documents and deliberately does not ship — it is an operator-written adapter and
+# CONFIGURE.md says so — but it is named in prose and backticks, never as a link, so link syntax
+# excludes it without an exemption. A path exemption broad enough to cover it would also let a
+# genuinely broken link through, which is the finding itself.
+deadlinks=""; nlinks=0
+for f in $travel; do
+  dir=${f%/*}
+  for t in $(grep -oE '\[[^][]*\]\([^()[:space:]]+\)' "$f" 2>/dev/null | sed 's/^.*](//; s/)$//'); do
+    case $t in http://*|https://*|mailto:*) continue ;; esac
+    t=${t%%#*}                                  # a fragment is not part of the file name
+    [ -n "$t" ] || continue                     # a bare #anchor targets no file
+    nlinks=$((nlinks+1))
+    case $t in /*) p=$t ;; *) p="$dir/$t" ;; esac
+    [ -e "$p" ] || deadlinks="$deadlinks, ${f#"$TP"/} -> $t"
+  done
+done
+if [ "$nlinks" -eq 0 ]; then
+  bad "no markdown link was found in any travelling document, so nothing was resolved"
+elif [ -n "$deadlinks" ]; then
+  bad "travelling documents link to files the package does not ship${deadlinks}"
+else
+  ok "every relative markdown link in a travelling doc resolves to a shipped file"
+fi
+
+
+printf '\nscratch directories do not leak\n'
+cd "$HERE"
+# 1,642 directories and 1.2 GB of abandoned scratch trees, every one of them from a script that
+# called mktemp and never removed the result. Stated over the scripts rather than over the one
+# that leaked most: a file that creates a temp tree must arm a trap that removes it. There is no
+# exception list — verify-quickstart.sh is a five-line shim that ends in exec and creates no temp
+# tree, so the mktemp test excludes it by itself, which is what an exception list would have
+# hidden the next time a shim grew a mktemp.
+notrapped=""; scanned=0
+for f in scripts/verify-*.sh scripts/selftest.sh; do
+  [ -f "$f" ] || continue
+  scanned=$((scanned+1))
+  grep -q 'mktemp' "$f" || continue
+  grep -qE "^[[:blank:]]*trap[[:blank:]].*rm[[:blank:]]+-[rf]" "$f" \
+    || notrapped="$notrapped ${f##*/}"
+done
+if [ "$scanned" -lt 2 ]; then
+  bad "temp-directory cleanup was never checked: $scanned script(s) scanned under scripts/"
+elif [ -n "$notrapped" ]; then
+  bad "these scripts create a temp directory and never remove it:$notrapped"
+else
+  ok "every verify script that makes a temp dir removes it in a trap"
+fi
+cd "$HERE"
 
 # Absence of verdicts must refuse on its own, with nothing else wrong. Every earlier case had
 # another failure present, so a mutation that permitted zero judges left the suite green — a
@@ -855,7 +1014,7 @@ cd "$HERE"
 # A generated contract must contain commands the callee can run verbatim from the working
 # directory the documents put it in. The self path was hardcoded to ./crucible, which does not
 # exist at the repository root, so every contract handed the agent a 127. A judge caught it.
-cd "$HERE"; gp=$(mktemp -d)/t; mkdir -p "$gp"
+cd "$HERE"; gp=$(mktemp -d "$SELFTEST_TMP/contract.XXXXXX")/t; mkdir -p "$gp"
 ( cd "$gp" && git init -q -b main && echo c > a.py && git add -A \
   && git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$gp" && "$C" adopt p >/dev/null 2>&1 )
@@ -931,7 +1090,7 @@ git ls-files 2>/dev/null | grep -v '^scripts/selftest.sh$' | while read -r f; do
 done | grep -q . && bad "a tracked file references a machine-specific path" \
   || ok "no tracked file references a machine-specific path"
 # and the check must itself be falsifiable: plant a violation and require it to fire
-pv=$(mktemp -d)/plant; mkdir -p "$pv"; ( cd "$pv" && git init -q -b main
+pv=$(mktemp -d "$SELFTEST_TMP/plant.XXXXXX")/plant; mkdir -p "$pv"; ( cd "$pv" && git init -q -b main
   printf 'see ~/%sesktop/crucible for details\n' "$(printf 'D')" > doc.md && git add -A
   git -c user.email=s@s -c user.name=s commit -qm i ) >/dev/null 2>&1
 ( cd "$pv" && git ls-files | while read -r f; do grep -lE "$hp" "$f" 2>/dev/null; done | grep -q . ) \

@@ -102,7 +102,9 @@ contract-auditor	j2	yes
 EOF
 }
 
-base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-agent-cycle.XXXXXX")
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-agent-cycle.XXXXXX")
+trap 'rm -rf "$TMP"' 0 1 2 15
+base=$(mktemp -d "$TMP/base.XXXXXX")
 repo="$base/repo"; mkdir -p "$repo"
 (
   cd "$repo"
@@ -363,7 +365,7 @@ else
 fi
 
 # --like copies a real PASS onto an isomorphic DISPATCHED scout
-like_base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-like.XXXXXX")
+like_base=$(mktemp -d "$TMP/like.XXXXXX")
 like_repo="$like_base/repo"; mkdir -p "$like_repo"
 (
   cd "$like_repo"
@@ -401,7 +403,7 @@ grep -q '^VERDICT: PASS$' "$L/attempts/$id2/contract-audit.md" && ok \
   || bad '--like did not write PASS onto the sibling attempt'
 
 # --- 1.5.0 claim grammar, verdict history, polarity, REVIEW->BUILD, PANEL.CONTEXT ---
-gbase=$(mktemp -d "${TMPDIR:-/tmp}/crucible-gram.XXXXXX")
+gbase=$(mktemp -d "$TMP/gram.XXXXXX")
 grepo="$gbase/repo"; mkdir -p "$grepo"
 (
   cd "$grepo"

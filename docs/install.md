@@ -6,7 +6,7 @@ not this documentation tree and not `.crucible/<program>/`.
 | Situation | Section |
 | --- | --- |
 | No `.crucible/<program>/PROGRAM` | [First install](#first-install) |
-| Program exists; `engine:` older than this tree | [Upgrade](#upgrade-from-1-3-x) |
+| Program exists; `engine:` older than this tree | [Upgrade](#upgrade-an-installed-program) |
 | Directory exists but no `PROGRAM` | Husk — keep, trash, or `adopt` a **different** name. Do not `--refresh`. |
 | Cycle already bound | [START.md](../START.md) and `STATUS.md` |
 
@@ -32,8 +32,18 @@ When leftover DONE still occupies `SRC` and real work must start without
 approved panel and leaves `SRC`'s PROBLEM in place.
 
 Then the coordinator (not the operator) writes `agents.tsv`, `PANEL.md`,
-`PANEL.ASSIGN.tsv`. Cast **enough required claim-auditors and reviewers** for the
-admit/close bars (defaults follow required rows). Human:
+`PANEL.ASSIGN.tsv`. Every agent named in `PANEL.ASSIGN.tsv` needs a row in
+`agents.tsv` — **including the coordinator**. Without a coordinator row,
+`approve-panel` refuses with `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
+
+The admit bar is a count, not a judgement: a claim needs one TRUE verdict per
+`required=yes` `claim-auditor` row in `PANEL.ASSIGN.tsv`. Three required rows means
+`claim admit` refuses until three registered auditors have recorded TRUE
+(`refused: C2 has 1 TRUE verdicts, need 3`). The close bar reads `required=yes`
+`reviewer` rows the same way. Cast the number you actually intend to run.
+`CRUCIBLE_MIN_AUDITORS` / `CRUCIBLE_MIN_JUDGES` override both. Scout is required
+on a guided cycle — cast it in the initial block ([CONFIGURE.md](../CONFIGURE.md)).
+Human:
 
 ```sh
 .crucible/work/crucible cycle approve-panel
@@ -42,12 +52,44 @@ admit/close bars (defaults follow required rows). Human:
 ```
 
 Human gates after that: `WAIT APPROVAL`, `ESCALATE`, `DONE`, live write envelopes.
-`drive` starts sealed `agents.tsv` workers. Do not paste `acp-brief.py` while drive
-is running.
+`drive` starts sealed `agents.tsv` workers. Do not launch an ACP adapter such as
+`scripts/acp-brief.py` yourself while drive is running — the drive parent runs the
+`agents.tsv` line. Crucible does not ship that adapter; see
+[CONFIGURE.md](../CONFIGURE.md) for what it must do if you use the ACP path.
 
-## Upgrade from 1.3.x
+## Commit the program directory
 
-Cwd = target repo. Run from the **newer** source (this checkout or a newer tarball):
+`adopt` writes files and commits nothing. Evidence only outlives the chat that
+produced it if it is in Git, so commit `.crucible/` in the target repository:
+
+```sh
+git add .crucible && git commit -m "chore: crucible program state"
+```
+
+`adopt` generates `.crucible/.gitignore` with `*/agents.tsv` and `*/worktrees/`, so
+machine-local agent invocations and isolated worktrees stay out of the commit. Everything
+else under `.crucible/<program>/` — `PROBLEM.md`, `CLAIMS.md`, `PROPOSAL.md`, `APPROVAL`,
+`PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record. Commit
+again after each human gate; `cycle clean` preserves these files but nothing restores them
+if they were never committed.
+
+## Upgrade an installed program
+
+This is the only upgrade section and it applies to any earlier version, not only 1.3.x.
+Cwd = target repo.
+
+**Stop the driver first.** `--refresh` replaces the engine binary in place, and nothing in
+the engine refuses a refresh under a running loop:
+
+```sh
+.crucible/work/crucible drive stop
+```
+
+`drive stop` releases a leftover `.drive.lock`, reclaims attempts whose pid is dead, and
+prints `live-attempt: <id> RUNNING pid <pid> (not reclaimed)` for one that is still alive.
+If it names a live attempt, let that worker finish before refreshing.
+
+Then run from the **newer** source (this checkout or a newer tarball):
 
 ```sh
 <path-to-newer-crucible>/crucible adopt work --refresh
@@ -55,16 +97,25 @@ Cwd = target repo. Run from the **newer** source (this checkout or a newer tarba
 .crucible/work/crucible cycle
 ```
 
-`STATUS.md` must show `engine: 1.6.3` (or current). `drive` must be a verb.
-`--managed` is install-only; do not pass it with `--refresh`.
+Confirm **after** `cycle`, not before: `STATUS.md` `engine:` must equal the `VERSION` of
+the source you refreshed from. `drive` must be a verb. `--managed` is install-only; do not
+pass it with `--refresh`.
+
+Seeing the old `engine:` immediately after `--refresh` is expected and is not a failed
+upgrade. `adopt` never writes `STATUS.md`, so the card keeps whatever the last `cycle`
+wrote until the next `cycle` rewrites it. What proves the refresh landed is `adopt`'s own
+`refreshed engine <old> -> <new>` line and `.crucible/<program>/VERSION`. Confirming
+`engine:` before running `cycle` reads a stale card.
 
 **Overwrites:** `crucible`, `VERSION`, `START.md`, `BOOTSTRAP.md`, `RULES.md`,
 `LOOP.md`, `CONFIGURE.md`, `roles/*.md`, `scripts/*.sh` (except release packagers),
-`docs/*.md`.
+top-level `docs/*.md`.
 
 **Keeps:** `PROGRAM`, `PANEL*`, `agents.tsv`, `PROBLEM.md`, `CLAIMS.md`,
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
-`history/`, `LESSONS.md`, `scripts/acp-brief.py`.
+`history/`, `LESSONS.md`, and any operator-written adapter at
+`scripts/acp-brief.py` (see [CONFIGURE.md](../CONFIGURE.md) — Crucible does not
+ship one and `--refresh` never creates it).
 
 The copied scripts include `verify-demand.sh`. It passes, and it is not a gate: it records
 assertions about a known hole in admission, so a green run proves nothing about your cycle.
@@ -74,9 +125,10 @@ Do not copy the program directory by hand.
 
 | You see | Do |
 | --- | --- |
-| `engine: 1.6.3` | Already current |
-| `engine:` below this tree's `VERSION` | `--refresh` from this tree |
-| `engine: unknown` / no `STATUS.md` | Pre-1.3.5; `--refresh` |
+| `engine:` equal to the source `VERSION`, after a `cycle` | Already current |
+| `engine:` below the source `VERSION`, after a `cycle` | `--refresh` from that source |
+| `engine:` below the source `VERSION`, before any `cycle` | Expected after `--refresh`; run `cycle`, then read it again |
+| `engine: unknown` / no `STATUS.md` | Pre-1.3.5, or never `cycle`d since install; `--refresh` then `cycle` |
 | `unknown verb: drive` | Pre-1.3.0; `--refresh` |
 | `is a husk (no PROGRAM)` | Not a program. Do not `--refresh`. Keep, trash, or adopt another name |
 | `unknown verb: reclaim` / `evidence` | Engine older than 1.4.0; `--refresh` |
@@ -106,7 +158,9 @@ work branch existed, it reached `git diff` unvalidated, and the engine exited
 Archives under `history/`. Keeps the panel. Refuses `ACTIVE`/`BLOCKED` items and
 **live** `RUNNING`/`OVERDUE` pids. Dead RUNNING pids are reclaimed (`STOPPED`)
 then `--next` continues. Leftover `DISPATCHED` does not block. Drive never binds
-the next problem. Do not recast.
+the next problem. Do not swap agents here — that is the whole of "do not recast"
+([CONFIGURE.md](../CONFIGURE.md)); correcting a casting mistake mid-cycle is allowed and
+needs `cycle approve-panel` again.
 
 To start real work **without** discarding the leftover PROBLEM, install a sibling:
 
@@ -134,7 +188,8 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 
 After `DONE`: **`cycle clean --dry-run` is the next verb** (CLEANUP card). Drive
 stops and never `--apply`. Then `--next` or `--apply` (human only). Jira leftovers
-and ignored `.validation/` are not cycle clean.
+and ignored `.validation/` are not cycle clean. Full cleanup story, including the
+mid-cherry-pick worktree recovery: [managed-lifecycle.md](managed-lifecycle.md#session-cleanup).
 
 `STATUS.md` `worth:` is `BUILD` (scout ABSENT), `DOCS` (only PARTLY-EXISTS),
 `NO-BUILD` (no ABSENT/PARTLY), or `UNKNOWN` (investigation incomplete).

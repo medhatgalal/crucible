@@ -102,6 +102,7 @@ grep -q 'approve-panel' "$HERE/docs/managed-lifecycle.md" && ok || bad 'managed 
 
 # --- Behavioral gates ---
 base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-coldstart-ind.XXXXXX")
+trap 'rm -rf "$base"' 0 1 2 15
 repo="$base/repo"; mkdir -p "$repo"
 (
   cd "$repo"

@@ -40,8 +40,10 @@ installed prompt. This page is only the outer driver.
 ## Legal coordinator actions
 
 Drive babysits the coordinator (dispatch + seal) and **starts one sealed worker per tick**.
-The coordinator does not implement and does not write verdicts. After PASS, do not paste
-`acp-brief.py` — the parent runs the `agents.tsv` line.
+The coordinator does not implement and does not write verdicts. After PASS, do not launch an ACP
+adapter such as `scripts/acp-brief.py` by hand — the parent runs the `agents.tsv` line. Crucible
+ships no such adapter; if you use the ACP path it is one the operator wrote, and
+[CONFIGURE.md](../CONFIGURE.md) states the interface it must satisfy.
 
 | State | What drive does | Label |
 | --- | --- | --- |
@@ -88,7 +90,8 @@ Rewritten on every `cycle` and every drive tick:
 - `next-human-gate`
 
 Coordinators read it after `cycle`. If `engine:` is `unknown` or missing, the operator
-must `--refresh` before `drive` can be trusted (see [install.md](install.md)).
+must `--refresh` before `drive` can be trusted (see [install.md](install.md)). `adopt --refresh`
+does not rewrite this file — the first `cycle` after a refresh is what updates `engine:`.
 
 ## Maker inner loop
 
