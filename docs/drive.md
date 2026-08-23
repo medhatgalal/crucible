@@ -34,16 +34,21 @@ installed prompt. This page is only the outer driver.
 ```text
 .crucible/<program>/crucible drive        # loop until a human gate or stop
 .crucible/<program>/crucible drive tick   # one sealed worker or one coordinator action
-.crucible/<program>/crucible drive stop   # release leftover .drive.lock; reclaim dead pids
+.crucible/<program>/crucible drive stop   # release leftover .crucible/<program>/.drive.lock; reclaim dead pids
 ```
+
+That lock is `.crucible/<program>/.drive.lock` and it is a **directory**: `drive` takes it with
+`mkdir`, `drive stop` releases it with `rmdir` and prints `released …/.drive.lock`. A regular file at
+that path is not a lock. `drive stop` prints `no .drive.lock`, leaves the file where it is, and
+`drive` starts anyway.
 
 ## Legal coordinator actions
 
 Drive babysits the coordinator (dispatch + seal) and **starts one sealed worker per tick**.
 The coordinator does not implement and does not write verdicts. After PASS, do not launch an ACP
-adapter such as `scripts/acp-brief.py` by hand — the parent runs the `agents.tsv` line. Crucible
-ships no such adapter; if you use the ACP path it is one the operator wrote, and
-[CONFIGURE.md](../CONFIGURE.md) states the interface it must satisfy.
+adapter such as `.crucible/<program>/scripts/acp-brief.py` by hand — the parent runs the
+`agents.tsv` line. Crucible ships no such adapter; if you use the ACP path it is one the operator
+wrote, and [CONFIGURE.md](../CONFIGURE.md) states the interface it must satisfy.
 
 | State | What drive does | Label |
 | --- | --- | --- |
@@ -51,7 +56,7 @@ ships no such adapter; if you use the ACP path it is one the operator wrote, and
 | PROPOSE | Invokes coordinator; they may write `PROPOSAL.md`. Parent does not write the proposal | RULE |
 | PLAN, no ACTIVE item | Invokes coordinator; they may admit one item. Parent does not invent a slug | RULE |
 | PLAN, DRAFT/READY | Invokes coordinator; do not dispatch a maker. Parent does not dispatch a reviewer here (judge dispatch requires REVIEW) | RULE |
-| EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker; a later tick starts it once sealed | fallback |
+| EXECUTE idle | If BUILD and no inflight, parent may `dispatch` the maker; a later tick starts it once sealed. That dispatch refuses without an independent `plan-audit PASS` on the item, and the item's `ai/<slug>` work branch must already exist or the attempt cannot reach a result | fallback |
 | SEALED DISPATCHED | Parent runs `agents.tsv`, `attempt start` pid, wait, finish | CHECK |
 | WAIT inflight | Refuses a new live attempt id (DISPATCHED/RUNNING/OVERDUE) that was not in the pre-tick set | CHECK |
 | REVIEW RETURNED | If the inflight maker attempt is RETURNED and the item is REVIEW, parent may `dispatch` the judge | fallback |
@@ -76,6 +81,22 @@ tick is still refused. The worker process may write its own verdicts after `atte
 Isomorphic claim contracts (same role; claim id normalized) may share one contract-auditor
 PASS via `contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2…`. Drive applies that copy
 automatically. The auditor still issued the PASS; the coordinator does not stamp it.
+
+### Drive alone does not reach the admit bar
+
+Drive's INVESTIGATE fallback dispatches to the **first** cast claim-auditor only, and its isomorphic
+copy carries `STALE` / `FALSE` / `UNVERIFIABLE` but never `TRUE`. So drive collects at most one TRUE
+verdict per claim, while the bar is at least two sealed TRUE verdicts from distinct agents
+([CONFIGURE.md](../CONFIGURE.md)). A cycle driven only by that fallback runs one auditor tick, one
+scout tick, and then halts:
+
+```text
+STOP — no progress (same status and no new evidence twice)
+```
+
+with `triage` reporting `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and `cycle` still
+reporting `NEXT INVESTIGATE`. The coordinator dispatches the remaining cast auditors; drive does not
+do it for them.
 
 ## STATUS.md
 

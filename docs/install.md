@@ -36,12 +36,17 @@ Then the coordinator (not the operator) writes `agents.tsv`, `PANEL.md`,
 `agents.tsv` — **including the coordinator**. Without a coordinator row,
 `approve-panel` refuses with `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
 
-The admit bar is a count, not a judgement: a claim needs one TRUE verdict per
-`required=yes` `claim-auditor` row in `PANEL.ASSIGN.tsv`. Three required rows means
-`claim admit` refuses until three registered auditors have recorded TRUE
-(`refused: C2 has 1 TRUE verdicts, need 3`). The close bar reads `required=yes`
-`reviewer` rows the same way. Cast the number you actually intend to run.
-`CRUCIBLE_MIN_AUDITORS` / `CRUCIBLE_MIN_JUDGES` override both. Scout is required
+The admit bar is a count with a floor. A claim needs
+`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents,
+across at least `CRUCIBLE_MIN_KINDS` model families (default 1). `claim admit` enforces
+the panel count — three required rows means it refuses until three registered auditors
+have recorded TRUE (`refused: C1 has 2 TRUE verdicts, need 3`) — while `cycle` and
+`triage` enforce 2 whatever the panel says, so a single `claim-auditor` row leaves the
+cycle at INVESTIGATE with `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.`
+**Cast at least two `claim-auditor` rows.** The close bar reads `required=yes`
+`reviewer` rows with no floor: one row closes on one PASS. `CRUCIBLE_MIN_AUDITORS`
+(no default of its own) and `CRUCIBLE_MIN_JUDGES` (default 2, overridden by the reviewer
+row count on a guided cycle) override those numbers. Scout is required
 on a guided cycle — cast it in the initial block ([CONFIGURE.md](../CONFIGURE.md)).
 Human:
 
@@ -53,8 +58,8 @@ Human:
 
 Human gates after that: `WAIT APPROVAL`, `ESCALATE`, `DONE`, live write envelopes.
 `drive` starts sealed `agents.tsv` workers. Do not launch an ACP adapter such as
-`scripts/acp-brief.py` yourself while drive is running — the drive parent runs the
-`agents.tsv` line. Crucible does not ship that adapter; see
+`.crucible/<program>/scripts/acp-brief.py` yourself while drive is running — the drive
+parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 [CONFIGURE.md](../CONFIGURE.md) for what it must do if you use the ACP path.
 
 ## Commit the program directory
@@ -85,9 +90,13 @@ the engine refuses a refresh under a running loop:
 .crucible/work/crucible drive stop
 ```
 
-`drive stop` releases a leftover `.drive.lock`, reclaims attempts whose pid is dead, and
+`drive stop` releases a leftover `.crucible/<program>/.drive.lock`, reclaims attempts whose
+pid is dead, and
 prints `live-attempt: <id> RUNNING pid <pid> (not reclaimed)` for one that is still alive.
-If it names a live attempt, let that worker finish before refreshing.
+If it names a live attempt, let that worker finish before refreshing. That lock is a
+directory: `drive stop` releases it with `rmdir` and prints `released …/.drive.lock`, and a
+regular file at the same path is not a lock — `drive stop` prints `no .drive.lock` and
+leaves it alone.
 
 Then run from the **newer** source (this checkout or a newer tarball):
 
@@ -114,7 +123,10 @@ top-level `docs/*.md`.
 **Keeps:** `PROGRAM`, `PANEL*`, `agents.tsv`, `PROBLEM.md`, `CLAIMS.md`,
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
 `history/`, `LESSONS.md`, and any operator-written adapter at
-`scripts/acp-brief.py` (see [CONFIGURE.md](../CONFIGURE.md) — Crucible does not
+`.crucible/<program>/scripts/acp-brief.py` — inside the program directory, which is
+where `--refresh` looks and what it reports as `kept local adapter: scripts/acp-brief.py`.
+An adapter at the repository's own `scripts/acp-brief.py` is outside the program directory
+and is not covered by that promise (see [CONFIGURE.md](../CONFIGURE.md) — Crucible does not
 ship one and `--refresh` never creates it).
 
 The copied scripts include `verify-demand.sh`. It passes, and it is not a gate: it records
@@ -133,6 +145,8 @@ Do not copy the program directory by hand.
 | `is a husk (no PROGRAM)` | Not a program. Do not `--refresh`. Keep, trash, or adopt another name |
 | `unknown verb: reclaim` / `evidence` | Engine older than 1.4.0; `--refresh` |
 | `crucible result` exits 128 printing nothing, on the first maker result of a git-target item | Engine older than 1.6.3; `--refresh` |
+| `refused: maker dispatch requires plan-audit PASS` | Not an install problem. Run `plan-audit SLUG AUDITOR PASS` first — [START.md](../START.md) |
+| `maker result requires current work`, or evidence named `…NOBRANCH.txt` | The item's `ai/<slug>` work branch does not exist. Create it before the maker dispatch — [START.md](../START.md) |
 
 From 1.3.6, drive starts sealed workers. From 1.3.7, `dispatch ITEM judge` stays
 `judge`. From 1.4.0: `attempt reclaim`, `evidence archive`, panel-bound judge/auditor
@@ -187,8 +201,9 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 “keep looping” is not implement.
 
 After `DONE`: **`cycle clean --dry-run` is the next verb** (CLEANUP card). Drive
-stops and never `--apply`. Then `--next` or `--apply` (human only). Jira leftovers
-and ignored `.validation/` are not cycle clean. Full cleanup story, including the
+stops and never `--apply`. Then `--next` or `--apply` (human only). The card's last line
+names what cleanup is *not* for; read those names off the card the engine prints rather
+than from this page. Full cleanup story, including the
 mid-cherry-pick worktree recovery: [managed-lifecycle.md](managed-lifecycle.md#session-cleanup).
 
 `STATUS.md` `worth:` is `BUILD` (scout ABSENT), `DOCS` (only PARTLY-EXISTS),

@@ -114,7 +114,14 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/crucible-cleanup.XXXXXX")
 # Normalise: a TMPDIR with a trailing slash yields `//` here, and the engine prints its own
 # root through `cd && pwd`, so the two spellings would never compare equal in an assertion.
 tmp=$(cd "$tmp" && pwd)
-trap 'rm -rf "$tmp"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
+# still reports its own result. Each signal handler removes and then exits 128+signal, because a
+# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
+# timed-out run would then be recorded as a pass.
+trap 'rm -rf "$tmp"' 0
+trap 'rm -rf "$tmp"; exit 129' 1
+trap 'rm -rf "$tmp"; exit 130' 2
+trap 'rm -rf "$tmp"; exit 143' 15
 
 # Everything below runs against a foreign target repository, never against this one.
 repo="$tmp/target"
@@ -246,8 +253,10 @@ printf '%s\n' "$refusal_line" | grep -q 'could not safely remove worktree: .*/wo
   && ok || bad "apply must refuse and name the worktree: $refusal"
 printf '%s\n' "$refusal_line" | grep -q 'in-progress cherry-pick' \
   && ok || bad "the refusal must report why the worktree is dirty: $refusal"
-printf '%s\n' "$refusal_line" | grep -q 'then retry: crucible cycle clean --apply' \
-  && ok || bad "the refusal must name the verb to retry: $refusal"
+# The retry hint must be pasteable, so it carries the program's own path rather than a bare
+# `crucible` that is not on PATH in a target repo. Assert the property, not the old spelling.
+printf '%s\n' "$refusal_line" | grep -q 'then retry: [^ ]*crucible cycle clean --apply' \
+  && ok || bad "the refusal must name a pasteable verb to retry: $refusal"
 [ -d "$integrate_wt" ] && [ -e "$integrate_gitdir/CHERRY_PICK_HEAD" ] \
   && ok || bad 'the refused apply destroyed the in-progress cherry-pick it refused to remove'
 

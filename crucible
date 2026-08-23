@@ -451,7 +451,23 @@ cmd_attempt() {
       value=${1:-}; [ $# -eq 0 ] || shift; reason=${*:-}
       case $value in RETURNED|TIMEOUT|STOPPED|ABANDONED) : ;; *) die "finish state must be RETURNED TIMEOUT STOPPED or ABANDONED" ;; esac
       current=$(attempt_state "$id")
-      case $current in RUNNING|OVERDUE) : ;; *) die "attempt finish requires RUNNING or OVERDUE" ;; esac
+      # A dispatch that is never started stays DISPATCHED, and finish and reclaim both
+      # required RUNNING or OVERDUE — so the attempt could not be ended and whatever it
+      # pinned could not move. Nothing was ever observed running, so only STOPPED or
+      # ABANDONED can honestly be recorded for it: there is no return and no deadline.
+      case $current in
+        RUNNING|OVERDUE) : ;;
+        DISPATCHED)
+          [ "$(attempt_pid "$id")" = - ] \
+            || die "attempt finish requires RUNNING or OVERDUE: $id is DISPATCHED with pid $(attempt_pid "$id") — record the start first"
+          case $value in
+            STOPPED|ABANDONED) : ;;
+            *) die "attempt finish requires RUNNING or OVERDUE for $value: $id never started, so record STOPPED or ABANDONED instead" ;;
+          esac
+          [ -n "$reason" ] || die "refused: ending a never-started attempt requires an observation: $(self_path) attempt finish $id $value \"<what you observed>\""
+          ;;
+        *) die "attempt finish requires RUNNING or OVERDUE" ;;
+      esac
       [ -n "$reason" ] || reason=observed
       attempt_event "$id" "$value" "$(attempt_pid "$id")" "$reason"
       retry=$(attempt_meta "$id" 13); task=$(attempt_meta "$id" 3)
@@ -482,6 +498,18 @@ cmd_attempt() {
             printf '%s %s; claim attempt has no item state\n' "$id" "$value"
             ;;
           *)
+            if [ "$current" = DISPATCHED ]; then
+              # Nothing ran, so this records no decision about the item: it releases the
+              # pointer the never-started dispatch left behind and the item stands where it
+              # did before that dispatch.
+              if [ "$(state_value "$slug" 6)" = "$id" ]; then
+                state_attempt_update "$slug" "$(state_value "$slug" 2)" - "$(state_value "$slug" 7)"
+                printf '%s %s; never started, in-flight pointer released for %s\n' "$id" "$value" "$slug"
+              else
+                printf '%s %s; never started, %s was not pinned to it\n' "$id" "$value" "$slug"
+              fi
+              return
+            fi
             if [ "$task" != - ]; then block_code=TASK_BLOCKED; else block_code=OPERATOR_DECISION; fi
             state_attempt_update "$slug" BLOCKED - "$block_code"
             printf '%s %s; item blocked %s\n' "$id" "$value" "$block_code"
@@ -492,7 +520,12 @@ cmd_attempt() {
     reclaim)
       [ $# -eq 0 ] || die "usage: crucible attempt reclaim ATTEMPT"
       current=$(attempt_state "$id")
-      case $current in RUNNING|OVERDUE) : ;; *) die "attempt reclaim requires RUNNING or OVERDUE" ;; esac
+      case $current in
+        RUNNING|OVERDUE) : ;;
+        DISPATCHED)
+          die "attempt reclaim requires RUNNING or OVERDUE: $id never started, so there is no pid to reclaim — end it with: $(self_path) attempt finish $id ABANDONED \"<what you observed>\"" ;;
+        *) die "attempt reclaim requires RUNNING or OVERDUE" ;;
+      esac
       if attempt_pid_alive "$id"; then
         die "refused: attempt $id pid $(attempt_pid "$id") is still alive"
       fi
@@ -3878,7 +3911,31 @@ cycle_cleanup_report() {
     grep -n '^    status: NEW$' "$(claims_file)" >/dev/null 2>&1 \
       && printf 'claims-status-new: CLAIMS.md still has status NEW after close/audit\n'
   fi
-  printf 'NOT cycle clean: Jira leftovers, ignored .validation/, husk programs (work/, b3/).\n'
+  # This line named `.validation/` and `husk programs (work/, b3/)` from the machine it was
+  # written on. On any other repo those are directories that may not exist — and `work/` was
+  # a live panel-approved program there — so an agent relaying the line told the operator to
+  # delete a live cycle. Husks are now read off the tree (a sibling `.crucible/*` with no
+  # PROGRAM) and nothing is named that has not been seen.
+  cycle_husk_programs | while IFS= read -r husk; do
+    [ -n "$husk" ] || continue
+    printf 'NOT cycle clean: husk program %s (no PROGRAM — keep it, trash it, or adopt that name)\n' "$husk"
+  done
+  printf 'NOT cycle clean: Jira or any other tracker, and ignored build or validation directories.\n'
+}
+
+# A sibling program directory with no PROGRAM file is a husk, which is what the docs define
+# and what `adopt --refresh` already refuses. Print nothing when the tree has none.
+cycle_husk_programs() {
+  parent=$(dirname "$ROOT")
+  # Only inside `.crucible/`. A program that lives at a repository root has ordinary
+  # directories as siblings, and none of those are husks.
+  case ${parent##*/} in .crucible) : ;; *) return 0 ;; esac
+  for candidate in "$parent"/*; do
+    [ -d "$candidate" ] || continue
+    [ "$candidate" = "$ROOT" ] && continue
+    [ -f "$candidate/PROGRAM" ] && continue
+    printf '%s\n' "${candidate#"$parent"/}/"
+  done
 }
 
 cycle_cleanup() {
@@ -3919,8 +3976,10 @@ cycle_cleanup() {
       [ -n "$task_worktree" ] || continue
       printf 'REMOVE_WORKTREE %s\nPRESERVE_BRANCH %s %s\n' "$task_worktree" "$task_repo" "$task_branch"
       if worktree_blocker=$(cycle_worktree_blocker "$task_worktree"); then
-        printf 'BLOCKED_WORKTREE %s — %s, then retry: crucible cycle clean --apply\n' \
-          "$task_worktree" "$worktree_blocker"
+        # A bare `crucible` is not on PATH in a target repo, so the retry this printed could
+        # not be pasted. Every other refusal spells the program's own path; so does this one.
+        printf 'BLOCKED_WORKTREE %s — %s, then retry: %s cycle clean --apply\n' \
+          "$task_worktree" "$worktree_blocker" "$(self_path)"
       fi
       found=1
     done <<EOF
@@ -3936,7 +3995,7 @@ EOF
       remove_error=$(git -C "$task_repo" worktree remove "$task_worktree" 2>&1) && continue
       worktree_blocker=$(cycle_worktree_blocker "$task_worktree") \
         || worktree_blocker="git refused: $remove_error"
-      die "could not safely remove worktree: $task_worktree — $worktree_blocker, then retry: crucible cycle clean --apply"
+      die "could not safely remove worktree: $task_worktree — $worktree_blocker, then retry: $(self_path) cycle clean --apply"
     done <<EOF
 $worktree_records
 EOF
@@ -4247,12 +4306,22 @@ cmd_phase() {
     old=$(phase_of "$slug")
     [ ! -f "$d/TASKS.tsv" ] || { validate_task_dag "$slug"; task_assert_frozen "$slug"; }
     inflight=$(state_value "$slug" 6)
+    # This refused with an empty id whenever STATE.tsv had no row for the item: the column
+    # read back empty, the empty string is not `-`, and the operator was told an attempt
+    # named nothing was in flight. Refuse either way — an unreadable state cannot prove the
+    # item is idle — but say which file disagrees with the tree.
+    [ -n "$inflight" ] \
+      || die "refused: $ROOT/STATE.tsv has no row for $slug, so nothing here can say whether work is in flight — inspect $ROOT/STATE.tsv"
     if [ "$inflight" != - ]; then
       ast=$(attempt_state "$inflight" 2>/dev/null || true)
       if [ "$old:$new" = REVIEW:BUILD ] && [ "$ast" = RETURNED ] && judge_requested_fix "$slug"; then
         :
+      elif [ -z "$ast" ]; then
+        die "refused: $ROOT/STATE.tsv names in-flight attempt $inflight for $slug and $ROOT/attempts/$inflight has no readable ledger — inspect $ROOT/STATE.tsv"
+      elif [ "$ast" = DISPATCHED ]; then
+        die "refused: attempt $inflight is DISPATCHED and still in flight — it never started, so end it with: $(self_path) attempt finish $inflight ABANDONED \"<what you observed>\""
       else
-        die "refused: attempt $inflight is still in flight"
+        die "refused: attempt $inflight is $ast and still in flight"
       fi
     fi
     case "$old:$new" in
@@ -4422,6 +4491,45 @@ adopt_install_engine() {
   chmod +x "$dst/scripts/"*.sh 2>/dev/null || true
 }
 
+# Machine-local files that must never reach a commit, one pattern per line with the reason
+# above it. `cycle approve-panel` copies agents.tsv to PANEL.AGENTS.tsv and the generated
+# ignore file did not exclude that copy, so `git add .crucible` — which the install docs now
+# tell operators to run — committed a byte-identical copy of the machine's agent command
+# lines and absolute paths. The copy has a use (`adopt --panel-from` reads it), so it is
+# still written; it is excluded instead.
+adopt_gitignore_reason() {
+  case $1 in
+    '*/agents.tsv') printf 'agents.tsv names the agents on THIS machine, so it is not project state.' ;;
+    '*/PANEL.AGENTS.tsv') printf 'PANEL.AGENTS.tsv is the approve-panel copy of agents.tsv, so it carries the same machine-local invocations.' ;;
+    '*/worktrees/') printf 'isolated task worktrees are retained machine state, not program artifacts.' ;;
+  esac
+}
+
+# Additive, because `--refresh` updated the engine and left this file untouched: every
+# installation adopted before a pattern existed kept committing what that pattern excludes.
+# Append only the missing patterns so operator edits to the file survive.
+adopt_sync_gitignore() {
+  repo=$1
+  ignore="$repo/.crucible/.gitignore"
+  if [ ! -e "$ignore" ]; then
+    printf '# Patterns here are relative to this .crucible/ directory.\n' > "$ignore"
+  fi
+  for pattern in '*/agents.tsv' '*/PANEL.AGENTS.tsv' '*/worktrees/'; do
+    grep -qxF -- "$pattern" "$ignore" 2>/dev/null && continue
+    printf '# %s\n%s\n' "$(adopt_gitignore_reason "$pattern")" "$pattern" >> "$ignore"
+  done
+  # An ignore rule does not untrack what is already in the index, so say it plainly rather
+  # than let the new exclusion look like it repaired a commit that already happened.
+  tracked=$(git -C "$repo" ls-files -- '.crucible/*/agents.tsv' '.crucible/*/PANEL.AGENTS.tsv' 2>/dev/null || true)
+  if [ -n "$tracked" ]; then
+    printf '%s\n' "$tracked" | while IFS= read -r stale; do
+      [ -n "$stale" ] || continue
+      printf 'still tracked (machine-local): %s — untrack with: git rm --cached %s\n' "$stale" "$stale"
+    done
+  fi
+  return 0
+}
+
 adopt_copy_panel_from() {
   srcprog=$1
   dstdir=$2
@@ -4487,6 +4595,7 @@ cmd_adopt() {
     new=unknown
     [ -s "$src/VERSION" ] && new=$(sed -n '1p' "$src/VERSION")
     adopt_install_engine "$src" "$dst"
+    adopt_sync_gitignore "$repo"
     printf 'refreshed engine %s -> %s\n%s\n' "$old" "$new" "$dst"
     if [ -f "$dst/scripts/acp-brief.py" ]; then
       printf 'kept local adapter: scripts/acp-brief.py\n'
@@ -4556,12 +4665,7 @@ STATEEOF
 
 TEMPLATE-PROBLEM-NEEDS-INPUT
 EOF
-  { printf '# Patterns here are relative to this .crucible/ directory.\n'
-    printf '# agents.tsv names the agents on THIS machine, so it is not project state.\n'
-    printf '*/agents.tsv\n'
-    printf '# isolated task worktrees are retained machine state, not program artifacts.\n'
-    printf '*/worktrees/\n'
-  } > "$repo/.crucible/.gitignore"
+  adopt_sync_gitignore "$repo"
   printf 'installed cycle "%s" into %s\n\n' "$prog" "$dst"
   printf 'Fresh-agent entrypoint:\n  read .crucible/%s/START.md and execute it\n\n' "$prog"
   printf 'The agent will configure its panel, investigate the problem, ask for proposal approval,\n'

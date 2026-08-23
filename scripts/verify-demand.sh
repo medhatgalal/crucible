@@ -159,7 +159,14 @@ fresh_program() {
 }
 
 BASE=$(mktemp -d "${TMPDIR:-/tmp}/crucible-demand.XXXXXX")
-trap 'rm -rf "$BASE"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
+# still reports its own result. Each signal handler removes and then exits 128+signal, because a
+# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
+# timed-out run would then be recorded as a pass.
+trap 'rm -rf "$BASE"' 0
+trap 'rm -rf "$BASE"; exit 129' 1
+trap 'rm -rf "$BASE"; exit 130' 2
+trap 'rm -rf "$BASE"; exit 143' 15
 
 # --- A1 + A3: demandless claim becomes bounded work ------------------------------
 P=$(fresh_program admit)

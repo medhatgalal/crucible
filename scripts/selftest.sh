@@ -24,13 +24,28 @@ done
 # takes about three minutes, mostly waiting on tmux and on parallel processes; --fast is for
 # development and is never sufficient for a release.
 
-# One named scratch root, one trap. This suite used to leak nine `mktemp -d` trees per run, and
-# it is not free to collect them in a shell variable instead: mkrun() runs inside `$(…)`, so a
-# directory it appends to a list is recorded in a subshell that the parent's trap never sees.
-# Nesting every scratch tree under this root is what makes a single trap sufficient. The trap
-# removes and returns; it never calls exit, so it does not mask the suite's own status.
+# One named scratch root. This suite used to leak nine `mktemp -d` trees per run, and it is not
+# free to collect them in a shell variable instead: mkrun() runs inside `$(…)`, so a directory it
+# appends to a list is recorded in a subshell that the parent's trap never sees. Nesting every
+# scratch tree under this root is what lets one line of cleanup cover all of them.
+#
+# The handlers are split by signal, and that split is the whole point. 1.6.4 armed a single
+# handler for `0 1 2 15` and its release notes claimed cleanup happened "without masking exit
+# status". That was wrong for the signals: a handler that returns without calling exit hands
+# control back to the shell, which carries on and can reach the final `exit 0`, so an interrupted
+# or timed-out suite reported a pass. A CI wrapper or an agent that puts a clock on this suite
+# reads that as green, which is the one failure mode a verification script must never have.
+#
+# On 0 the handler still only removes and returns, because there the suite's own status is
+# already decided and calling exit would be what masks it — a failing run must keep its 1 and a
+# passing run its 0. On 1, 2 and 15 the handler cleans up and exits 128+signal, the status a
+# wrapper already reads as "killed by a signal". The 0 handler runs again on the way out; `rm -rf`
+# on a path that is already gone is silent, which is why re-entry needs no guard.
 SELFTEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-selftest.XXXXXX")
-trap 'rm -rf "$SELFTEST_TMP"' 0 1 2 15
+trap 'rm -rf "$SELFTEST_TMP"' 0
+trap 'rm -rf "$SELFTEST_TMP"; exit 129' 1
+trap 'rm -rf "$SELFTEST_TMP"; exit 130' 2
+trap 'rm -rf "$SELFTEST_TMP"; exit 143' 15
 PASS=0; FAIL=0; FAILED=""
 
 say() { [ "$VERBOSE" = 1 ] && printf '    %s\n' "$*" || true; }
@@ -363,7 +378,12 @@ verbs=$(awk '/^```/{f=!f;next} f' *.md 2>/dev/null \
   | sed 's|.*crucible ||' | sort -u)
 missing=""
 for v in $verbs; do
-  ./crucible help 2>/dev/null | grep -q "crucible $v" || missing="$missing $v"
+  # `help` prints the operator surface; `help protocol` prints the agent primitives. A verb
+  # documented in a recovery transcript — `attempt finish`, `run-claim` — is real but appears
+  # only in the protocol listing, and requiring `help` alone failed docs for showing verbs the
+  # script does have. Accept either listing; a verb in neither is still a defect.
+  { ./crucible help 2>/dev/null; ./crucible help protocol 2>/dev/null; } \
+    | grep -q "\\b$v\\b" || missing="$missing $v"
 done
 [ -z "$missing" ] && ok "every crucible verb shown in a doc code block exists in help" \
   || bad "docs use verbs the script lacks:$missing"
@@ -402,7 +422,9 @@ cur=$(awk -v v="$(cat VERSION 2>/dev/null)" '
 printf '%s' "$cur" | grep -qE "suite is [0-9]+|[0-9]+ assertions" && bad_count="$bad_count CHANGELOG.md(current)"
 [ -z "$bad_count" ] && ok "no document states an assertion count as a present fact" \
   || bad "documents state an assertion count, which drifts:$bad_count"
-[ -f .github/workflows/selftest.yml ] && ok "CI runs the selftest" || bad "no CI workflow"
+# The CI-workflow existence assertion used to sit on this line. It now sits with the other two
+# workflow assertions under the single presence guard below, so that a tree without `.github/`
+# reports one skip instead of scattering two unrelated failures through this section.
 ./crucible help >/dev/null 2>&1 && ok "help exits zero" || bad "help did not exit zero"
 ./crucible definitely-not-a-verb >/dev/null 2>&1 && bad "an unknown verb succeeded" \
   || ok "an unknown verb refuses"
@@ -473,7 +495,34 @@ done
 # wherever that action lives. `env:`, `with:` and `defaults` are audited by nothing here.
 wf=.github/workflows/selftest.yml
 a6_pin=c17cd4acc3c4
-if [ -f "$wf" ] && [ -f scripts/verify-quickstart.sh ]; then
+# Assert-if-present, and the asymmetry is the point.
+#
+# `.github` is `export-ignore` in .gitattributes, so no release package contains this workflow,
+# and `adopt` copies `scripts/*.sh` into every target repository without carrying `.github/` there
+# either. Demanding the file unconditionally therefore made two assertions fail in every tree
+# except a maintainer checkout: `no CI workflow`, and `cannot check workflow/suite agreement`.
+# Every adopter who ran the command the README hands them saw a red suite, exit 1, for a reason
+# that was not about their repository — a false alarm in a verification script, which costs more
+# than the check is worth because it teaches the reader to discount the next red run too.
+#
+# So absence is expected here and says nothing, exactly as an absent `tmux` says nothing about
+# the pane overlay: one explicit `ok` naming why the group did not run, in place of the group.
+# Presence is unchanged. Every assertion below — the existence of the workflow, the composite
+# action guard, and the a6_pin inline-verification digest — is as strict inside a maintainer
+# checkout as it was before, and a workflow that is present but EDITED still moves the pin and
+# still refuses. Absent means skipped; changed means failed. Those are different facts and this
+# guard is the only thing that separates them.
+#
+# The two conditions are tested separately and not with one `&&`. `scripts/verify-quickstart.sh`
+# ships in the package and travels with `adopt`, so unlike the workflow its absence is never
+# expected anywhere; folding it into the skip would let a genuinely missing verifier pass as an
+# expected absence. It keeps its refusal.
+if [ ! -f "$wf" ]; then
+  ok "no $wf in this tree, so the CI-workflow assertions are skipped (.github is export-ignore and adopt does not copy it, so a package tree or an adopted program is expected not to have one; a workflow that is present but changed still fails the pin)"
+elif [ ! -f scripts/verify-quickstart.sh ]; then
+  bad "cannot check workflow/suite agreement: $wf is present but scripts/verify-quickstart.sh is missing"
+else
+  ok "CI runs the selftest"
   # A11: `uses:` is an execution surface this classifier never reads, so a local composite action can
   # carry the whole transcription while every run: block above is a clean delegation. Measured, not
   # imagined: .github/actions/smoke/action.yml holding the smoke sequence left the check at ok. Two
@@ -558,8 +607,6 @@ if [ -f "$wf" ] && [ -f scripts/verify-quickstart.sh ]; then
       bad "$wf added or changed an inline verification step ($a6_inline inline, $a6_deleg delegating; pin is $a6_got, expected $a6_pin): a run: block must be one scripts/ invocation, or a6_pin must be updated deliberately"
     fi
   fi
-else
-  bad "cannot check workflow/suite agreement: $wf or scripts/verify-quickstart.sh is missing"
 fi
 
 else

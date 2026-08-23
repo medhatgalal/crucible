@@ -59,15 +59,25 @@ Every agent named there must also have a row in `agents.tsv`, coordinator includ
 no registry row makes `approve-panel` refuse. Placeholder `MODEL` / `AGENT_CLI` / `OTHER_CLI` rows refuse
 approval. Guided dispatches must use agents cast for that role.
 
-The admit bar is derived from the casting, not chosen at admit time: `claim admit` requires one TRUE
-verdict per `required=yes` `claim-auditor` row (`refused: C2 has 1 TRUE verdicts, need 3` with three
-such rows), across at least `CRUCIBLE_MIN_KINDS` model families. `close` reads `required=yes`
-`reviewer` rows the same way. `CRUCIBLE_MIN_AUDITORS` and `CRUCIBLE_MIN_JUDGES` override the derived
-numbers.
+The admit bar is derived from the casting, with a floor the casting does not show: `claim admit`
+requires one TRUE verdict per `required=yes` `claim-auditor` row (`refused: C1 has 2 TRUE verdicts,
+need 3` with three such rows), while `cycle` and `triage` require **two** whatever the panel says
+(`MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.`). The effective bar is therefore
+`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents, across at least
+`CRUCIBLE_MIN_KINDS` model families (default 1). A panel with one `claim-auditor` row cannot leave
+INVESTIGATE; cast two.
+
+`close` reads `required=yes` `reviewer` rows with no floor — one row closes on one PASS.
+`CRUCIBLE_MIN_AUDITORS` (no default; overrides both admit gates) and `CRUCIBLE_MIN_JUDGES`
+(default 2, but the reviewer row count wins on a guided cycle) override the derived numbers. Full
+table: [CONFIGURE.md](../CONFIGURE.md).
 
 ### Attempt transport and contract audit
 
 ```sh
+# Before a maker dispatch: an independent plan-audit PASS and an existing work branch.
+$CP plan-audit fix-report-flow <reviewer-name> PASS
+git branch ai/fix-report-flow main
 $CP dispatch fix-report-flow maker <maker-name> A1 FOCUSED
 # contract path is printed
 # While DISPATCHED only — before start:
@@ -77,10 +87,12 @@ $CP contract-audit <ATTEMPT> <auditor-name> PASS   # or FIX | STOP
 $CP attempt start <ATTEMPT> <pid>             # guided: refuses without seal above
 # Optional ACP ladder probe (single-product hosts); append-only history:
 # $CP probe-acp failed "acp not available"
-# ... agent work ...
+# ... agent work: checkout ai/fix-report-flow, change owned files, commit, then run ...
 $CP attempt finish <ATTEMPT> RETURNED "observed exit 0"
 $CP result <ATTEMPT> PASS <evidence-file> CLOSE -
 ```
+
+Full ordering, with what each of those two gates refuses: [Work an item](#work-an-item).
 
 Independence ladder: multi-agent preferred; ACP for single-product isolation; subagent only after a
 recorded ACP probe failure (`ACP-PROBE.md` with `status: failed` or PANEL notes). `STOP` blocks the
@@ -130,14 +142,52 @@ Edit the printed `ITEM.md`. Keep its sections in order and replace every placeho
 7. Expensive evidence, or `NONE`
 8. Stop conditions
 
-Then advance only when the named work is actually complete:
+Then advance only when the named work is actually complete. Two gates sit between `ready` and a
+maker dispatch:
 
 ```sh
 $CP ready fix-report-flow
+$CP plan-audit fix-report-flow <reviewer-name> PASS   # PASS | FIX | STOP
 $CP phase fix-report-flow BUILD
 $CP agents
+# The item's Git target and its work branch — see below. The branch must exist first.
+cat .crucible/<program>/items/fix-report-flow/TARGET
+git branch ai/fix-report-flow main
+$CP workid fix-report-flow                            # a commit, never NOBRANCH
 $CP dispatch fix-report-flow maker <maker-name> A1 FOCUSED
 ```
+
+`plan-audit SLUG AUDITOR PASS|FIX|STOP` records an audit of `ITEM.md` before any maker is launched.
+On a guided cycle `dispatch … maker` refuses without it:
+`refused: maker dispatch requires plan-audit PASS`. The auditor needs a row in `agents.tsv`; role
+casting is not checked, and the independence check
+(`refused: mk1 is a maker of json-flag — plan-audit must be independent`) reads the item's
+`MAKERS.tsv`, which the first maker dispatch writes — so at plan-audit time it is empty and the
+maker's own name is accepted. Name the reviewer deliberately. The verdict is write-once; a second
+identical verdict is a no-op and a different one refuses with
+`refused: plan-audit.md is immutable (existing PASS)`.
+
+### The item's Git target and its work branch
+
+`claim admit CN SLUG` — and `add SLUG` — bind the item to a Git target themselves, writing
+`items/<slug>/TARGET` from `PROGRAM`'s `repo:` and `base:` with `branch: ai/<slug>`. Neither creates
+that branch. `target` overrides the binding when the work belongs on a different repository, branch,
+or base:
+
+```text
+target SLUG REPO BRANCH BASE
+```
+
+It refuses a path that is not a Git repository (`not a git repo: <repo>`) and a base that does not
+resolve (`no such base ref: <base>`).
+
+Create the work branch **before** the maker dispatch. `workid` in Git mode is the branch's commit;
+while the branch is missing it is the literal string `NOBRANCH`, and the item cannot reach a result:
+`run` names the evidence file `…NOBRANCH.txt`, and `result` refuses with
+`maker result requires current work`. Creating the branch afterwards does not recover the attempt —
+`result` then refuses `evidence work id does not match attempt`, and re-recording the evidence
+refuses with `managed evidence requires a RUNNING or OVERDUE attempt` because the attempt has
+already RETURNED.
 
 `dispatch` writes a complete attempt contract before the agent is launched. Its arguments are:
 
@@ -149,7 +199,9 @@ dispatch ITEM ROLE AGENT [CRITERION] [EVIDENCE_CLASS] [RETRY_OF]
 `EXTERNAL`, or `MANUAL`. The command prints both the contract path and the registered invocation
 from `agents.tsv`; Crucible records the work but does not launch the process.
 
-Seal independence while DISPATCHED, then record the observed process lifecycle:
+Seal independence while DISPATCHED, then record the observed process lifecycle. The attempt id is
+the directory holding the printed contract, so `A=$(basename "$(dirname "$D")")` where `$D` is
+`dispatch`'s stdout:
 
 ```sh
 ATTEMPT=A<epoch>.<pid>.<sequence>
@@ -157,12 +209,26 @@ $CP attempt transport "$ATTEMPT" multi-agent   # or acp|subagent per ladder
 $CP contract-audit "$ATTEMPT" <contract-auditor> PASS
 $CP attempt start "$ATTEMPT" <observed-pid>
 
-# The agent commits first, then records a focused check through the command in its contract:
+# The agent checks out the work branch, commits, and only then records a focused check
+# through the command in its contract. Evidence recorded before the commit carries the
+# pre-change work id and `result` refuses it with
+# `evidence work id does not match attempt`:
+# git checkout ai/fix-report-flow && ... && git commit
 # $CP run fix-report-flow <maker-name> -- <bounded-command>
 
 $CP attempt finish "$ATTEMPT" RETURNED "launcher observed exit 0"
 $CP result "$ATTEMPT" PASS <evidence-filename> CLOSE -
 ```
+
+An attempt that is dispatched and then abandoned blocks the item: a second `dispatch` refuses with
+`refused: item already has in-flight attempt <id>` and `phase` refuses while naming the recovery —
+`refused: attempt <id> is DISPATCHED and still in flight — it never started, so end it with:
+… attempt finish <id> ABANDONED "<what you observed>"`. Run the command the refusal prints; it
+answers `<id> ABANDONED; never started, in-flight pointer released for <slug>` and a redispatch
+proceeds. `contract-audit <id> <contract-auditor> FIX` releases the same pointer by superseding the
+contract, which is the right verb when the contract was wrong rather than duplicated. Both need the
+attempt to still be DISPATCHED; after `attempt start`, `contract-audit` refuses with
+`refused: contract-audit may only be recorded while DISPATCHED (before attempt start)`.
 
 Results have a small, typed outcome contract:
 
@@ -308,8 +374,12 @@ Preconditions, each a refusal rather than a warning:
 - No attempt may be live. A `RUNNING` or `OVERDUE` attempt whose pid is still alive refuses with
   `cleanup refuses while attempt <id> is RUNNING (live pid)`. Dead pids are reclaimed as `STOPPED`
   and cleanup continues.
-- A leftover `.drive.lock` from a driver that did not exit cleanly is released by
-  `$CP drive stop`, which also reclaims dead pids and names any attempt still alive.
+- A leftover lock from a driver that did not exit cleanly is released by `$CP drive stop`, which also
+  reclaims dead pids and names any attempt still alive. The lock is
+  `.crucible/<program>/.drive.lock` and it is a **directory**, not a file: `drive` takes it with
+  `mkdir` and `drive stop` releases it with `rmdir`, printing
+  `released <program-dir>/.drive.lock`. A regular file at that path is not a lock — `drive stop`
+  prints `no .drive.lock`, leaves the file in place, and `drive` starts anyway.
 
 What the preview prints, line by line:
 
@@ -356,6 +426,8 @@ listing as `REMOVE_WORKTREE`. Clear that with `git worktree prune`.
 Managed lifecycle refuses:
 
 - dispatch outside the role's stage, an unregistered agent, or maker self-review;
+- a guided maker dispatch with no `plan-audit PASS` on the item;
+- a maker result on a Git-target item whose work branch does not exist (`workid` is `NOBRANCH`);
 - a second in-flight attempt for the current item or criterion;
 - finishing before an observed start, inferring timeout solely from a deadline, or mutating a
   recorded result;

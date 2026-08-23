@@ -36,9 +36,10 @@ run its internal commands. You schedule independent agents; you do not pretend t
    Write real rows into `agents.tsv` — one per agent named in the casting, **including the
    coordinator**, or `cycle approve-panel` refuses. Write `PANEL.md` (Agents, Roles, Risk posture,
    Isolation transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
-   (`role`, `agent`, `required`, `notes`). The number of `required=yes` `claim-auditor` rows is the
-   admit bar and the number of `required=yes` `reviewer` rows is the close bar, so cast the counts you
-   intend to run. Show inventory + casting table and wait for
+   (`role`, `agent`, `required`, `notes`). Cast **at least two `claim-auditor` rows**: a claim needs
+   `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts, so one row cannot leave
+   INVESTIGATE. The `required=yes` `reviewer` row count is the close bar and has no such floor.
+   Defaults and the overriding variables: `CONFIGURE.md`. Show inventory + casting table and wait for
    `cycle approve-panel`. Do not invent agents or role assignments.
 6. Preserve the supplied problem in a regular file, bind it through `cycle problem`. Ask for the
    problem only if none was supplied.
@@ -50,8 +51,9 @@ run its internal commands. You schedule independent agents; you do not pretend t
      (new process each tick; same brief; stops for humans). One iteration: `drive tick`.
    - Refresh an already-installed program from this newer source (cwd = target repo), after
      `drive stop`: `<crucible-directory>/crucible adopt work --refresh`. Additive: it overwrites
-     engine files and does not delete an operator-written adapter such as `scripts/acp-brief.py`
-     (Crucible ships no such file; see `CONFIGURE.md`).
+     engine files and does not delete an operator-written adapter at
+     `.crucible/work/scripts/acp-brief.py` (Crucible ships no such file; see `CONFIGURE.md` for
+     which location the promise covers).
    - Humans only: `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next` after this
      investigation should end (same panel, new PROBLEM), and any `ESCALATE` / cleanup.
      Drive never auto-approves and never binds the next problem.
@@ -61,7 +63,9 @@ run its internal commands. You schedule independent agents; you do not pretend t
    source you installed from. If `drive` is running, do only the single
    next legal orchestrator action. Conversational “keep looping” is not a waiver to implement.
    The INVESTIGATE command sequence — `claim add`, `dispatch`, `attempt transport`,
-   `contract-audit`, `run-claim`, `claim verdict`, `claim scout`, `triage` — is in
+   `contract-audit`, `run-claim`, `claim verdict`, `claim scout`, `triage` — and the EXECUTE
+   sequence — `ready`, `plan-audit`, `phase BUILD`, the `ai/<slug>` work branch, `dispatch`, the
+   seal, `run`, `result` — are both in
    `.crucible/work/START.md`. Do not hand-write findings into `CLAIMS.md`; that creates no claim the
    engine can audit. Full driver notes: `docs/drive.md`. Install/refresh/use: `docs/install.md`.
 

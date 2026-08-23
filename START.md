@@ -15,8 +15,8 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Who | Command | Why |
 | --- | --- | --- |
 | Anyone / resume | `.crucible/<program>/crucible cycle` | One durable next state; rewrites `STATUS.md` |
-| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. INVESTIGATE parent-dispatches engine claim-auditor templates without coordinator ACP. After isomorphic STALE/FALSE copy, drive does not start a sibling worker. `drive stop` releases a leftover lock |
-| Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Stop `drive` first. Does not delete an operator-written adapter such as `scripts/acp-brief.py`. Cwd is the target repository. |
+| Operator / babysit | `.crucible/<program>/crucible drive` | Outer loop. `drive tick` is one sealed worker. INVESTIGATE parent-dispatches engine claim-auditor templates without coordinator ACP. After isomorphic STALE/FALSE copy, drive does not start a sibling worker. `drive stop` releases a leftover `.crucible/<program>/.drive.lock` |
+| Operator | `<newer-source>/crucible adopt <program> --refresh` | Additive engine update. Stop `drive` first. Does not delete an operator-written adapter at `.crucible/<program>/scripts/acp-brief.py`. Cwd is the target repository. |
 | Operator | `<source>/crucible adopt NAME --managed --panel-from SRC` | Sibling cycle with SRC's approved panel. Leftover DONE/PROBLEM stays on SRC. Drive never `--next`s. |
 | Human only | `cycle approve-panel`, `cycle approve` | Panel and proposal. Drive never auto-approves |
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
@@ -98,6 +98,7 @@ And write authoritative casting in `PANEL.ASSIGN.tsv`:
 ```text
 role	agent	required	notes
 coordinator	…	yes	this session; not maker/reviewer
+claim-auditor	…	yes	two rows minimum — one cannot admit
 claim-auditor	…	yes
 scout	…	yes	required on a guided cycle
 maker	…	yes
@@ -105,18 +106,45 @@ reviewer	…	yes	≠ maker
 contract-auditor	…	yes
 ```
 
+Two `claim-auditor` rows is the minimum that works, not a suggestion. See
+[the admit bar](#the-admit-bar) below: a panel with one `claim-auditor` row cannot leave
+INVESTIGATE.
+
 Cast `scout` here, in the first configure block. It is structurally required, not optional: no claim
 can be admitted without a scout report, `claim scout` refuses without a scout dispatch, and
 `dispatch CN scout AGENT` refuses any agent that is not cast as `scout`. Leaving it out means
 recasting mid-cycle to get out of that pair of refusals.
 
+### The admit bar
+
+A claim needs **`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct
+agents**, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). Two gates read that number
+and they do not read it the same way:
+
+- `cycle` and `triage` demand **2** whatever the panel says. One `claim-auditor` row and one TRUE
+  verdict leaves `triage` printing `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and
+  `cycle` printing `NEXT INVESTIGATE` forever.
+- `claim admit` demands the panel count. Three `required=yes` rows and two TRUE verdicts refuses
+  with `refused: C1 has 2 TRUE verdicts, need 3`.
+
+So two rows is the floor and the panel count is the ceiling. Cast at least two `claim-auditor` rows,
+and cast no more than the number of auditors you will actually run.
+
+The close bar has no such floor: `close` requires one PASS per `required=yes` `reviewer` row, and one
+row closes on one PASS.
+
+| Variable | Default | What it overrides |
+| --- | --- | --- |
+| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | Both gates; `=1` admits on a single TRUE |
+| `CRUCIBLE_MIN_JUDGES` | 2, but the `required=yes` `reviewer` row count wins on a guided cycle | The close bar |
+| `CRUCIBLE_MIN_KINDS` | 1 | The model-family spread; `=1` means two same-family TRUEs admit |
+
+Setting `CRUCIBLE_MIN_AUDITORS=1` makes a one-auditor panel admit, and it is a real weakening of the
+gate rather than a workaround. Cast the second auditor instead.
+
 Every agent named in `PANEL.ASSIGN.tsv` also needs a row in `agents.tsv` — **including the
 coordinator**, which never runs as a worker. A coordinator with no registry row makes
 `cycle approve-panel` refuse with `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
-
-Cast one `claim-auditor` row per auditor you intend to run: the admit bar is the number of
-`required=yes` `claim-auditor` rows, and the close bar is the number of `required=yes` `reviewer`
-rows.
 
 Show inventory + casting and stop until the operator approves (`cycle approve-panel`). Placeholder
 `agents.tsv` rows (`MODEL`, `AGENT_CLI`, `OTHER_CLI`) refuse progress. Missing or invalid casting
@@ -161,19 +189,52 @@ behavior refuses — state the gap (`X is not a CLI verb`), not the wish. `EXIST
 admitted; only `ABSENT` and `DEFECT` are gaps. Review the ledger any time with `$CP claim list`.
 
 **2. Dispatch a claim-auditor.** One per auditor, per claim. The agent must be cast for the role in
-`PANEL.ASSIGN.tsv` or the dispatch refuses.
-
-```sh
-$CP dispatch C1 claim-auditor a1
-```
-
-Stdout is the dispatch contract path. The attempt id and the exact `agents.tsv` command to run go to
-stderr, so capture the path and read the attempt id out of the file:
+`PANEL.ASSIGN.tsv` or the dispatch refuses. Run this form and no other — stdout is the dispatch
+contract path, the attempt id and the exact `agents.tsv` command go to stderr, so capture the path
+and read the attempt id out of the file:
 
 ```sh
 D=$($CP dispatch C1 claim-auditor a1)
 A=$(sed -n 's/^attempt-id: //p' "$D" | head -1)
 ```
+
+`dispatch` is not idempotent. Running it twice for the same claim and agent writes a second
+dispatch file (`2-claim-auditor-a1.md`) and a second attempt, and only the one you sealed is sealed.
+`cycle` consults that agent's **earliest** claim dispatch, so the unsealed stray makes the agent's
+TRUE verdict invisible: `triage` goes on recommending `ADMIT` while `cycle` keeps printing
+`NEXT INVESTIGATE`. That disagreement between `triage` and `cycle` is the symptom to look for.
+
+An attempt that was never started is ended with `attempt finish <id> ABANDONED "<what you
+observed>"`, and the engine names that recovery inside the refusal you hit — run the command it
+prints. `attempt reclaim` looks like the verb for this and is not; it refuses and redirects:
+
+```text
+attempt reclaim requires RUNNING or OVERDUE: <id> never started, so there is no pid to
+reclaim — end it with: .crucible/<program>/crucible attempt finish <id> ABANDONED "<what you observed>"
+```
+
+At **item** level the ABANDONED finish clears the block. A stray item dispatch refuses both a second
+`dispatch` (`refused: item already has in-flight attempt <id>`) and the phase transition, and the
+phase refusal prints the same recovery:
+
+```text
+refused: attempt <id> is DISPATCHED and still in flight — it never started, so end it with:
+.crucible/<program>/crucible attempt finish <id> ABANDONED "<what you observed>"
+```
+
+Running it answers `<id> ABANDONED; never started, in-flight pointer released for <slug>`, and a
+redispatch proceeds. `contract-audit <id> <contract-auditor> FIX` releases the same pointer by
+superseding the contract, and is the right verb when the contract itself was wrong rather than
+duplicated. Both work only while the attempt is DISPATCHED; after `attempt start`, `contract-audit`
+refuses with `refused: contract-audit may only be recorded while DISPATCHED (before attempt start)`.
+
+At **claim** level it does not restore the verdict. `attempt finish <stray> ABANDONED "<reason>"`
+answers `<id> ABANDONED; claim attempt has no item state` — the abandonment is recorded, and `cycle`
+goes on ignoring that agent's TRUE because the earliest dispatch file still points at the abandoned
+attempt. There is no verb that undoes that today. Do not seal an attempt nobody launched to get past
+it: a recorded transport and contract-audit PASS for an unrun attempt is the exact dishonesty the
+seal exists to prevent. Record the abandonment, tell the operator which claim and agent are affected,
+and dispatch a different cast auditor to make up the count.
 
 **3. Seal independence while DISPATCHED.** Both steps come before the worker runs.
 
@@ -207,18 +268,28 @@ $CP claim verdict C1 a1 TRUE       # TRUE | FALSE | STALE | UNVERIFIABLE [CITE] 
 
 Verdicts append; a second verdict from the same agent moves the first into `verdicts/history/`.
 `FALSE` and `STALE` close a claim — only `TRUE` can lead to work. `--like C2 C3` copies a non-TRUE
-verdict onto isomorphic claims. The bar to admit is a count: **one TRUE verdict per `required=yes`
-`claim-auditor` row in `PANEL.ASSIGN.tsv`**, across at least one model family. Three such rows means
-`claim admit` refuses with `refused: C2 has 1 TRUE verdicts, need 3`.
+verdict onto isomorphic claims. Run steps 2 to 5 once per `claim-auditor` row, with a different
+agent each time: the bar is a count of distinct sealed TRUE verdicts and it is at least two. Full
+rule and the three overriding variables: [The admit bar](#the-admit-bar).
 
 **6. Scout the claim.** A TRUE verdict says the report is accurate; the scout says whether the work
 already exists. This is not optional — no claim is admittable without a scout report.
 
 ```sh
-$CP dispatch C1 scout sc1
-# transport + contract-audit + run-claim for sc1 exactly as above, then:
+DS=$($CP dispatch C1 scout sc1)
+AS=$(sed -n 's/^attempt-id: //p' "$DS" | head -1)
+$CP attempt transport "$AS" multi-agent
+$CP contract-audit "$AS" ca1 PASS
+$CP run-claim C1 sc1 -- <search command>
 $CP claim scout C1 ABSENT sc1      # ABSENT | PARTLY-EXISTS | FULLY-EXISTS | IN-FLIGHT
 ```
+
+The scout's dispatch contract does not print the seal steps the auditor's does, but the seal is
+required all the same. Without transport **and** a contract-audit PASS, `claim scout` refuses with
+`refused: guided scout requires a matching scout attempt (item+agent+role) on the independence
+ledger for sc1`, and `claim verdict` refuses the same way for an auditor
+(`refused: guided claim verdict requires a matching claim attempt (item+agent+role) on the
+independence ledger for a1`).
 
 `FULLY-EXISTS` and `IN-FLIGHT` block admission. `ABSENT` refuses when an unmerged `ai/*` branch
 already implements the work — record `IN-FLIGHT` instead. Polarity must agree with the scout:
@@ -245,7 +316,7 @@ $CP claim admit C1 <item-slug>
 
 ### The proposal
 
-Write one `PROPOSAL.md` containing exactly:
+Write `.crucible/<program>/PROPOSAL.md` — the engine reads that exact path — containing exactly:
 
 - `## Verified problem`
 - `## Proposed outcome`
@@ -267,7 +338,93 @@ discriminating falsifiers, bounded checks, risk, dependencies, and stop conditio
 requires an `adversary` row in `PANEL.ASSIGN.tsv`. Use a task graph
 only for genuinely disjoint ownership. A fresh reviewer validates the breakdown before build.
 
-Every role dispatch:
+### The exact EXECUTE sequence
+
+Two gates sit between `ready` and a maker `result` and neither is discoverable from the earlier
+steps: an independent `plan-audit PASS`, and a work branch that already exists. Run these in this
+order, from the target repository root.
+
+**1. Freeze the contract and get the plan audited.**
+
+```sh
+$CP ready <slug>
+$CP plan-audit <slug> <auditor> PASS      # PASS | FIX | STOP
+$CP phase <slug> BUILD
+```
+
+`plan-audit SLUG AUDITOR PASS|FIX|STOP` is the reviewer's check on `ITEM.md` before any maker is
+launched. Without it, `dispatch <slug> maker …` refuses with
+`refused: maker dispatch requires plan-audit PASS`. The auditor needs a row in `agents.tsv` and
+nothing more — role casting is not checked here, and at this point in the sequence neither is
+independence: `plan-audit` only refuses an agent already recorded in the item's `MAKERS.tsv`
+(`refused: mk1 is a maker of json-flag — plan-audit must be independent`), and that file is written
+by the first maker dispatch, which has not happened yet. Nothing stops you naming the maker as its
+own plan auditor. Name the reviewer — this is the "fresh reviewer validates the breakdown" step, and
+the engine will not enforce it for you. The verdict is write-once: a different one refuses with
+`refused: plan-audit.md is immutable (existing PASS)`.
+
+**2. Make sure the work branch exists.** `claim admit` binds the item to a Git target itself,
+writing `items/<slug>/TARGET` from `PROGRAM`'s `repo:` and `base:` with `branch: ai/<slug>`. It does
+not create that branch. `crucible target SLUG REPO BRANCH BASE` overrides the binding when the work
+belongs on another repository, branch, or base; it refuses a base ref that does not exist
+(`no such base ref: <base>`).
+
+```sh
+cat .crucible/<program>/items/<slug>/TARGET   # repo / branch / base
+git branch ai/<slug> <base>                   # only if it does not exist yet
+$CP workid <slug>                             # must print a commit, not NOBRANCH
+```
+
+Create the branch **before** the maker dispatch. `workid` is the branch's commit; while the branch
+is missing it is the literal string `NOBRANCH`, and every later step degrades from there: `run`
+names the evidence file `…NOBRANCH.txt`, and `result` refuses with
+`maker result requires current work`. Creating the branch after the fact does not rescue it —
+`result` then refuses `evidence work id does not match attempt`, and re-recording the evidence
+refuses with `managed evidence requires a RUNNING or OVERDUE attempt` because the attempt has
+already RETURNED. That attempt is spent.
+
+**3. Dispatch and seal the maker.** The contract path is printed on stdout; the attempt id is its
+parent directory.
+
+```sh
+D=$($CP dispatch <slug> maker <maker> A1 FOCUSED)
+A=$(basename "$(dirname "$D")")
+$CP attempt transport "$A" multi-agent      # or acp | subagent
+$CP contract-audit "$A" <contract-auditor> PASS
+$CP attempt start "$A" <observed-pid>
+```
+
+**4. The maker commits on the work branch, then records evidence.** Order matters: `run` stamps the
+evidence with the work id as it is at that moment, and `result` requires that stamp to equal the
+post-change work id. Evidence recorded before the commit carries the pre-change work id and `result`
+refuses it with `evidence work id does not match attempt`.
+
+```sh
+git checkout ai/<slug>
+# ... maker changes only the item's Owned files, then commits ...
+$CP run <slug> <maker> -- <bounded-check>
+```
+
+**5. Finish and record the result.**
+
+```sh
+$CP attempt finish "$A" RETURNED "launcher observed exit 0"
+$CP result "$A" PASS <evidence-basename> CLOSE -
+```
+
+`result` diffs the change against the dispatch work id and refuses a path outside `## Owned files`
+with `refused: admitting this item does not authorize <path> (not in Owned files)`.
+
+**6. Review, then close.** `phase <slug> REVIEW` refuses without a current-work maker PASS
+(`refused: REVIEW requires a current-work maker PASS`). The reviewer runs the same
+dispatch → transport → contract-audit → start → run → finish → result sequence, then:
+
+```sh
+$CP check <slug>
+$CP close <slug> "one durable lesson, or NONE"
+```
+
+### Every role dispatch
 
 1. Generate a file contract (`dispatch`) under a **current** approved panel.
 2. While DISPATCHED, record transport (`attempt transport … multi-agent|acp|subagent`).
@@ -303,8 +460,8 @@ Do not persist personal memory. Do not bind the next PROBLEM yourself. Keep the 
 - Program finished: run `cycle clean --dry-run` and show the exact preview, then
   `cycle clean --apply` only after explicit approval. Both run in the **target repository**, from
   its root. Cleanup requires `DONE` and refuses while any attempt is live
-  (`cleanup refuses while attempt <id> is RUNNING (live pid)`); a leftover `.drive.lock` is
-  released by `drive stop`. It KEEPs `agents.tsv` and `PANEL.ASSIGN.tsv` (panel identity, not
+  (`cleanup refuses while attempt <id> is RUNNING (live pid)`); a leftover
+  `.crucible/<program>/.drive.lock` is released by `drive stop`. It KEEPs `agents.tsv` and `PANEL.ASSIGN.tsv` (panel identity, not
   leftover evidence), PRESERVEs the whole program directory — problem, proposal, claims, items,
   attempts, reviews, evidence — and removes the task and integration worktrees under
   `.crucible/<program>/worktrees/` while preserving their branches. If `--apply` stops with
