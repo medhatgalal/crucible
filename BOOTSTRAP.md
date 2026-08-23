@@ -25,17 +25,20 @@ run its internal commands. You schedule independent agents; you do not pretend t
    - kinds/models and effort defaults
 
    **B) Role casting (personas → independent agents)** — required
-   - which roles/personas are active (coordinator, claim-auditor(s), maker, reviewer(s),
-     contract-auditor, optional scout/adversary/…)
+   - which roles/personas are active. Required on a guided cycle: coordinator, claim-auditor(s),
+     scout, maker, reviewer(s), contract-auditor. Optional: adversary and the design personas
    - **which registered independent agent plays each role**
    - confirm this session’s coordinator is not cast as maker or reviewer
 
    **C) Risk + isolation**
    - risk posture, isolation preference (multi-agent / ACP / subagent), waivers
 
-   Write real rows into `agents.tsv`. Write `PANEL.md` (Agents, Roles, Risk posture, Isolation
-   transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
-   (`role`, `agent`, `required`, `notes`). Show inventory + casting table and wait for
+   Write real rows into `agents.tsv` — one per agent named in the casting, **including the
+   coordinator**, or `cycle approve-panel` refuses. Write `PANEL.md` (Agents, Roles, Risk posture,
+   Isolation transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
+   (`role`, `agent`, `required`, `notes`). The number of `required=yes` `claim-auditor` rows is the
+   admit bar and the number of `required=yes` `reviewer` rows is the close bar, so cast the counts you
+   intend to run. Show inventory + casting table and wait for
    `cycle approve-panel`. Do not invent agents or role assignments.
 6. Preserve the supplied problem in a regular file, bind it through `cycle problem`. Ask for the
    problem only if none was supplied.
@@ -45,17 +48,28 @@ run its internal commands. You schedule independent agents; you do not pretend t
    - Resume / see the one next state: `.crucible/work/crucible cycle` (rewrites `STATUS.md`).
    - Keep a coordinator from skipping `cycle` or implementing: `.crucible/work/crucible drive`
      (new process each tick; same brief; stops for humans). One iteration: `drive tick`.
-   - Refresh an already-installed program from this newer source (cwd = target repo):
-     `<crucible-directory>/crucible adopt work --refresh`. Additive: it overwrites engine files
-     and does not delete machine-local adapters such as `scripts/acp-brief.py`.
+   - Refresh an already-installed program from this newer source (cwd = target repo), after
+     `drive stop`: `<crucible-directory>/crucible adopt work --refresh`. Additive: it overwrites
+     engine files and does not delete an operator-written adapter such as `scripts/acp-brief.py`
+     (Crucible ships no such file; see `CONFIGURE.md`).
    - Humans only: `cycle approve-panel`, `cycle approve`, `cycle problem FILE --next` after this
      investigation should end (same panel, new PROBLEM), and any `ESCALATE` / cleanup.
      Drive never auto-approves and never binds the next problem.
 
-   Then read `.crucible/work/START.md` and `.crucible/work/STATUS.md`. Confirm `engine:` in
-   `STATUS.md` matches the source you installed from. If `drive` is running, do only the single
+   Then read `.crucible/work/START.md` and `.crucible/work/STATUS.md`. `STATUS.md` is written by
+   `cycle`, not by `adopt`: run `cycle` first, then confirm its `engine:` matches the `VERSION` of the
+   source you installed from. If `drive` is running, do only the single
    next legal orchestrator action. Conversational “keep looping” is not a waiver to implement.
-   Full driver notes: `docs/drive.md`. Install/refresh/use: `docs/install.md`.
+   The INVESTIGATE command sequence — `claim add`, `dispatch`, `attempt transport`,
+   `contract-audit`, `run-claim`, `claim verdict`, `claim scout`, `triage` — is in
+   `.crucible/work/START.md`. Do not hand-write findings into `CLAIMS.md`; that creates no claim the
+   engine can audit. Full driver notes: `docs/drive.md`. Install/refresh/use: `docs/install.md`.
+
+8. **Commit the program directory.** `adopt` commits nothing. Run
+   `git add .crucible && git commit -m "chore: crucible program state"` in the target repository, and
+   again after each human gate — the problem, claims, proposal, approvals, attempts, and evidence only
+   outlive this chat once they are in Git. The generated `.crucible/.gitignore` already excludes
+   `*/agents.tsv` and `*/worktrees/`.
 
 ## Independence ladder (mandatory)
 

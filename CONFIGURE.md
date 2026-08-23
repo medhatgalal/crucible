@@ -33,8 +33,8 @@ inventory and role casting are required.
 
 ### B) Role casting (personas → independent agents)
 
-3. Active roles this cycle (required: coordinator, claim-auditor, maker, reviewer, contract-auditor;
-   optional: scout, adversary, specifier, architect, planner, integrator)
+3. Active roles this cycle. Required: coordinator, claim-auditor, **scout**, maker, reviewer,
+   contract-auditor. Genuinely optional: adversary, specifier, architect, planner, integrator
 4. **Which registered agent plays each role**
 5. Confirm coordinator is not cast as maker or reviewer
 
@@ -62,19 +62,45 @@ role	agent	required	notes
 coordinator	lead	yes	this session only; never maker/judge
 claim-auditor	a1	yes
 claim-auditor	a2	yes
+scout	sc1	yes	required on a guided cycle
 contract-auditor	j2	yes
 maker	mk1	yes
 reviewer	j1	yes	≠ maker
 adversary	adv	no	required when risk is HIGH
 ```
 
+Cast `scout` in this first block. It is structurally required on a guided cycle, not optional:
+`claim admit` refuses a claim with no scout report, `claim scout` refuses without a scout dispatch
+(`refused: guided scout requires a scout dispatch for a1 — run: … dispatch C1 scout a1`), and that
+dispatch refuses an agent that is not cast as `scout`
+(`refused: agent a1 is not cast as scout in PANEL.ASSIGN.tsv`). Those two refusals are a closed
+loop; the only way out is to cast a scout.
+
+Every agent named in `PANEL.ASSIGN.tsv` needs a row in `agents.tsv`, **including the coordinator**,
+even though the coordinator is this session and is never launched as a worker. Casting a coordinator
+with no registry row makes `cycle approve-panel` refuse with
+`PANEL.md / PANEL.ASSIGN.tsv incomplete`.
+
+The counts in this file are the bars. `claim admit` requires one TRUE verdict per `required=yes`
+`claim-auditor` row — two rows means two auditors, three means three
+(`refused: C2 has 1 TRUE verdicts, need 3`) — and `close` requires one PASS per `required=yes`
+`reviewer` row. `CRUCIBLE_MIN_AUDITORS` and `CRUCIBLE_MIN_JUDGES` override them.
+
 Show inventory + casting table and wait for `cycle approve-panel`. Approval content-binds
 `PANEL.md`, `PANEL.ASSIGN.tsv`, and `agents.tsv` (panel id hash). Guided dispatch, transport,
 contract-audit, start, result, and claim verdict/scout refuse when that hash is stale — not only
 `cycle` status.
 
-`adopt --refresh` and `cycle problem FILE --next` keep the approved panel. Do not recast after
-refresh or when starting the next PROBLEM unless the operator asked to change agents.
+`adopt --refresh` and `cycle problem FILE --next` keep the approved panel. **That is what "do not
+recast" means:** do not swap agents when refreshing the engine or starting the next PROBLEM on the
+same panel, because the recorded evidence belongs to that casting.
+
+Correcting the casting mid-cycle is a different thing and is allowed — a role nobody cast, an agent
+that turns out not to be invocable, a maker and reviewer that collapsed onto one agent. Edit
+`PANEL.ASSIGN.tsv` (and `agents.tsv` if the fix is there) and run `cycle approve-panel` again. Until
+you do, every guided command refuses under the stale hash:
+`refused: agent panel is not current — update PANEL.md / PANEL.ASSIGN.tsv / agents.tsv and run: … cycle approve-panel`.
+Tell the operator what you changed and why; approval is theirs, not yours.
 
 ### Example coordinator message
 
@@ -82,8 +108,8 @@ refresh or when starting the next PROBLEM unless the operator asked to change ag
 I need one configure confirmation before investigation.
 
 A) Agents — name, product, model, effort, invoke command for each.
-B) Role casting — who plays coordinator, claim-auditor(s), maker, reviewer(s),
-   contract-auditor, optional scout/adversary?
+B) Role casting — who plays coordinator, claim-auditor(s), scout, maker, reviewer(s),
+   contract-auditor, optional adversary?
 C) Risk + isolation — posture, multi-agent/ACP/subagent, waivers?
 
 I will write agents.tsv + PANEL.md + PANEL.ASSIGN.tsv and stop for approve-panel.
@@ -101,7 +127,8 @@ I will not invent agents or cast myself as maker/reviewer.
 
 Silent same-thread multi-hat work is never a valid transport.
 
-Record transport per attempt:
+Record transport per attempt (`$CP` is `.crucible/<program>/crucible`, defined at the top of
+[docs/managed-lifecycle.md](docs/managed-lifecycle.md)):
 
 ```sh
 $CP attempt transport <ATTEMPT> multi-agent|acp|subagent
@@ -135,8 +162,37 @@ coordinator must not perform the role.
 | Reviewer | independently tests acceptance criteria without maker rationale |
 | Adversary | used only for medium/high risk or disputed findings |
 
-Specifier, architect, planner, and integrator are optional personas when the work actually contains
-that decision boundary.
+Coordinator, claim-auditor, scout, maker, reviewer, and contract-auditor are all required on a guided
+cycle. Specifier, architect, planner, and integrator are optional personas when the work actually
+contains that decision boundary.
+
+## The ACP adapter (`scripts/acp-brief.py`)
+
+Crucible ships no ACP adapter. `scripts/acp-brief.py` is the conventional path for one the operator
+writes on a single-product host; the engine preserves any file there across `adopt --refresh`
+(printing `kept local adapter: scripts/acp-brief.py`) and never creates it. A fresh install has no
+such file, and no Crucible check requires it.
+
+If you use the ACP path, the adapter is the `command` column of an `agents.tsv` row. The interface it
+must satisfy is that column's contract and nothing more:
+
+- It is invoked as a shell command with `{BRIEF}` replaced by the absolute path of the dispatch
+  contract, and `{MODEL}` / `{EFFORT}` replaced from the same row if the command names them.
+- It must open a **fresh, isolated** agent session — that is what earns the `ACP-ISOLATED` label —
+  make it read the brief at that path and follow it, and return when the session ends.
+- Exit 0 when the session ran, non-zero when it could not be launched. `drive` treats a non-zero
+  coordinator command as a refuse, not as an independence STOP, so a crashed adapter stops the tick
+  rather than silently downgrading isolation.
+- It writes nothing itself. Verdicts, evidence, and results are recorded by the session through
+  `run-claim` / `result`, not by the launcher.
+
+Nothing else in Crucible knows the file's name. Any executable satisfying that contract works, under
+any path, as long as `agents.tsv` names it. `drive` runs the `agents.tsv` line itself: do not launch
+the adapter by hand while drive is running.
+
+If you have no such adapter and only one product, record the probe honestly
+(`probe-acp unavailable "no adapter"`) and use the subagent rung with its weaker label — do not
+describe a file that does not exist as the transport.
 
 ## Same model or different models
 

@@ -53,8 +53,11 @@ bind_independence() {
   "$prog/crucible" contract-audit "$id" "$auditor" PASS >/dev/null
 }
 
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-attempt-ledger.XXXXXX")
+trap 'rm -rf "$TMP"' 0 1 2 15
+
 fresh() {
-  base=$(mktemp -d)
+  base=$(mktemp -d "$TMP/case.XXXXXX")
   repo="$base/repo"
   mkdir -p "$repo"
   (

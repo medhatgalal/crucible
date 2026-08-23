@@ -61,8 +61,11 @@ contract-auditor	j2	yes
 EOF
 }
 
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-drive.XXXXXX")
+trap 'rm -rf "$TMP"' 0 1 2 15
+
 setup_repo() {
-  base=$(mktemp -d "${TMPDIR:-/tmp}/crucible-drive.XXXXXX")
+  base=$(mktemp -d "$TMP/case.XXXXXX")
   repo="$base/repo"; mkdir -p "$repo/src"
   (
     cd "$repo"

@@ -5,6 +5,68 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.4] - 2026-08-22
+
+### Cold-start docs, temp-dir cleanup, and CHECKs that hold the prose
+
+- An adversarial cold-start audit ran the published 1.6.3 tarball in throwaway
+  repositories from the documents alone, never opening the Crucible checkout —
+  once as a fresh install, once upgrading a lived-in 1.6.1 installation. Both
+  completed, but the fresh install only got through because the engine
+  self-documents at runtime via `help protocol`, usage strings, and generated
+  dispatch contracts. The docs alone were not sufficient.
+- The `claim` verbs and `triage` appeared in no document that `adopt` copies, so
+  INVESTIGATE — the first phase where an agent must act — had no command
+  sequence anywhere. `START.md` now carries the ordered walkthrough:
+  `claim add`, `dispatch`, `attempt transport`, `contract-audit`, `run-claim`,
+  `claim verdict`, `claim scout`, `triage`, `claim admit`.
+- `$CP` was used 34 times in `docs/managed-lifecycle.md` and twice in
+  `CONFIGURE.md` and defined nowhere, so every command example there was
+  unrunnable as printed. Defined once.
+- The upgrade instructions said to confirm `engine:` in `STATUS.md` right after
+  `--refresh`, but `adopt` never rewrites `STATUS.md`, so the check reported the
+  old version and a careful reader concluded the upgrade had failed. Run `cycle`
+  first, then confirm. The docs no longer hard-code a version number, which is
+  the defect that left 1.6.1 telling its users to confirm `engine: 1.4.0`.
+- Scout was listed as an optional role but is required on a guided cycle: with
+  no scout cast, `claim scout` refused and pointed at a `dispatch` that refused
+  in turn, while three documents said not to recast the panel. Scout is now
+  required in the initial casting, and the no-recast rule is scoped to
+  `--refresh` and `--next`.
+- Upgrades now say to stop `drive` before `--refresh` replaces the engine
+  binary.
+- `scripts/acp-brief.py` was named in five places as a preserved local adapter,
+  ships in no package, and was defined nowhere. `CONFIGURE.md` now states what
+  it must do and that the operator writes it.
+- The admit and close bars, the legal `LOW|MEDIUM|HIGH` risk tokens, and the
+  coordinator's required `agents.tsv` row were all facts an agent had to guess.
+  Documented.
+- `README` linked two files absent from the release tarball. Documents now say
+  to commit the program directory, without which the durability claim does not
+  hold.
+- Six suites leaked a `mktemp -d` per run; 1,642 directories totalling 1.2 GB
+  had accumulated on one machine, the oldest five days old. Because `adopt`
+  copies `scripts/*.sh` into every target repository, adopters inherited the
+  leak. All now clean up on exit and on interrupt, without masking exit status.
+- `cycle clean --apply` refused a dirty worktree with only a path, which is the
+  right refusal and useless guidance. It now names the state — in-progress
+  cherry-pick or uncommitted changes — and the exact command that clears it, and
+  previews the same in `--dry-run`, so the operator learns before applying
+  rather than after. The refusal still stands and nothing is force-removed.
+- New `scripts/verify-cleanup.sh` proves cleanup in a target repository: panel
+  identity and evidence preserved, worktrees removed and their branches kept,
+  refusals when an attempt is live or a worktree is dirty, the documented
+  recovery working, `drive stop` clearing a stale lock, and no suite leaking.
+- Three new CHECKs, because prose has a poor record here: every verb
+  `help protocol` prints must appear in a document that `adopt` copies; every
+  relative markdown link in a travelling document must resolve to a file the
+  package ships; every verify script that makes a temp directory must set a trap
+  that removes it.
+- `## Jobs`, `cycle sign-jobs`, and `worth: WAIT-DEMAND` are planned only, in
+  `docs/superpowers/plans/2026-08-22-demand-gate.md`. `scripts/verify-demand.sh`
+  remains a recorded RED contract whose three assertions pass today — **not** a
+  gate. The demand gate does not exist yet.
+
 ## [1.6.3] - 2026-08-22
 
 ### Maker result on NOBRANCH, and CI that actually runs the suites

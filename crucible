@@ -3794,6 +3794,26 @@ cycle_worktree_records() {
   done
 }
 
+# `worktree remove` refuses a dirty worktree without --force, and that refusal is right:
+# uncommitted work is not this program's to destroy. What it did not do was say why, so the
+# operator got a path and nothing to act on. One state reaches it routinely — a cherry-pick
+# that fails for a non-conflict reason leaves the integration worktree mid-pick — so name
+# the state and the command that clears it, in the preview as well as in the refusal.
+cycle_worktree_blocker() {
+  blocked_worktree=$1
+  blocked_gitdir=$(git -C "$blocked_worktree" rev-parse --absolute-git-dir 2>/dev/null) || return 1
+  if [ -e "$blocked_gitdir/CHERRY_PICK_HEAD" ]; then
+    printf 'in-progress cherry-pick; clear it with: git -C %s cherry-pick --abort' "$blocked_worktree"
+    return 0
+  fi
+  if [ -n "$(git -C "$blocked_worktree" status --porcelain 2>/dev/null)" ]; then
+    printf 'uncommitted changes; commit them, or discard with: git -C %s stash --include-untracked' \
+      "$blocked_worktree"
+    return 0
+  fi
+  return 1
+}
+
 item_stale_evidence_files() {
   slug=$1
   wid=$2
@@ -3898,6 +3918,10 @@ cycle_cleanup() {
     while IFS="$(printf '\t')" read -r task_repo task_worktree task_branch; do
       [ -n "$task_worktree" ] || continue
       printf 'REMOVE_WORKTREE %s\nPRESERVE_BRANCH %s %s\n' "$task_worktree" "$task_repo" "$task_branch"
+      if worktree_blocker=$(cycle_worktree_blocker "$task_worktree"); then
+        printf 'BLOCKED_WORKTREE %s — %s, then retry: crucible cycle clean --apply\n' \
+          "$task_worktree" "$worktree_blocker"
+      fi
       found=1
     done <<EOF
 $worktree_records
@@ -3909,8 +3933,10 @@ EOF
   if [ -n "$worktree_records" ]; then
     while IFS="$(printf '\t')" read -r task_repo task_worktree task_branch; do
       [ -n "$task_worktree" ] && [ -d "$task_worktree" ] || continue
-      git -C "$task_repo" worktree remove "$task_worktree" \
-        || die "could not safely remove worktree: $task_worktree"
+      remove_error=$(git -C "$task_repo" worktree remove "$task_worktree" 2>&1) && continue
+      worktree_blocker=$(cycle_worktree_blocker "$task_worktree") \
+        || worktree_blocker="git refused: $remove_error"
+      die "could not safely remove worktree: $task_worktree — $worktree_blocker, then retry: crucible cycle clean --apply"
     done <<EOF
 $worktree_records
 EOF

@@ -52,7 +52,7 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | See the one next state | `.crucible/work/crucible cycle` — also rewrites `STATUS.md` (includes `engine:`) |
 | Resume a coordinator | Read `.crucible/work/START.md` and `STATUS.md` |
 | Keep the coordinator from skipping `cycle` or implementing | `.crucible/work/crucible drive` ([docs/drive.md](docs/drive.md)) |
-| Refresh the installed engine | From the **newer** Crucible checkout, cwd = target repo: `adopt work --refresh` — see [docs/install.md](docs/install.md) |
+| Refresh the installed engine | Stop `drive` first, then from the **newer** Crucible checkout, cwd = target repo: `adopt work --refresh` — see [docs/install.md](docs/install.md) |
 | Start the next problem on the same panel | After this investigation should end: `cycle problem FILE --next` |
 | Start real work while leftover DONE occupies another cycle | `adopt NAME --managed --panel-from SRC` — copies the approved panel; does not `--next` |
 | Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
@@ -99,6 +99,11 @@ Crucible coordinates responsibilities, not vendors. It can use built-in subagent
 one model class in isolated contexts, or several model families. The panel grows only when the risk
 justifies it.
 
+On a single-product host the expected posture is ACP-isolated sessions — but Crucible ships no ACP
+adapter. That launcher (conventionally `scripts/acp-brief.py`) is one the operator writes and names in
+`agents.tsv`; [CONFIGURE.md](CONFIGURE.md) states the interface it must satisfy. Without one, record
+the probe honestly and use the weaker subagent rung.
+
 ```mermaid
 flowchart TB
     H["🧑 Operator<br/>approves outcome"] --> C["🧭 Coordinator<br/>schedules + persists state"]
@@ -135,8 +140,11 @@ flowchart LR
 ```
 
 Machine-specific agent commands, live contexts, processes, and isolated worktrees are disposable.
-The approved decisions and proof remain in the target repository. Cleanup is previewed exactly and
-requires approval; it preserves durable work evidence.
+The approved decisions and proof remain in the target repository — once you commit them. `adopt`
+writes `.crucible/<program>/` and commits nothing, so run `git add .crucible && git commit` in the
+target repo and again after each human gate; the generated `.crucible/.gitignore` keeps
+`*/agents.tsv` and `*/worktrees/` out. Cleanup is previewed exactly and requires approval; it
+preserves durable work evidence ([docs/managed-lifecycle.md](docs/managed-lifecycle.md#session-cleanup)).
 
 ## 🛡️ What is actually enforced
 
@@ -167,8 +175,12 @@ and [RULES.md](RULES.md).
 - [CONFIGURE.md](CONFIGURE.md) — agents, models, personas, and risk posture
 - [RULES.md](RULES.md) — enforced checks versus instructional rules
 - [Managed lifecycle protocol](docs/managed-lifecycle.md) — low-level agent-facing commands
-- [CONTRIBUTING.md](CONTRIBUTING.md) — development constraints and verification
-- [RELEASE.md](RELEASE.md) — deterministic package and release procedure
+
+Repository-only (not in the release tarball):
+[CONTRIBUTING.md](https://github.com/medhatgalal/crucible/blob/main/CONTRIBUTING.md) —
+development constraints and verification;
+[RELEASE.md](https://github.com/medhatgalal/crucible/blob/main/RELEASE.md) —
+deterministic package and release procedure.
 
 <details>
 <summary><strong>Maintainer verification</strong></summary>

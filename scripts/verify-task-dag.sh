@@ -8,6 +8,12 @@ C="$HERE/crucible"
 PASS=0
 FAIL=0
 
+# fresh() runs inside `repo=$(fresh)`, so a directory it records in a shell variable is recorded
+# in a subshell and never reaches this trap. Every case tree is nested under one named root
+# instead, which is what makes a single trap sufficient.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-task-dag.XXXXXX")
+trap 'rm -rf "$TMP"' 0 1 2 15
+
 ok() { PASS=$((PASS + 1)); printf '.\n'; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 expect() {
@@ -51,7 +57,7 @@ bind_independence() {
 }
 
 fresh() {
-  base=$(mktemp -d); repo="$base/repo"; mkdir -p "$repo"
+  base=$(mktemp -d "$TMP/case.XXXXXX"); repo="$base/repo"; mkdir -p "$repo"
   (
     cd "$repo"
     git init -q -b main
