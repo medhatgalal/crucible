@@ -100,8 +100,9 @@ one model class in isolated contexts, or several model families. The panel grows
 justifies it.
 
 On a single-product host the expected posture is ACP-isolated sessions — but Crucible ships no ACP
-adapter. That launcher (conventionally `scripts/acp-brief.py`) is one the operator writes and names in
-`agents.tsv`; [CONFIGURE.md](CONFIGURE.md) states the interface it must satisfy. Without one, record
+adapter. That launcher (conventionally `.crucible/<program>/scripts/acp-brief.py`) is one the
+operator writes and names in `agents.tsv`; [CONFIGURE.md](CONFIGURE.md) states the interface it must
+satisfy and which location `adopt --refresh` preserves. Without one, record
 the probe honestly and use the weaker subagent rung.
 
 ```mermaid
@@ -194,6 +195,7 @@ names the broken invariant:
 ./scripts/verify-managed-lifecycle.sh
 ./scripts/verify-attempt-ledger.sh
 ./scripts/verify-task-dag.sh
+./scripts/verify-cleanup.sh
 ./scripts/verify-coldstart-independence.sh
 ./scripts/verify-quickstart.sh
 ./scripts/verify-agent-cycle.sh
@@ -204,7 +206,8 @@ names the broken invariant:
 
 Before that, only `selftest.sh` and `verify-package.sh` were invoked directly; the rest ran
 nowhere, or only indirectly against the packaged tree. Two of them stayed red on `main`
-without anyone noticing.
+without anyone noticing. `verify-cleanup.sh` is the newest of the set and was missing from
+this list while CI already ran it.
 
 `scripts/verify-demand.sh` is not in that set and is not a gate. Its three assertions pass
 today because they record a hole rather than a guarantee: work can be admitted with no

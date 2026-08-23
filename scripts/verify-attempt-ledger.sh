@@ -54,7 +54,14 @@ bind_independence() {
 }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-attempt-ledger.XXXXXX")
-trap 'rm -rf "$TMP"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
+# still reports its own result. Each signal handler removes and then exits 128+signal, because a
+# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
+# timed-out run would then be recorded as a pass.
+trap 'rm -rf "$TMP"' 0
+trap 'rm -rf "$TMP"; exit 129' 1
+trap 'rm -rf "$TMP"; exit 130' 2
+trap 'rm -rf "$TMP"; exit 143' 15
 
 fresh() {
   base=$(mktemp -d "$TMP/case.XXXXXX")

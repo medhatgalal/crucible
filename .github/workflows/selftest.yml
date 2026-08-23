@@ -80,6 +80,9 @@ jobs:
       - name: cleanup works in this repo and in any target repo
         run: ./scripts/verify-cleanup.sh
 
+      - name: the documented walkthrough executes
+        run: ./scripts/verify-walkthrough.sh
+
       - name: a cold start needs nothing but the repository
         run: ./scripts/verify-coldstart-independence.sh
 

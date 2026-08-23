@@ -69,6 +69,9 @@ reviewer	j1	yes	≠ maker
 adversary	adv	no	required when risk is HIGH
 ```
 
+Two `claim-auditor` rows is the minimum that works. One row cannot leave INVESTIGATE — see the bars
+below.
+
 Cast `scout` in this first block. It is structurally required on a guided cycle, not optional:
 `claim admit` refuses a claim with no scout report, `claim scout` refuses without a scout dispatch
 (`refused: guided scout requires a scout dispatch for a1 — run: … dispatch C1 scout a1`), and that
@@ -81,10 +84,26 @@ even though the coordinator is this session and is never launched as a worker. C
 with no registry row makes `cycle approve-panel` refuse with
 `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
 
-The counts in this file are the bars. `claim admit` requires one TRUE verdict per `required=yes`
-`claim-auditor` row — two rows means two auditors, three means three
-(`refused: C2 has 1 TRUE verdicts, need 3`) — and `close` requires one PASS per `required=yes`
-`reviewer` row. `CRUCIBLE_MIN_AUDITORS` and `CRUCIBLE_MIN_JUDGES` override them.
+The counts in this file are the bars, with one floor the counts do not show. A claim needs
+`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents, across at least
+`CRUCIBLE_MIN_KINDS` model families (default 1). Two gates read that number differently: `cycle` and
+`triage` demand 2 whatever the panel says, so a single `claim-auditor` row leaves `triage` printing
+`MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and `cycle` printing `NEXT INVESTIGATE`
+forever; `claim admit` demands the panel count, so three rows and two TRUEs refuses with
+`refused: C1 has 2 TRUE verdicts, need 3`. Cast **two `claim-auditor` rows minimum**, and no more
+than the number of auditors you will actually run.
+
+`close` has no floor: it requires one PASS per `required=yes` `reviewer` row, and one row closes on
+one PASS.
+
+| Variable | Default | What it overrides |
+| --- | --- | --- |
+| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | Both admit gates; `=1` admits on a single TRUE |
+| `CRUCIBLE_MIN_JUDGES` | 2, but the `required=yes` `reviewer` row count wins on a guided cycle | The close bar |
+| `CRUCIBLE_MIN_KINDS` | 1 | The model-family spread; at 1, two same-family TRUEs admit |
+
+`CRUCIBLE_MIN_AUDITORS=1` makes a one-auditor panel admit. It weakens the gate rather than working
+around it; cast the second auditor.
 
 Show inventory + casting table and wait for `cycle approve-panel`. Approval content-binds
 `PANEL.md`, `PANEL.ASSIGN.tsv`, and `agents.tsv` (panel id hash). Guided dispatch, transport,
@@ -166,12 +185,17 @@ Coordinator, claim-auditor, scout, maker, reviewer, and contract-auditor are all
 cycle. Specifier, architect, planner, and integrator are optional personas when the work actually
 contains that decision boundary.
 
-## The ACP adapter (`scripts/acp-brief.py`)
+## The ACP adapter (`.crucible/<program>/scripts/acp-brief.py`)
 
-Crucible ships no ACP adapter. `scripts/acp-brief.py` is the conventional path for one the operator
-writes on a single-product host; the engine preserves any file there across `adopt --refresh`
-(printing `kept local adapter: scripts/acp-brief.py`) and never creates it. A fresh install has no
-such file, and no Crucible check requires it.
+Crucible ships no ACP adapter. `.crucible/<program>/scripts/acp-brief.py` is the conventional path
+for one the operator writes on a single-product host; the engine preserves any file at **that** path
+across `adopt --refresh` (printing `kept local adapter: scripts/acp-brief.py`) and never creates it.
+The path is relative to the program directory, not the repository root: `--refresh` copies only
+`scripts/*.sh` into the program directory, so a `.py` there survives, while a file at the
+repository's own `scripts/acp-brief.py` sits outside the program directory, gets no
+`kept local adapter` line, and is not covered by the promise. Put the adapter inside the program
+directory if you want the engine to account for it. A fresh install has no such file, and no
+Crucible check requires it.
 
 If you use the ACP path, the adapter is the `command` column of an `agents.tsv` row. The interface it
 must satisfy is that column's contract and nothing more:

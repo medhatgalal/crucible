@@ -25,7 +25,13 @@ case $OUT_ARG in /*) OUT=$OUT_ARG ;; *) OUT=$PWD/$OUT_ARG ;; esac
 mkdir -p "$OUT"
 NAME="crucible-$VERSION_ARG.tar.gz"
 TMP="$OUT/.$NAME.$$.tmp"
-trap 'rm -f "$TMP"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns; each signal
+# handler removes and then exits 128+signal, because a handler that only removes lets the shell
+# resume and reach a `0` exit — an interrupted package run would be recorded as a success.
+trap 'rm -f "$TMP"' 0
+trap 'rm -f "$TMP"; exit 129' 1
+trap 'rm -f "$TMP"; exit 130' 2
+trap 'rm -f "$TMP"; exit 143' 15
 
 git -C "$ROOT" archive --format=tar --prefix="crucible-$VERSION_ARG/" "$REF" | gzip -n -9 > "$TMP"
 [ -s "$TMP" ] || { echo "package-release: empty package" >&2; exit 2; }

@@ -6,7 +6,14 @@ ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(cat "$ROOT/VERSION")
 REF=${1:-HEAD}
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-package.XXXXXX")
-trap 'rm -rf "$TMP"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
+# still reports its own result. Each signal handler removes and then exits 128+signal, because a
+# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
+# timed-out run would then be recorded as a pass.
+trap 'rm -rf "$TMP"' 0
+trap 'rm -rf "$TMP"; exit 129' 1
+trap 'rm -rf "$TMP"; exit 130' 2
+trap 'rm -rf "$TMP"; exit 143' 15
 
 "$ROOT/scripts/package-release.sh" "$VERSION" "$REF" "$TMP/one" >/dev/null
 "$ROOT/scripts/package-release.sh" "$VERSION" "$REF" "$TMP/two" >/dev/null

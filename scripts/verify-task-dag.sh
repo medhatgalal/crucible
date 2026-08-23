@@ -10,9 +10,16 @@ FAIL=0
 
 # fresh() runs inside `repo=$(fresh)`, so a directory it records in a shell variable is recorded
 # in a subshell and never reaches this trap. Every case tree is nested under one named root
-# instead, which is what makes a single trap sufficient.
+# instead, which is what makes one trapped path sufficient.
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-task-dag.XXXXXX")
-trap 'rm -rf "$TMP"' 0 1 2 15
+# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
+# still reports its own result. Each signal handler removes and then exits 128+signal, because a
+# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
+# timed-out run would then be recorded as a pass.
+trap 'rm -rf "$TMP"' 0
+trap 'rm -rf "$TMP"; exit 129' 1
+trap 'rm -rf "$TMP"; exit 130' 2
+trap 'rm -rf "$TMP"; exit 143' 15
 
 ok() { PASS=$((PASS + 1)); printf '.\n'; }
 bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }

@@ -5,6 +5,87 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.5] - 2026-08-23
+
+### Untracked panel copy, cleanup exit status, and an executable walkthrough
+
+- `cycle approve-panel` copies `agents.tsv` to `PANEL.AGENTS.tsv`, and the
+  generated `.crucible/.gitignore` did not exclude it. 1.6.4's own docs told
+  operators to run `git add .crucible`, so that commit tracked a byte-identical
+  copy of the machine's agent command lines and absolute paths while four
+  documents promised machine-local invocations stayed out. The pattern is now
+  generated, `adopt --refresh` appends any missing pattern additively without
+  clobbering operator edits, and a refresh reports a copy that is already
+  tracked with the `git rm --cached` needed to untrack it — an ignore rule
+  cannot untrack what is already in the index.
+- The cleanup traps added in 1.6.4 removed the scratch directory on a signal and
+  then let the shell resume to a `0` exit, so an interrupted or timed-out suite
+  was recorded as a pass. 1.6.4's notes claimed cleanup happened "without
+  masking exit status"; that was wrong. Ten scripts now exit 128+signal after
+  cleaning up, and a normal pass or failure still returns its own status.
+- An independent cold-start audit ran the published 1.6.4 tarball from the
+  documents only. The blockers below are its findings.
+- `START.md`'s own `PANEL.ASSIGN.tsv` template carried one `claim-auditor` row,
+  and four documents stated the admit bar as one TRUE verdict per
+  `required=yes` row. The real rule is `max(2, required rows)`, enforced in two
+  places that disagree: `cycle` and `triage` apply a floor of 2 while
+  `claim admit` applies the panel count. A reader following the template could
+  never leave INVESTIGATE. The template now carries two rows and every document
+  states the rule, with `CRUCIBLE_MIN_AUDITORS`, `CRUCIBLE_MIN_JUDGES` and
+  `CRUCIBLE_MIN_KINDS` and their defaults.
+- The first maker `result` was unreachable: no document established the
+  `ai/<slug>` work branch, so `workid` returned `NOBRANCH` and `result` refused
+  `maker result requires current work`, with no recovery. `claim admit` writes
+  `TARGET` for you; the branch is not created. Both are now documented, along
+  with `crucible target SLUG REPO BRANCH BASE`.
+- `plan-audit SLUG AUDITOR PASS` is required before maker dispatch and appeared
+  in no walkthrough. It also does not check maker independence at that point,
+  because the check reads `MAKERS.tsv`, which the first maker dispatch writes;
+  the documentation says so rather than promising a check that does not fire.
+- The walkthrough printed two runnable `dispatch` forms for one step. Run as
+  printed, both created attempts and only one was sealed, which made the
+  agent's TRUE verdict invisible to `cycle` while `triage` still reported
+  ADMIT. One form now, and the recovery is documented.
+- `phase` refused with an empty attempt id when `STATE.tsv` had no row for the
+  item, and a stray `DISPATCHED` attempt could not be cleared by
+  `attempt reclaim` or `attempt finish`, leaving the item permanently stuck.
+  Refusals now name what is actually in flight, and
+  `attempt finish <id> ABANDONED "<observation>"` ends a never-started attempt
+  and releases the in-flight pointer. The guard against proceeding while real
+  work is in flight is unchanged.
+- The CLEANUP card named `.validation/` and husk programs (`work/`, `b3/`) from
+  the machine it was written on. On another repo those may not exist, and
+  `work/` was a live panel-approved program there, so an agent relaying the line
+  told the operator to delete a live cycle. Husks are now read off the tree and
+  nothing is named that has not been seen — the same hard-coding class as the
+  1.6.1 `engine: 1.4.0` defect.
+- `selftest.sh` reported two failures and exited 1 from any tree without
+  `.github/`, which is every release tarball and every adopted program, since
+  `adopt` copies `scripts/*.sh`. The CI-workflow assertions now skip with a
+  stated reason when the workflow is absent, and remain exactly as strict,
+  including the inline-step digest, when it is present.
+- The dirty-worktree cleanup refusal ended with
+  `retry: crucible cycle clean --apply`, and a bare `crucible` is not on PATH in
+  a target repository. It now prints the program's own path.
+- `.drive.lock` had no documented location and is a directory at
+  `.crucible/<program>/.drive.lock`; a hand-made file there is silently ignored
+  by `drive stop`. `PROPOSAL.md`'s path, the `acp-brief.py` adapter's location,
+  and `scripts/verify-cleanup.sh`'s absence from README's verification list are
+  also fixed.
+- Documented behavior found while proving the walkthrough: `drive` dispatches an
+  INVESTIGATE claim to the first cast claim-auditor only, and its isomorphic
+  copy never carries TRUE, so drive alone halts at one TRUE verdict.
+- New `scripts/verify-walkthrough.sh` executes the documented install-to-done
+  path, extracting the panel template and commands from the documents rather
+  than restating them, and fails when documentation and engine disagree. Three
+  consecutive releases tried to fix "an agent cannot act from the documents
+  alone" by writing better documents; each time an audit found the new
+  walkthrough was not executable. This makes that a test.
+- `## Jobs`, `cycle sign-jobs`, and `worth: WAIT-DEMAND` remain planned only, in
+  `docs/superpowers/plans/2026-08-22-demand-gate.md`. `scripts/verify-demand.sh`
+  remains a recorded RED contract whose three assertions pass today — **not** a
+  gate. The demand gate does not exist yet.
+
 ## [1.6.4] - 2026-08-22
 
 ### Cold-start docs, temp-dir cleanup, and CHECKs that hold the prose
