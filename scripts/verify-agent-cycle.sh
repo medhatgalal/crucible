@@ -185,10 +185,10 @@ $P/crucible run-claim "$cn" a1 -- sh -c 'echo searched for existing enforcement'
 $P/crucible dispatch "$cn" scout a1 >/dev/null
 $P/crucible dispatch "$cn" scout a1 >/dev/null
 scout_contract=$(ls "$P/claims/$cn/dispatches/"2-scout-a1.md)
-if grep -E -q "claim verdict $cn a1" "$scout_contract"; then
-  bad 'scout contract embeds claim-auditor verdict surface'
-else
+if grep -F -q "claim verdict $cn a1 TRUE" "$scout_contract"; then
   ok
+else
+  bad 'scout contract omits its optional exact TRUE-verdict command'
 fi
 if grep -q "claims/$cn/evidence/" "$scout_contract" && grep -q 'claim scout' "$scout_contract"; then
   ok
@@ -208,10 +208,15 @@ done
 [ -n "$first_scout" ] && [ "$first_scout" != "$last_scout" ] && ok \
   || bad 'need two scout attempts to prove latest-sealed bind'
 if [ -n "$last_scout" ] && [ -f "$P/attempts/$last_scout/contract.md" ]; then
-  if grep -q 'Independence seal (before verdict)' "$P/attempts/$last_scout/contract.md"; then
-    bad 'scout contract.md still has independence-seal footer'
-  else
+  if grep -q 'Independence seal (before verdict)' "$scout_contract" \
+    && grep -F -q "attempt transport $last_scout multi-agent|acp|subagent" "$scout_contract" \
+    && grep -F -q "contract-audit $last_scout <contract-auditor> PASS" "$scout_contract" \
+    && grep -q 'Independence seal (before verdict)' "$P/attempts/$last_scout/contract.md" \
+    && grep -F -q "attempt transport $last_scout multi-agent|acp|subagent" "$P/attempts/$last_scout/contract.md" \
+    && grep -F -q "contract-audit $last_scout <contract-auditor> PASS" "$P/attempts/$last_scout/contract.md"; then
     ok
+  else
+    bad 'scout dispatch and attempt contract must carry the exact pre-verdict independence seal commands'
   fi
 fi
 # Two kinds are registered (kindA + kindB). Same-product ACP hop must still
@@ -409,6 +414,162 @@ expect 'PASS --like copies isomorphic scout audit' 'like '"$id1" \
 grep -q '^VERDICT: PASS$' "$L/attempts/$id2/contract-audit.md" && ok \
   || bad '--like did not write PASS onto the sibling attempt'
 
+# Ten same-agent claim-auditor dispatches expose numeric-order resolution: dispatch 1 remains on
+# the dispatch ledger but is deliberately made non-matching, so it must be skipped; among the
+# remaining matches, 2 is earlier than 10 even though the shell glob lists 10 first.
+# Only attempt 10 is sealed, which lets the verdict be written on the pre-fix engine. Every later
+# consumer must nevertheless resolve the auditor to attempt 2 and refuse/report that blocker.
+nbase=$(mktemp -d "$TMP/numeric.XXXXXX")
+nrepo="$nbase/repo"; mkdir -p "$nrepo"
+(
+  cd "$nrepo"
+  git init -q -b main
+  printf 'x\n' > t; git add t
+  git -c user.name=test -c user.email=test@example.invalid commit -qm i
+  "$C" adopt work --managed >/dev/null
+)
+N="$nrepo/.crucible/work"
+write_agents "$N"
+write_panel "$N"
+"$N/crucible" cycle approve-panel >/dev/null
+printf 'Numeric dispatch order must be stable.\n' > "$nrepo/report.md"
+"$N/crucible" cycle problem "$nrepo/report.md" >/dev/null
+nc=$("$N/crucible" claim add 'numeric dispatch order is not stable' \
+  'Numeric dispatch order must be stable.' ABSENT)
+"$N/crucible" run-claim "$nc" a1 -- sh -c 'echo searched' >/dev/null
+"$N/crucible" dispatch "$nc" scout a1 >/dev/null
+n_scout=$(sed -n 's/^attempt-id: //p' "$N/claims/$nc/dispatches/1-scout-a1.md" | head -1)
+"$N/crucible" attempt transport "$n_scout" multi-agent >/dev/null
+"$N/crucible" contract-audit "$n_scout" j2 PASS >/dev/null
+"$N/crucible" claim scout "$nc" ABSENT a1 >/dev/null
+ni=1
+while [ "$ni" -le 10 ]; do
+  "$N/crucible" dispatch "$nc" claim-auditor a1 >/dev/null
+  ni=$((ni + 1))
+done
+n1=$(sed -n 's/^attempt-id: //p' "$N/claims/$nc/dispatches/1-claim-auditor-a1.md" | head -1)
+n2=$(sed -n 's/^attempt-id: //p' "$N/claims/$nc/dispatches/2-claim-auditor-a1.md" | head -1)
+n10=$(sed -n 's/^attempt-id: //p' "$N/claims/$nc/dispatches/10-claim-auditor-a1.md" | head -1)
+# Dispatch 1 remains on the dispatch ledger but no longer stamps a matching claim attempt, so every
+# resolver must skip it. This isolates numeric ordering among the remaining matches.
+awk -F '\t' 'BEGIN { OFS="\t" } NR == 2 { $2="C999" } { print }' \
+  "$N/attempts/$n1/meta.tsv" > "$N/attempts/$n1/meta.tsv.tmp"
+mv "$N/attempts/$n1/meta.tsv.tmp" "$N/attempts/$n1/meta.tsv"
+"$N/crucible" attempt transport "$n10" multi-agent >/dev/null
+"$N/crucible" contract-audit "$n10" j2 PASS >/dev/null
+"$N/crucible" run-claim "$nc" a1 -- sh -c 'echo reproduced' >/dev/null
+"$N/crucible" claim verdict "$nc" a1 TRUE >/dev/null
+n_dispatches=$(printf '%s\n' "$N/claims/$nc/dispatches/"*-claim-auditor-a1.md | wc -l | tr -d ' ')
+if [ "$n_dispatches" -eq 10 ] && [ -n "$n1" ] && [ -n "$n2" ] && [ -n "$n10" ] \
+  && [ "$n1" != "$n2" ] && [ "$n2" != "$n10" ] \
+  && [ "$(awk -F '\t' 'NR == 2 { print $2 }' "$N/attempts/$n1/meta.tsv")" = C999 ] \
+  && [ ! -e "$N/attempts/$n2/transport" ] \
+  && [ -e "$N/attempts/$n10/transport" ]; then
+  ok
+else
+  bad "B5 fixture: expected ten claim-auditor dispatches with non-matching 1, unsealed numeric-earliest match 2 ($n2), and sealed 10 ($n10); found $n_dispatches dispatches"
+fi
+n_triage=$(CRUCIBLE_MIN_AUDITORS=1 "$N/crucible" triage 2>&1) || true
+n_rec=$(printf '%s\n' "$n_triage" | sed -n 's/^ *-> //p' | head -1)
+n_cycle=$(CRUCIBLE_MIN_AUDITORS=1 "$N/crucible" cycle 2>&1) || true
+set +e
+n_admit=$(CRUCIBLE_MIN_AUDITORS=1 "$N/crucible" claim admit "$nc" numeric-probe 2>&1)
+n_admit_rc=$?
+set -e
+case $n_rec in ADMIT*) n_triage_safe= ;; *) n_triage_safe=1 ;; esac
+case $n_cycle in 'NEXT PROPOSE'*) n_cycle_safe= ;; *) n_cycle_safe=1 ;; esac
+if [ -n "$n_triage_safe" ] && [ -n "$n_cycle_safe" ] \
+  && [ "$n_admit_rc" -ne 0 ] \
+  && printf '%s\n' "$n_admit" | grep -q "attempt $n2 has no transport"; then
+  ok
+else
+  bad "B5: after ten dispatches with 1 skipped, every consumer must resolve the earliest numeric claim-auditor match 2, not 10 — triage: ${n_rec:-none}; cycle: $(printf '%s\n' "$n_cycle" | head -1); claim admit: $n_admit"
+fi
+
+# Scout TRUE is optional but fully gate-visible when its own scout attempt is sealed. A second
+# claim proves the converse by hand-placing the same canonical TRUE artifact behind an unsealed
+# scout attempt: triage, cycle, and admission must all keep it below the default floor.
+sbase=$(mktemp -d "$TMP/scout-true.XXXXXX")
+srepo="$sbase/repo"; mkdir -p "$srepo"
+(
+  cd "$srepo"
+  git init -q -b main
+  printf 'x\n' > t; git add t
+  git -c user.name=test -c user.email=test@example.invalid commit -qm i
+  "$C" adopt work --managed >/dev/null
+)
+S="$srepo/.crucible/work"
+write_agents "$S"
+write_panel "$S"
+printf 'scout\ta2\tno\toptional affirmative scout verdict\n' >> "$S/PANEL.ASSIGN.tsv"
+"$S/crucible" cycle approve-panel >/dev/null
+printf 'Scout verdict eligibility must track its own seal.\n' > "$srepo/report.md"
+"$S/crucible" cycle problem "$srepo/report.md" >/dev/null
+spos=$("$S/crucible" claim add 'sealed scout TRUE is not eligible' \
+  'Scout verdict eligibility must track its own seal.' ABSENT)
+for swho in a1 a2; do
+  "$S/crucible" run-claim "$spos" "$swho" -- sh -c 'echo independently checked' >/dev/null
+done
+"$S/crucible" dispatch "$spos" claim-auditor a1 >/dev/null
+seal_claim_agent "$S" a1
+"$S/crucible" claim verdict "$spos" a1 TRUE >/dev/null
+"$S/crucible" dispatch "$spos" scout a2 >/dev/null
+seal_claim_agent "$S" a2
+"$S/crucible" claim scout "$spos" ABSENT a2 >/dev/null
+"$S/crucible" claim verdict "$spos" a2 TRUE >/dev/null
+spos_triage=$("$S/crucible" triage 2>&1) || true
+spos_rec=$(printf '%s\n' "$spos_triage" | sed -n 's/^ *-> //p' | head -1)
+spos_cycle=$("$S/crucible" cycle 2>&1) || true
+set +e
+spos_admit=$(CRUCIBLE_MIN_KINDS=9 "$S/crucible" claim admit "$spos" scout-positive-probe 2>&1)
+spos_admit_rc=$?
+set -e
+if [ "$spos_rec" = 'ADMIT — audited TRUE by 2 agent(s) across 2 kind(s), and absent from the repo.' ] \
+  && printf '%s\n' "$spos_cycle" | grep -q '^NEXT PROPOSE ' \
+  && [ "$spos_admit_rc" -ne 0 ] \
+  && printf '%s\n' "$spos_admit" | grep -q 'audited by 2 kind(s), need 9'; then
+  ok
+else
+  bad "sealed scout TRUE plus one sealed auditor TRUE must reach the default floor — triage: ${spos_rec:-none}; cycle: $(printf '%s\n' "$spos_cycle" | head -1); admit probe: $spos_admit"
+fi
+
+sneg=$("$S/crucible" claim add 'unsealed scout TRUE is eligible' \
+  'Scout verdict eligibility must track its own seal.' ABSENT)
+for swho in a1 a2; do
+  "$S/crucible" run-claim "$sneg" "$swho" -- sh -c 'echo independently checked' >/dev/null
+done
+"$S/crucible" dispatch "$sneg" claim-auditor a1 >/dev/null
+seal_claim_agent "$S" a1
+"$S/crucible" claim verdict "$sneg" a1 TRUE >/dev/null
+"$S/crucible" dispatch "$sneg" scout a1 >/dev/null
+seal_claim_agent "$S" a1
+"$S/crucible" claim scout "$sneg" ABSENT a1 >/dev/null
+"$S/crucible" dispatch "$sneg" scout a2 >/dev/null
+sneg_attempt=$(sed -n 's/^attempt-id: //p' \
+  "$S/claims/$sneg/dispatches/1-scout-a2.md" | head -1)
+printf 'CLAIM-VERDICT: TRUE\nAGENT: a2\nKIND: kindB\nCITATION: claims/%s/evidence/a2.txt\n' \
+  "$sneg" > "$S/claims/$sneg/verdicts/a2.md"
+sneg_triage=$("$S/crucible" triage 2>&1) || true
+sneg_rec=$(printf '%s\n' "$sneg_triage" \
+  | sed -n '/^C2  /,/^$/{s/^ *-> //p;}' | head -1)
+sneg_cycle=$("$S/crucible" cycle 2>&1) || true
+set +e
+sneg_admit=$("$S/crucible" claim admit "$sneg" scout-negative-probe 2>&1)
+sneg_admit_rc=$?
+set -e
+case $sneg_rec in
+  "INDEPENDENCE INCOMPLETE — 2 TRUE on file, 1 counted across 1 kind(s); need 2 across 1. a2 resolves to attempt $sneg_attempt, which has no transport"*) sneg_triage_safe=1 ;;
+  *) sneg_triage_safe= ;;
+esac
+if [ -n "$sneg_triage_safe" ] \
+  && [ "$sneg_cycle" = 'NEXT INVESTIGATE — independently fact-check every unresolved ABSENT claim (NO-BUILD if all FALSE/STALE)' ] \
+  && [ "$sneg_admit_rc" -ne 0 ] \
+  && printf '%s\n' "$sneg_admit" | grep -q "refused: attempt $sneg_attempt has no transport"; then
+  ok
+else
+  bad "unsealed scout TRUE must remain below the default floor on every surface — triage: ${sneg_rec:-none}; cycle: $(printf '%s\n' "$sneg_cycle" | head -1); admit: $sneg_admit"
+fi
+
 # --- 1.5.0 claim grammar, verdict history, polarity, REVIEW->BUILD, PANEL.CONTEXT ---
 gbase=$(mktemp -d "$TMP/gram.XXXXXX")
 grepo="$gbase/repo"; mkdir -p "$grepo"
@@ -438,12 +599,27 @@ st=$("$G/crucible" cycle 2>&1) || true
 printf '%s\n' "$st" | grep -q 'NO-BUILD if all FALSE/STALE' && ok \
   || bad "ABSENT-only STATUS missing NO-BUILD close: $st"
 printf '%s\n' "$st" | grep -q 'admit needs' && bad "ABSENT-only STATUS still says admit needs: $st" || ok
-# verdict never clobbers
-"$G/crucible" run-claim "$cn" a1 -- sh -c 'echo ev' >/dev/null
+# verdict never clobbers; an implicit citation must stay bound to usable regular evidence even
+# when a lexically later non-empty directory also matches the evidence glob.
+implicit_evidence_out=$("$G/crucible" run-claim "$cn" a1 -- sh -c 'echo ev')
+implicit_evidence=${implicit_evidence_out%% *}
+implicit_expected="claims/$cn/evidence/$(basename "$implicit_evidence")"
+mkdir -p "$G/claims/$cn/evidence/a1.zzz.txt"
+printf 'not evidence\n' > "$G/claims/$cn/evidence/a1.zzz.txt/child"
 "$G/crucible" dispatch "$cn" claim-auditor a1 >/dev/null
 seal_claim_agent "$G" a1
 printf 'WRITEUP keep me\n' > "$G/claims/$cn/verdicts/a1.md"
 "$G/crucible" claim verdict "$cn" a1 FALSE >/dev/null
+implicit_citation=$(sed -n 's/^CITATION: //p' "$G/claims/$cn/verdicts/a1.md" | head -1)
+implicit_mark=$(awk -F "'" '/^MARK=/ { print $2; exit }' "$G/crucible")
+if [ "$implicit_citation" = "$implicit_expected" ] \
+  && [ -f "$G/$implicit_citation" ] && [ -r "$G/$implicit_citation" ] \
+  && [ -s "$G/$implicit_citation" ] \
+  && [ "$(head -1 "$G/$implicit_citation")" = "$implicit_mark" ]; then
+  ok
+else
+  bad "B4: implicit citation must select the regular usable evidence file despite a later non-empty directory — expected $implicit_expected, got ${implicit_citation:-none}"
+fi
 [ -f "$G/claims/$cn/verdicts/a1.md" ] && grep -q 'CITATION:' "$G/claims/$cn/verdicts/a1.md" && ok \
   || bad 'verdict missing CITATION'
 ls "$G/claims/$cn/verdicts/history/"a1.*.md >/dev/null 2>&1 && ok \

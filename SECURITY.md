@@ -2,20 +2,14 @@
 
 ## What this is not
 
-crucible is **not a security boundary.** It runs as you, on your machine, with your shell. Under one
-user, one actor can author every verdict under different registered names, read any file the gate
-believes is private, and replace the gate itself. It raises the cost of faking a review panel; it does
-not close it.
+crucible is **not a security boundary.** Do not use its registered names, transport labels, contract
+audits, or attempt ledger as access controls. The canonical boundary is listed in
+[Known limits](docs/whats-new.md#known-limits).
 
-If you need agents that genuinely cannot forge each other's verdicts, you need separate OS identities
-or containers, an evidence store owned by another principal, and a verdict service holding a write
-capability. None of that is here, and `README.md` says so in the same words.
-
-Transport labels (`multi-agent`, `acp`, `subagent`), contract audits, and attempt ledgers prove
-**process discipline**, not cryptographic multi-agent identity. ACP isolation is stronger than
-same-thread multi-hat work and weaker than separate OS principals. Panel approval binds content
-hashes of `PANEL.md`, `PANEL.ASSIGN.tsv`, and `agents.tsv` to execution commands on guided cycles;
-it still does not prove a different person ran the other CLI.
+If your workflow requires principals that cannot alter one another's records, provide that isolation
+outside Crucible with separate OS identities or containers and separately controlled evidence and
+verdict storage. Panel approval binds the current panel files to guided execution; it grants no file
+permissions.
 
 ## What it does protect against
 

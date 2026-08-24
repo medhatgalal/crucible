@@ -98,6 +98,19 @@ have() { command -v "$1" >/dev/null 2>&1; }
 posint() { case $1 in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ]; }
 posint "$MIN_JUDGES" || die "CRUCIBLE_MIN_JUDGES must be a positive integer"
 posint "$MIN_KINDS"  || die "CRUCIBLE_MIN_KINDS must be a positive integer"
+# The third override, guarded here so the three read alike. It is tested only when SET because it
+# has no numeric default to fall back to: an unset CRUCIBLE_MIN_AUDITORS must stay unset so
+# guided_min_auditors keeps consulting the panel, and defaulting it to 2 here would silently stop
+# a three-row claim-auditor panel from raising the bar. Empty is unset, as `:-` makes it for the
+# two above.
+#
+# Unguarded, `=0` defeated the invariant every travelling document states unconditionally — that a
+# missing, malformed or zero-row panel cannot lower the bar below 2 — by lowering it to 0 with no
+# refusal anywhere, and `=abc` leaked `[: abc: integer expression expected` out of three call
+# sites while `triage` printed "need abc". `=1` is a documented real weakening and still passes:
+# posint accepts 1.
+[ -z "${CRUCIBLE_MIN_AUDITORS:-}" ] || posint "$CRUCIBLE_MIN_AUDITORS" \
+  || die "CRUCIBLE_MIN_AUDITORS must be a positive integer"
 
 hashfile() {
   if   have shasum;    then shasum -a 256 "$1" | cut -d' ' -f1
@@ -579,18 +592,31 @@ panel_has_single_product_waiver() {
   grep -qiE '^[[:space:]]*(LADDER_WAIVER|WAIVER):[[:space:]]*single-product\b' "$(panel_file)"
 }
 
+# The ladder condition as a VALUE rather than an exit, so the gate that must refuse and the
+# counter that must not can share one writer. 0 = the recorded transport is honest under the
+# CURRENT probe state; 1 = subagent with no recorded ACP probe failure; 2 = not a transport at all.
+# It cannot die: `cycle` and `triage` reach it through claim_agent_independence_ok.
+transport_ladder_ok() {
+  case $1 in
+    multi-agent|acp) return 0 ;;
+    subagent) acp_probe_failed && return 0; return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
 # Prefer multi-agent *agents* when ≥2 kinds are registered. The transport label
 # describes this hop: acp is honest for a same-product ACP session even on a
 # multi-kind panel. Do not force the multi-agent label onto a grok→grok hop.
 # Subagent still requires a recorded ACP probe failure.
+#
+# Unchanged in what it refuses and in what it says: the condition moved into transport_ladder_ok
+# and the two messages stayed here, because they are different refusals with different recoveries
+# and the exit code distinguishes them.
 enforce_transport_ladder() {
   transport=$1
-  if [ "$transport" = subagent ]; then
-    acp_probe_failed \
-      || die "refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)"
-  fi
-  case $transport in
-    multi-agent|acp|subagent) return 0 ;;
+  transport_ladder_ok "$transport" && return 0
+  case $? in
+    1) die "refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)" ;;
     *) die "refused: transport must be multi-agent|acp|subagent" ;;
   esac
 }
@@ -776,7 +802,7 @@ cmd_plan_audit() {
   {
     printf 'VERDICT: %s\nAUDITOR: %s\nAUDITOR-KIND: %s\nITEM: %s\n' \
       "$verdict" "$auditor" "$(kind_of "$auditor")" "$slug"
-    printf '\nPlan-audit of ITEM.md for %s by %s. Not a maker PASS.\n' "$slug" "$auditor"
+    printf '\nPlan-audit of ITEM.md for %s by %s.\n' "$slug" "$auditor"
   } > "$d/plan-audit.md"
   printf '%s/plan-audit.md\n' "$d"
 }
@@ -1398,7 +1424,10 @@ cmd_dispatch_claim() {
       echo "search you ran and let it be checked. Search by behaviour, not by name — the thing that"
       echo "would be built rarely contains the words someone would call it."
       echo
-      echo "Do not record a claim verdict. That surface is for claim-auditor only."
+      echo "If you independently verify the claim itself, you may also record this affirmative"
+      echo "verdict. It does not replace the separately required scout result:"
+      echo
+      echo "    $self claim verdict $cn $name TRUE"
     else
       echo "    $self claim verdict $cn $name TRUE|FALSE|STALE|UNVERIFIABLE"
       echo
@@ -1430,6 +1459,15 @@ cmd_dispatch_claim() {
     printf '%s\t%s\t-\tCLAIM\t%s\t%s\t%s\t-\tFOCUSED\tDISPATCHED\t%s\t%s\t-\n' \
       "$attempt_id" "$cn" "$role" "$name" "$kind" "$now" "$((now + 1800))" >> "$staging/meta.tsv"
     printf 'state\tepoch\tpid\treason\nDISPATCHED\t%s\t-\tdispatch-recorded\n' "$now" > "$staging/events.tsv"
+    if [ "$role" = scout ]; then
+      {
+        printf 'attempt-id: %s\n' "$attempt_id"
+        printf '\n## Independence seal (before verdict)\n\n'
+        printf 'Before a TRUE verdict or scout result, while DISPATCHED, record transport and a contract-audit PASS:\n\n'
+        printf '    %s attempt transport %s multi-agent|acp|subagent\n' "$self" "$attempt_id"
+        printf '    %s contract-audit %s <contract-auditor> PASS\n' "$self" "$attempt_id"
+      } >> "$out"
+    fi
     {
       cat "$out"
       if [ "$role" != scout ]; then
@@ -1441,7 +1479,7 @@ cmd_dispatch_claim() {
     } > "$staging/contract.md"
     printf 'claim-dispatch: %s\n' "${out#"$ROOT"/}" > "$staging/claim-dispatch.txt"
     mv "$staging" "$ROOT/attempts/$attempt_id"
-    printf 'attempt-id: %s\n' "$attempt_id" >> "$out"
+    [ "$role" = scout ] || printf 'attempt-id: %s\n' "$attempt_id" >> "$out"
   fi
   printf '%s\n' "$out"
   if [ -n "$attempt_id" ]; then
@@ -2331,6 +2369,19 @@ panel_required_count() {
   ' "$af"
 }
 
+# The one writer of the admit bar: max(2, required=yes claim-auditor rows) on a guided cycle,
+# with CRUCIBLE_MIN_AUDITORS overriding both. Three call sites read this — `cycle`'s INVESTIGATE
+# line and state, `triage`'s recommendation, and `claim admit`'s refusal — and each used to carry
+# its own copy of the number. Two of those copies were a bare floor of 2 that ignored the panel,
+# so a panel casting three auditors let `cycle` report PROPOSE and `triage` recommend ADMIT for a
+# claim `claim admit` then refused with `need 3`. That is the exact regression 1.3.3 fixed and
+# named: `cycle` no longer reports PLAN/COMPLETE for a TRUE claim that `claim admit` would refuse.
+# One function is what keeps it fixed.
+#
+# The floor is a floor, not a fallback (RULES.md 3, "Absence fails"): a missing, malformed, or
+# zero-row PANEL.ASSIGN.tsv yields 0 from panel_required_count and must still demand 2, because a
+# check that is most confident when it knows least is inverted. Only a panel that asks for MORE
+# than two raises the bar.
 guided_min_auditors() {
   if [ -n "${CRUCIBLE_MIN_AUDITORS:-}" ]; then
     printf '%s' "$CRUCIBLE_MIN_AUDITORS"
@@ -2338,7 +2389,8 @@ guided_min_auditors() {
   fi
   if uses_guided_cycle; then
     n=$(panel_required_count claim-auditor)
-    [ "$n" -ge 1 ] && { printf '%s' "$n"; return; }
+    case $n in ''|*[!0-9]*) n=0 ;; esac
+    [ "$n" -gt 2 ] && { printf '%s' "$n"; return; }
   fi
   printf '2'
 }
@@ -2353,6 +2405,20 @@ guided_min_judges() {
     [ "$n" -ge 1 ] && { printf '%s' "$n"; return; }
   fi
   printf '%s' "$MIN_JUDGES"
+}
+
+# The one verdict grammar consumed by readiness, diagnostics, cycle progression, and admission.
+# A verdict exists only when physical line 1 is exactly one canonical header; later lookalikes are
+# prose, not a gate-visible verdict.
+claim_verdict_word() {
+  cvw_line=$(sed -n '1p' "$1" 2>/dev/null) || return 1
+  case $cvw_line in
+    'CLAIM-VERDICT: TRUE') printf 'TRUE' ;;
+    'CLAIM-VERDICT: FALSE') printf 'FALSE' ;;
+    'CLAIM-VERDICT: STALE') printf 'STALE' ;;
+    'CLAIM-VERDICT: UNVERIFIABLE') printf 'UNVERIFIABLE' ;;
+    *) return 1 ;;
+  esac
 }
 
 claims_absent_only() {
@@ -2371,7 +2437,11 @@ cycle_worth() {
   [ "$st" = COMPLETE ] || { printf 'UNKNOWN'; return; }
   truec=0
   if [ -d "$ROOT/claims" ]; then
-    grep -l '^CLAIM-VERDICT: TRUE$' "$ROOT"/claims/*/verdicts/*.md >/dev/null 2>&1 && truec=1 || true
+    for true_vf in "$ROOT"/claims/*/verdicts/*.md; do
+      [ -f "$true_vf" ] || continue
+      [ "$(claim_verdict_word "$true_vf" 2>/dev/null || true)" = TRUE ] \
+        && { truec=1; break; }
+    done
   fi
   if [ "$truec" -eq 0 ]; then printf 'NO-BUILD'; return; fi
   absent=0; partly=0
@@ -2568,12 +2638,14 @@ require_attempt_independence() {
   enforce_transport_ladder "$transport"
   attempt_contract_audit_pass "$id" \
     || die "refused: attempt $id lacks contract-audit PASS — run: $(self_path) contract-audit $id $(suggest_contract_auditor) PASS while DISPATCHED"
-  case $transport in
-    subagent)
-      acp_probe_failed \
-        || die "refused: subagent transport requires a recorded ACP probe failure before weaker isolation"
-      ;;
-  esac
+  # There is no `case $transport in subagent) acp_probe_failed || die` here, and there must not be.
+  # enforce_transport_ladder above already does exactly that, and nothing between the two reads or
+  # writes probe state, so a second copy's `die` was unreachable: entering it meant
+  # acp_probe_failed had already returned 0. Measured over every transport x every probe state —
+  # the branch was entered on (subagent, failed) and (subagent, unavailable) and died in neither,
+  # and on (subagent, ok) the ladder died first and the branch was never entered. Its message
+  # appeared in no test and no document. 1.6.6 counted it as a shipped check; it checked nothing.
+  # If subagent ever needs a condition the ladder does not apply, put it in the ladder.
 }
 
 # Claim attempt stamps must name this claim + agent + claim-auditor|scout role.
@@ -2630,56 +2702,245 @@ write_independence_receipt() {
   mv "$tmp" "$out"
 }
 
-# Soft check: does agent have a sealed matching claim attempt for cn?
+# The claim attempt one agent's verdict resolves to: that agent's EARLIEST claim dispatch for this
+# claim when it stamps a matching attempt, otherwise the last matching attempt on the ledger. One
+# writer, because `claim admit` carried a byte-identical copy of this walk and the triage
+# diagnostic below has to name the SAME attempt the gate refuses on — a diagnostic that named a
+# different attempt would send the operator to seal something that was never in the way.
+#
+# Prints the attempt id, or nothing, and never fails: absence is the empty string and each caller
+# decides what absence means (a predicate returns 1, a gate dies, the diagnostic names it).
+claim_agent_attempt() {
+  caa_cn=$1; caa_agent=$2
+  caa_id=; caa_first=
+  caa_dir="$ROOT/claims/$caa_cn/dispatches"
+  if [ -d "$caa_dir" ]; then
+    for caa_role in claim-auditor scout; do
+      caa_first=
+      for caa_df in "$caa_dir"/*-"$caa_role"-"$caa_agent".md; do
+        [ -f "$caa_df" ] || continue
+        caa_name=${caa_df##*/}; caa_n=${caa_name%%-*}
+        case $caa_n in ''|*[!0-9]*) continue ;; esac
+        caa_stamped=$(sed -n 's/^attempt-id: //p' "$caa_df" | head -1)
+        if [ -n "$caa_stamped" ] && claim_attempt_matches "$caa_stamped" "$caa_cn" "$caa_agent"; then
+          if [ -z "$caa_first" ] || [ "$caa_n" -lt "$caa_first" ]; then
+            caa_first=$caa_n; caa_id=$caa_stamped
+          fi
+        fi
+      done
+      [ -z "$caa_id" ] || break
+    done
+  fi
+  if [ -z "$caa_id" ] && [ -d "$ROOT/attempts" ]; then
+    for caa_ad in "$ROOT"/attempts/A*; do
+      [ -d "$caa_ad" ] || continue
+      claim_attempt_matches "${caa_ad##*/}" "$caa_cn" "$caa_agent" || continue
+      caa_id=${caa_ad##*/}
+    done
+  fi
+  printf '%s' "$caa_id"
+  return 0
+}
+
+# Soft check: does agent have a sealed matching claim attempt for cn, still honest under the
+# CURRENT ladder? The ladder re-check is what `require_attempt_independence` has always done and
+# what this predicate did not, and the gap had a terminal state behind it: seal an attempt on
+# `subagent` while the ACP probe reads failed, record TRUE, then record `probe-acp ok` when ACP
+# comes back. The seal was legitimate when made and the ladder now refuses it; the probe is
+# deliberately one-way, so nothing restores it. Without this line `triage` printed ADMIT and
+# `claim admit` refused, forever, on a claim no command could advance.
 claim_agent_independence_ok() {
   cn=$1; agent=$2
   panel_approval_current || return 1
-  ca=
-  cdir="$ROOT/claims/$cn/dispatches"
-  if [ -d "$cdir" ]; then
-    for df in "$cdir"/*-claim-auditor-"$agent".md "$cdir"/*-scout-"$agent".md; do
-      [ -f "$df" ] || continue
-      stamped=$(sed -n 's/^attempt-id: //p' "$df" | head -1)
-      if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$cn" "$agent"; then
-        ca=$stamped; break
-      fi
-    done
-  fi
-  if [ -z "$ca" ] && [ -d "$ROOT/attempts" ]; then
-    for ad in "$ROOT"/attempts/A*; do
-      [ -d "$ad" ] || continue
-      aid=${ad##*/}
-      claim_attempt_matches "$aid" "$cn" "$agent" || continue
-      ca=$aid
-    done
-  fi
+  ca=$(claim_agent_attempt "$cn" "$agent")
   [ -n "$ca" ] || return 1
-  attempt_transport "$ca" >/dev/null 2>&1 || return 1
+  cio_tr=$(attempt_transport "$ca" 2>/dev/null) || return 1
+  transport_ladder_ok "$cio_tr"
+  cio_ladder=$?
+  case $cio_ladder in
+    0) : ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
   attempt_contract_audit_pass "$ca" || return 1
   return 0
 }
 
-# Same bar as claim admit: enough sealed TRUE verdicts and kinds.
+# The ONE writer of "this agent recorded a usable check of its own for THIS claim": the
+# lexically last non-empty regular readable evidence file under claims/CN/evidence/AGENT.*.txt
+# whose first line is the run-claim MARK. Three sites used to carry their own copy of this loop —
+# `claim verdict`, `claim scout` and `claim admit` — and the copy in `claim admit` SUBTRACTED (a
+# `continue`) while three travelling documents said the checks outside the counter refuse rather
+# than subtract. So `triage` recommended ADMIT for a claim whose second TRUE verdict `claim admit`
+# was silently dropping, and refused it on the count. One selector, read by the counter and by the
+# gates; the boolean predicate below is its quiet wrapper.
+#
+# Deliberately soft: it returns 1, it never dies, and it must not — `cycle` and `triage` read it
+# through claim_true_counts and a predicate three surfaces call cannot exit mid-report. The two
+# gates that WANT a refusal keep their own `die` and their own recovery command, because the
+# recovery differs (`run-claim` for evidence, a search for a scout) and the message is the part
+# an operator reads.
+#
+# Cheap enough for the read-only surfaces: it forks one `head` per candidate evidence file. An
+# unexpanded glob fails `[ -f ]`, so a claim with no evidence directory costs no forks at all.
+claim_agent_evidence_file() {
+  cae_cn=$1; cae_agent=$2; cae_last=
+  for cae_ef in "$ROOT/claims/$cae_cn/evidence/$cae_agent".*.txt; do
+    # `-f` and `-r` before `-s`: a directory or a fifo matching the glob passes `-s`, and `head -1`
+    # on the first would spray an error onto a read-only surface's stderr while the second would
+    # block `triage` forever; an unreadable file leaks a `Permission denied` the same way. All
+    # three are already excluded from counting — this excludes them quietly, which is the part
+    # that matters once `cycle` and `triage` read this and not just the gate.
+    [ -f "$cae_ef" ] && [ -r "$cae_ef" ] && [ -s "$cae_ef" ] || continue
+    [ "$(head -1 "$cae_ef")" = "$MARK" ] || continue
+    cae_last=$cae_ef
+  done
+  [ -n "$cae_last" ] || return 1
+  printf '%s' "$cae_last"
+}
+
+claim_agent_evidence_ok() {
+  claim_agent_evidence_file "$1" "$2" >/dev/null
+}
+
+# The SET behind the admit bar, and the only place it is counted: sealed TRUE verdicts from
+# registered agents that recorded a usable check of their own and still resolve to an independent
+# attempt, and the distinct model kinds among them. Prints "<auditors> <kinds>".
+#
+# It is a separate function from the predicate below because `triage` needs the NUMBERS, not just
+# the boolean, and the alternative — `triage` walking the verdict files itself — is exactly the
+# defect this exists to remove: 1.6.6 unified the THRESHOLD into guided_min_auditors and left
+# `triage` counting every file containing `CLAIM-VERDICT: TRUE` with no independence check, so
+# `triage` recommended admissions `claim admit` refused. One threshold, one numerator.
+claim_true_counts() {
+  ctc_cn=$1
+  ctc_t=0; ctc_kinds=""
+  ctc_vd="$ROOT/claims/$ctc_cn/verdicts"
+  if [ -d "$ctc_vd" ]; then
+    for ctc_vf in "$ctc_vd"/*.md; do
+      [ -f "$ctc_vf" ] || continue
+      [ "$(claim_verdict_word "$ctc_vf" 2>/dev/null || true)" = TRUE ] || continue
+      ctc_agent=${ctc_vf##*/}; ctc_agent=${ctc_agent%.md}
+      ctc_k=$(kind_of "$ctc_agent")
+      [ -n "$ctc_k" ] || continue
+      # The same predicate `claim admit` applies, not a second copy of it. `claim verdict`
+      # demands evidence when the verdict is written, but a verdict file is write-once and an
+      # evidence file is not permanent, so a TRUE verdict can outlive the check behind it.
+      claim_agent_evidence_ok "$ctc_cn" "$ctc_agent" || continue
+      if uses_guided_cycle; then
+        claim_agent_independence_ok "$ctc_cn" "$ctc_agent" || continue
+      fi
+      ctc_t=$((ctc_t + 1))
+      case " $ctc_kinds " in *" $ctc_k "*) : ;; *) ctc_kinds="$ctc_kinds $ctc_k" ;; esac
+    done
+  fi
+  ctc_kn=0; for ctc_k in $ctc_kinds; do ctc_kn=$((ctc_kn + 1)); done
+  printf '%s %s' "$ctc_t" "$ctc_kn"
+}
+
+# Read-only counterpart to claim admit's per-TRUE refusal walk. A valid extra TRUE must not hide
+# an earlier TRUE that the gate will refuse. Preserve the transport ladder's 0/1/2 result shape:
+# 0 means every gate-visible TRUE is independent, 1 is a recoverable independence blocker, and 2
+# is a malformed transport. Callers only need zero/non-zero, but retaining the shape keeps this
+# predicate honest to the shared ladder rather than inventing a second boolean interpretation.
+claim_true_independence_ok() {
+  cti_cn=$1
+  uses_guided_cycle || return 0
+  cti_vd="$ROOT/claims/$cti_cn/verdicts"
+  [ -d "$cti_vd" ] || return 0
+  for cti_vf in "$cti_vd"/*.md; do
+    [ -f "$cti_vf" ] || continue
+    [ "$(claim_verdict_word "$cti_vf" 2>/dev/null || true)" = TRUE ] || continue
+    cti_agent=${cti_vf##*/}; cti_agent=${cti_agent%.md}
+    [ -n "$(kind_of "$cti_agent")" ] || continue
+    claim_agent_evidence_ok "$cti_cn" "$cti_agent" || continue
+    claim_agent_independence_ok "$cti_cn" "$cti_agent"
+    cti_rc=$?
+    case $cti_rc in
+      0) : ;;
+      1) return 1 ;;
+      *) return 2 ;;
+    esac
+  done
+  return 0
+}
+
+# Same bar as claim admit: enough sealed TRUE verdicts and kinds, with every gate-visible TRUE
+# still acceptable to the per-verdict independence refusal. The count comes from
+# guided_min_auditors and the set from claim_true_counts, so neither the threshold nor the
+# numerator can drift from what claim admit will accept.
 claim_true_bar_met() {
   cn=$1
-  min_a=${CRUCIBLE_MIN_AUDITORS:-2}
-  t=0; kinds=""
-  vd="$ROOT/claims/$cn/verdicts"
-  [ -d "$vd" ] || return 1
-  for vf in "$vd"/*.md; do
-    [ -f "$vf" ] || continue
-    [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] || continue
-    agent=${vf##*/}; agent=${agent%.md}
-    [ -n "$(kind_of "$agent")" ] || continue
-    if uses_guided_cycle; then
-      claim_agent_independence_ok "$cn" "$agent" || continue
+  [ -d "$ROOT/claims/$cn/verdicts" ] || return 1
+  claim_true_independence_ok "$cn" || return $?
+  cbm=$(claim_true_counts "$cn")
+  cbm_t=${cbm% *}; cbm_kn=${cbm#* }
+  [ "$cbm_t" -ge "$(guided_min_auditors)" ] && [ "$cbm_kn" -ge "$MIN_KINDS" ]
+}
+
+# Why a TRUE verdict on file does not count toward the admit bar, named with the command that
+# would make it count. Diagnostic only: no gate reads it and it decides nothing, so it cannot
+# become a second writer of the bar. It walks the verdicts in the same order and resolves the same
+# attempt as claim_true_counts, so the attempt it names is the attempt `claim admit` refuses on.
+#
+# Prints one reason — the first uncounted TRUE verdict — and returns 1 when every TRUE verdict on
+# file counts, so a caller can tell "nothing to explain" from "here is what is in the way".
+claim_true_uncounted() {
+  ctu_cn=$1
+  ctu_vd="$ROOT/claims/$ctu_cn/verdicts"
+  [ -d "$ctu_vd" ] || return 1
+  for ctu_vf in "$ctu_vd"/*.md; do
+    [ -f "$ctu_vf" ] || continue
+    [ "$(claim_verdict_word "$ctu_vf" 2>/dev/null || true)" = TRUE ] || continue
+    ctu_agent=${ctu_vf##*/}; ctu_agent=${ctu_agent%.md}
+    if [ -z "$(kind_of "$ctu_agent")" ]; then
+      printf '%s has no agents.tsv row, so its verdict carries no model kind' "$ctu_agent"
+      return 0
     fi
-    t=$((t + 1))
-    k=$(kind_of "$agent")
-    case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
+    if ! claim_agent_evidence_ok "$ctu_cn" "$ctu_agent"; then
+      printf '%s recorded no usable evidence for %s — run: %s run-claim %s %s -- <command>' \
+        "$ctu_agent" "$ctu_cn" "$(self_path)" "$ctu_cn" "$ctu_agent"
+      return 0
+    fi
+    uses_guided_cycle || continue
+    claim_agent_independence_ok "$ctu_cn" "$ctu_agent" && continue
+    if ! panel_approval_current; then
+      printf 'the agent panel is not current — run: %s cycle approve-panel' "$(self_path)"
+      return 0
+    fi
+    ctu_id=$(claim_agent_attempt "$ctu_cn" "$ctu_agent")
+    if [ -z "$ctu_id" ]; then
+      printf '%s has no matching claim attempt on the independence ledger — run: %s dispatch %s claim-auditor %s' \
+        "$ctu_agent" "$(self_path)" "$ctu_cn" "$ctu_agent"
+      return 0
+    fi
+    if ! attempt_transport "$ctu_id" >/dev/null 2>&1; then
+      printf '%s resolves to attempt %s, which has no transport — run: %s attempt transport %s <multi-agent|acp|subagent> while DISPATCHED' \
+        "$ctu_agent" "$ctu_id" "$(self_path)" "$ctu_id"
+      return 0
+    fi
+    # The one reason on this list with no command that fixes it, so it says so instead of naming
+    # one. Measured, all of it: a `subagent` seal made while the ACP probe read failed stops being
+    # honest the moment the operator records `probe-acp ok`, and every route back is closed by
+    # design — the probe refuses the downgrade, transport is only recordable while DISPATCHED, and
+    # a redispatch plus a fresh acp seal is ACCEPTED but changes nothing because the bar resolves
+    # this agent's EARLIEST claim dispatch, which is still the subagent one. Nor does recruiting
+    # another auditor help: `claim admit` walks every TRUE verdict on file and refuses on this seal
+    # whether or not the bar is met without it. So the claim is not admittable while this verdict
+    # reads TRUE, and the disposition says that rather than sending the operator somewhere.
+    ctu_tr=$(attempt_transport "$ctu_id" 2>/dev/null) || ctu_tr=
+    if ! transport_ladder_ok "$ctu_tr"; then
+      printf '%s resolves to attempt %s, sealed on %s while the ACP probe read failed; the probe now reads ok, so the ladder no longer accepts that seal. Terminal — the probe refuses a downgrade, transport is only recordable while DISPATCHED, and a redispatch resolves to the same earliest attempt. claim admit refuses on this verdict too, so a further auditor does not unblock it: %s cannot be admitted while %s reads TRUE. Re-file the finding as a new claim, or abandon the investigation' \
+        "$ctu_agent" "$ctu_id" "$ctu_tr" "$ctu_cn" "$ctu_agent"
+      return 0
+    fi
+    if ! attempt_contract_audit_pass "$ctu_id"; then
+      printf '%s resolves to attempt %s, which has no contract-audit PASS — run: %s contract-audit %s %s PASS while DISPATCHED' \
+        "$ctu_agent" "$ctu_id" "$(self_path)" "$ctu_id" "$(suggest_contract_auditor)"
+      return 0
+    fi
   done
-  kn=0; for k in $kinds; do kn=$((kn + 1)); done
-  [ "$t" -ge "$min_a" ] && [ "$kn" -ge "$MIN_KINDS" ]
+  return 1
 }
 
 # A sealed FALSE or STALE from a distinct agent means the claim is not current work,
@@ -2691,7 +2952,7 @@ claim_true_superseded() {
   true_agents=""
   for vf in "$vd"/*.md; do
     [ -f "$vf" ] || continue
-    [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] || continue
+    [ "$(claim_verdict_word "$vf" 2>/dev/null || true)" = TRUE ] || continue
     agent=${vf##*/}; agent=${agent%.md}
     if uses_guided_cycle; then
       claim_agent_independence_ok "$cn" "$agent" || continue
@@ -2701,7 +2962,7 @@ claim_true_superseded() {
   [ -n "$true_agents" ] || return 1
   for vf in "$vd"/*.md; do
     [ -f "$vf" ] || continue
-    word=$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)
+    word=$(claim_verdict_word "$vf" 2>/dev/null || true)
     case $word in FALSE|STALE) : ;; *) continue ;; esac
     agent=${vf##*/}; agent=${agent%.md}
     case " $true_agents " in *" $agent "*) continue ;; esac
@@ -2724,6 +2985,8 @@ cycle_investigation_state() {
     if [ -d "$vd" ]; then
       for vf in "$vd"/*.md; do
         [ -f "$vf" ] || continue
+        word=$(claim_verdict_word "$vf" 2>/dev/null || true)
+        [ -n "$word" ] || continue
         agent=${vf##*/}; agent=${agent%.md}
         # Consume-time: guided cycles ignore verdicts that lack a sealed matching attempt
         # (covers temporary cycle: guided toggle while writing verdict files).
@@ -2731,7 +2994,7 @@ cycle_investigation_state() {
           claim_agent_independence_ok "C$i" "$agent" || continue
         fi
         verdicts=$((verdicts + 1))
-        [ "$(sed -n 's/^CLAIM-VERDICT: //p' "$vf" | head -1)" = TRUE ] && truth=$((truth + 1))
+        [ "$word" = TRUE ] && truth=$((truth + 1))
       done
     fi
     [ "$verdicts" -gt 0 ] || { printf 'NEEDS_AUDIT'; return; }
@@ -3187,7 +3450,11 @@ drive_investigate_dispatch() {
     cn="C$i"
     truth=0
     if [ -d "$ROOT/claims/$cn/verdicts" ]; then
-      grep -l '^CLAIM-VERDICT: TRUE$' "$ROOT/claims/$cn/verdicts"/*.md >/dev/null 2>&1 && truth=1 || true
+      for drive_vf in "$ROOT/claims/$cn/verdicts"/*.md; do
+        [ -f "$drive_vf" ] || continue
+        [ "$(claim_verdict_word "$drive_vf" 2>/dev/null || true)" = TRUE ] \
+          && { truth=1; break; }
+      done
     fi
     scout=$(sed -n "/^### $cn /,/^### C[0-9]/{s/^    scout: //p;}" "$f" | head -1)
     if [ "$truth" -eq 1 ] && [ -z "$scout" ]; then
@@ -3244,7 +3511,7 @@ drive_apply_isomorphic_verdicts() {
   [ -d "$ROOT/claims" ] || return 0
   for vd in "$ROOT"/claims/C*/verdicts/*.md; do
     [ -f "$vd" ] || continue
-    word=$(sed -n 's/^CLAIM-VERDICT: //p' "$vd" | head -1)
+    word=$(claim_verdict_word "$vd" 2>/dev/null || true)
     case $word in STALE|FALSE|UNVERIFIABLE) : ;; *) continue ;; esac
     who=$(sed -n 's/^AGENT: //p' "$vd" | head -1)
     from=${vd##*/claims/}; from=${from%%/*}
@@ -4732,7 +4999,7 @@ claim_copy_verdict_like() {
   who=$3
   src="$ROOT/claims/$from/verdicts/$who.md"
   [ -f "$src" ] || return 1
-  word=$(sed -n 's/^CLAIM-VERDICT: //p' "$src" | head -1)
+  word=$(claim_verdict_word "$src" 2>/dev/null || true)
   case $word in STALE|FALSE|UNVERIFIABLE) : ;; *) return 1 ;; esac
   dest="$ROOT/claims/$to/verdicts"
   mkdir -p "$dest"
@@ -4804,14 +5071,9 @@ cmd_claim() {
     case $word in TRUE|FALSE|STALE|UNVERIFIABLE) : ;; *) die "verdict must be TRUE FALSE STALE or UNVERIFIABLE" ;; esac
     d="$ROOT/claims/$n/verdicts"; [ -d "$d" ] || die "no such claim: $n"
     # An auditor's verdict must be backed by a check that auditor recorded. Without this the
-    # outer loop is unauthenticated text: any name can assert TRUE about anything.
-    ce=0
-    for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
-      [ -s "$ef" ] || continue
-      [ "$(head -1 "$ef")" = "$MARK" ] || continue
-      ce=$((ce+1))
-    done
-    [ "$ce" -gt 0 ] \
+    # outer loop is unauthenticated text: any name can assert TRUE about anything. Same predicate
+    # the admit counter reads; only the refusal and its recovery command live here.
+    claim_agent_evidence_ok "$n" "$who" \
       || die "refused: $who recorded no usable evidence for $n — run: crucible run-claim $n $who -- <command>"
     # Guided cycles: every claim verdict (TRUE/FALSE/STALE/UNVERIFIABLE) requires a
     # claim-auditor or scout dispatch and a sealed independence-ledger attempt.
@@ -4860,12 +5122,8 @@ cmd_claim() {
       esac
     done
     if [ -z "$cite" ]; then
-      last=
-      for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
-        [ -s "$ef" ] || continue
-        last=$ef
-      done
-      cite=${last#"$ROOT/"}
+      evidence_file=$(claim_agent_evidence_file "$n" "$who") || evidence_file=
+      cite=${evidence_file#"$ROOT/"}
     fi
     [ -n "$cite" ] || die 'refused: claim verdict requires a citation (evidence path or quote)'
     if [ -s "$d/$who.md" ]; then
@@ -4896,11 +5154,7 @@ cmd_claim() {
     [ -n "$who" ] || die 'usage: crucible claim scout CN RESULT AGENT — name the scout that searched'
     [ -n "$(kind_of "$who")" ] || die "unregistered agent: $who"
     # ABSENT is a claim in its own right, so it needs the searches behind it recorded.
-    se=0
-    for ef in "$ROOT/claims/$n/evidence/$who".*.txt; do
-      [ -s "$ef" ] && [ "$(head -1 "$ef")" = "$MARK" ] && se=$((se+1))
-    done
-    [ "$se" -gt 0 ] \
+    claim_agent_evidence_ok "$n" "$who" \
       || die "refused: $who recorded no usable searches for $n — run: crucible run-claim $n $who -- <search>"
     if [ "$res" = ABSENT ] && [ -f "$ROOT/PROGRAM" ]; then
       r=$(sed -n 's/^repo: //p' "$ROOT/PROGRAM")
@@ -4966,40 +5220,24 @@ cmd_claim() {
       # only a registered agent's verdict counts; a hand-dropped file with any name does not
       vn=${v##*/}; vn=${vn%.md}
       [ -n "$(kind_of "$vn")" ] || { printf 'ignoring unregistered verdict file: %s\n' "$vn" >&2; continue; }
-      ae=0
-      for ef in "$ROOT/claims/$n/evidence/$vn".*.txt; do
-        [ -s "$ef" ] && [ "$(head -1 "$ef")" = "$MARK" ] && ae=$((ae+1))
-      done
-      [ "$ae" -gt 0 ] || {
+      # Same predicate the counter applies, so this note can no longer describe a subtraction the
+      # counter did not make. It stays a note rather than a refusal because a TRUE verdict whose
+      # evidence is gone is not an error to report at the gate — it is one fewer auditor, and the
+      # count below is what refuses.
+      claim_agent_evidence_ok "$n" "$vn" || {
         printf 'ignoring %s: no usable evidence for %s\n' "$vn" "$n" >&2; continue; }
-      [ "$(sed -n '1p' "$v")" = "CLAIM-VERDICT: TRUE" ] || continue
+      [ "$(claim_verdict_word "$v" 2>/dev/null || true)" = TRUE ] || continue
       # The kind comes from agents.tsv, not from the verdict file. Reading it from the file let a
       # writable KIND: line turn one agent into two kinds and satisfy a cross-model requirement.
       k=$(kind_of "$vn")
       case " $kinds " in *" $k "*) : ;; *) kinds="$kinds $k" ;; esac
       t=$((t+1))
       # Consume-time independence: TRUE verdicts must still resolve to a sealed matching attempt
-      # even if someone toggled cycle: guided off while writing the verdict file.
+      # even if someone toggled cycle: guided off while writing the verdict file. The attempt is
+      # resolved through claim_agent_attempt so this gate and the counter triage/cycle read land
+      # on the SAME attempt — an inline copy of the walk is how the two came apart before.
       if uses_guided_cycle; then
-        ca=
-        cdir="$ROOT/claims/$n/dispatches"
-        if [ -d "$cdir" ]; then
-          for df in "$cdir"/*-claim-auditor-"$vn".md "$cdir"/*-scout-"$vn".md; do
-            [ -f "$df" ] || continue
-            stamped=$(sed -n 's/^attempt-id: //p' "$df" | head -1)
-            if [ -n "$stamped" ] && claim_attempt_matches "$stamped" "$n" "$vn"; then
-              ca=$stamped; break
-            fi
-          done
-        fi
-        if [ -z "$ca" ] && [ -d "$ROOT/attempts" ]; then
-          for ad in "$ROOT"/attempts/A*; do
-            [ -d "$ad" ] || continue
-            aid=${ad##*/}
-            claim_attempt_matches "$aid" "$n" "$vn" || continue
-            ca=$aid
-          done
-        fi
+        ca=$(claim_agent_attempt "$n" "$vn")
         [ -n "$ca" ] \
           || die "refused: admit requires a sealed claim attempt for TRUE auditor $vn"
         require_attempt_independence "$ca"
@@ -5109,6 +5347,19 @@ cmd_triage() {
   n=$(grep -c '^### C' "$f" 2>/dev/null || true); n=${n:-0}
   [ "$n" -gt 0 ] || die "no claims yet — crucible claim add \"<claim>\" \"<source sentence>\""
   unaudited=0
+  # ONE read of the ONE writer of the admit-bar THRESHOLD, and the NUMERATOR comes from
+  # claim_true_counts / claim_true_bar_met rather than from a second walk of the verdict files.
+  # 1.6.6 unified the threshold and left three numerators: this surface counted every file
+  # containing `CLAIM-VERDICT: TRUE` with no independence check at all, so it recommended ADMIT
+  # for claims `claim admit` refused — the CHANGELOG 1.3.3 invariant, broken in the half nobody
+  # tested. min_a is still read here because the MORE AUDIT message names the number.
+  #
+  # Readiness also applies claim_true_independence_ok across every gate-visible TRUE. It is the
+  # soft counterpart of claim admit's per-verdict refusals: it preserves transport_ladder_ok's
+  # 0/1/2 result without aborting a read-only report, so an extra valid TRUE cannot hide one the
+  # gate will refuse. Evidence remains part of the numerator because claim admit subtracts missing
+  # evidence rather than refusing it directly.
+  min_a=$(guided_min_auditors)
   printf 'TRIAGE — %s claim(s). Recommendations are derived from verdicts, not from opinion.\n\n' "$n"
   i=1
   while [ "$i" -le "$n" ]; do
@@ -5118,7 +5369,8 @@ cmd_triage() {
     if [ -d "$vd" ]; then
       for v in "$vd"/*.md; do
         [ -f "$v" ] || continue
-        w=$(sed -n 's/^CLAIM-VERDICT: //p' "$v" | head -1)
+        w=$(claim_verdict_word "$v" 2>/dev/null || true)
+        [ -n "$w" ] || continue
         a=$(sed -n 's/^AGENT: //p' "$v" | head -1)
         k=$(sed -n 's/^KIND: //p' "$v" | head -1)
         who="$who $a:$w"
@@ -5141,12 +5393,26 @@ cmd_triage() {
     else
       case $scout in
         FULLY-EXISTS) rec="DROP — the scout found this already implemented. Cite where." ;;
-        PARTLY-EXISTS) rec="ADMIT, NARROWED — only the gap the scout could not find." ;;
         '') rec="SCOUT FIRST — audited TRUE but nobody checked whether it already exists." ;;
-        *) if [ "$t" -ge "${CRUCIBLE_MIN_AUDITORS:-2}" ] && [ "$kn" -ge "$MIN_KINDS" ]; then
-             rec="ADMIT — audited TRUE by $t agent(s) across $kn kind(s), and absent from the repo."
+        *) counted=$(claim_true_counts "C$i")
+           ct=${counted% *}; ckn=${counted#* }
+           if claim_true_bar_met "C$i"; then
+             if [ "$scout" = PARTLY-EXISTS ]; then
+               rec="ADMIT, NARROWED — only the gap the scout could not find."
+             else
+               rec="ADMIT — audited TRUE by $ct agent(s) across $ckn kind(s), and absent from the repo."
+             fi
+           elif [ "$t" -ge "$min_a" ] && [ "$kn" -ge "$MIN_KINDS" ]; then
+             # The raw TRUE files clear the bar and the counted set does not. MORE AUDIT would be
+             # true but useless — nobody needs to audit anything, somebody needs to seal what was
+             # already audited — so name the blocker and the command, the way every other refusal
+             # in this engine does. Deliberately not spelled MORE AUDIT or ADMIT: an operator
+             # reading a list of dispositions must not read this one as either.
+             why=$(claim_true_uncounted "C$i") \
+               || why="the $ct counted verdict(s) span only $ckn model kind(s) — dispatch an auditor from another kind in agents.tsv"
+             rec="INDEPENDENCE INCOMPLETE — $t TRUE on file, $ct counted across $ckn kind(s); need $min_a across $MIN_KINDS. $why."
            else
-             rec="MORE AUDIT — $t TRUE across $kn kind(s); need ${CRUCIBLE_MIN_AUDITORS:-2} across $MIN_KINDS."
+             rec="MORE AUDIT — $t TRUE across $kn kind(s); need $min_a across $MIN_KINDS."
            fi ;;
       esac
     fi

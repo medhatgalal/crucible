@@ -10,8 +10,7 @@ a RULE into a CHECK, do it and say so in the lesson.
 1. **RULE — Record evidence with the tool, never by hand.**
    `.crucible/<program>/crucible run <item> <you> -- <cmd>` captures the command, its exit status and its output, and
    stamps the work id and your name inside the file. Relabelled from CHECK after a review proved it: a hand-written file carrying the same
-   header is accepted. The header makes accidental hand-writing obvious; it is not a signature,
-   and under one user nothing in files can make it one.
+   header is accepted. The header makes accidental hand-writing obvious; it is not a signature.
 2. **CHECK — Evidence is bound to the work it describes.** The work id is in the filename *and*
    inside the file. Renaming stale evidence to look current is refused.
 3. **CHECK — Absence fails.** No work, no evidence, no falsifier, no verdict: refusal, never a pass.

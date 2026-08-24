@@ -23,6 +23,9 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Human only | `cycle problem --abandon REASON` | Archive junk INVESTIGATE with no PASS and no new PROBLEM. Same panel. |
 | Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
 
+For release-specific changes and current operator-visible limits, see
+[docs/whats-new.md](docs/whats-new.md).
+
 `STATUS.md` is the next-action card (`state`, `engine`, `worth`, active item, inflight
 attempt, last evidence, next human gate). FALSE/STALE closes a claim; TRUE is only
 required to admit work. ABSENT-only investigation says NO-BUILD if all FALSE/STALE.
@@ -98,7 +101,7 @@ And write authoritative casting in `PANEL.ASSIGN.tsv`:
 ```text
 role	agent	required	notes
 coordinator	…	yes	this session; not maker/reviewer
-claim-auditor	…	yes	two rows minimum — one cannot admit
+claim-auditor	…	yes	dedicated claim verifier
 claim-auditor	…	yes
 scout	…	yes	required on a guided cycle
 maker	…	yes
@@ -106,9 +109,8 @@ reviewer	…	yes	≠ maker
 contract-auditor	…	yes
 ```
 
-Two `claim-auditor` rows is the minimum that works, not a suggestion. See
-[the admit bar](#the-admit-bar) below: a panel with one `claim-auditor` row cannot leave
-INVESTIGATE.
+The template uses two dedicated claim-auditors, but one required claim-auditor row can progress when
+the cast scout independently records the second sealed TRUE. See [the admit bar](#the-admit-bar).
 
 Cast `scout` here, in the first configure block. It is structurally required, not optional: no claim
 can be admitted without a scout report, `claim scout` refuses without a scout dispatch, and
@@ -118,24 +120,51 @@ recasting mid-cycle to get out of that pair of refusals.
 ### The admit bar
 
 A claim needs **`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct
-agents**, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). Two gates read that number
-and they do not read it the same way:
+registered agents**, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). A TRUE from a
+sealed claim-auditor or scout attempt is eligible; the required claim-auditor row count sets the
+threshold, not the eligible role. With one required claim-auditor row, one claim-auditor TRUE plus one
+scout TRUE satisfies the default floor.
 
-- `cycle` and `triage` demand **2** whatever the panel says. One `claim-auditor` row and one TRUE
-  verdict leaves `triage` printing `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and
-  `cycle` printing `NEXT INVESTIGATE` forever.
-- `claim admit` demands the panel count. Three `required=yes` rows and two TRUE verdicts refuses
-  with `refused: C1 has 2 TRUE verdicts, need 3`.
+One row and only one eligible TRUE remains below the bar: `triage` prints
+`MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and `claim admit` refuses with
+`refused: C1 has 1 TRUE verdicts, need 2`. Three required claim-auditor rows raise the bar to three,
+and on two eligible TRUE verdicts `triage` prints
+`MORE AUDIT — 2 TRUE across 2 kind(s); need 3 across 1.` and `claim admit` refuses with
+`refused: C1 has 2 TRUE verdicts, need 3`; `cycle approve` refuses with
+`refused: investigation is incomplete`.
 
-So two rows is the floor and the panel count is the ceiling. Cast at least two `claim-auditor` rows,
-and cast no more than the number of auditors you will actually run.
+`cycle` prints the number only when at least one claim is not polarity `ABSENT`. The
+[INVESTIGATE sequence](#the-exact-investigate-sequence) below infers polarity `ABSENT` from its own
+claim wording, so on that path `cycle` prints no number at all:
 
-The close bar has no such floor: `close` requires one PASS per `required=yes` `reviewer` row, and one
+```text
+NEXT INVESTIGATE — independently fact-check every unresolved ABSENT claim (NO-BUILD if all FALSE/STALE)
+```
+
+The numbered sentence is reachable, and it is what `cycle` prints as soon as one recorded claim has
+polarity `DEFECT` or `EXISTS`:
+
+```text
+NEXT INVESTIGATE — independently fact-check every unresolved claim (FALSE/STALE closes a claim; admit needs 2 sealed TRUE to create work)
+```
+
+At three `required=yes` `claim-auditor` rows the same sentence reads
+`admit needs 3 sealed TRUE to create work`.
+
+A missing or malformed `PANEL.ASSIGN.tsv` does not lower the bar to zero. It stays at 2, and
+`cycle` separately refuses to proceed with `NEXT CONFIGURE` until the casting is fixed.
+
+A `triage` `ADMIT` does not guarantee that `claim admit` will accept the claim. Keep each TRUE
+agent's `run-claim` evidence, keep the panel current, and use transport valid under the current
+independence ladder. `subagent` transport requires a recorded ACP-probe failure. Recovery examples
+are in [step 7](#the-exact-investigate-sequence).
+
+The close bar has no floor: `close` requires one PASS per `required=yes` `reviewer` row, and one
 row closes on one PASS.
 
 | Variable | Default | What it overrides |
 | --- | --- | --- |
-| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | Both gates; `=1` admits on a single TRUE |
+| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | The admit bar at every gate; `=1` admits on a single TRUE |
 | `CRUCIBLE_MIN_JUDGES` | 2, but the `required=yes` `reviewer` row count wins on a guided cycle | The close bar |
 | `CRUCIBLE_MIN_KINDS` | 1 | The model-family spread; `=1` means two same-family TRUEs admit |
 
@@ -200,9 +229,20 @@ A=$(sed -n 's/^attempt-id: //p' "$D" | head -1)
 
 `dispatch` is not idempotent. Running it twice for the same claim and agent writes a second
 dispatch file (`2-claim-auditor-a1.md`) and a second attempt, and only the one you sealed is sealed.
-`cycle` consults that agent's **earliest** claim dispatch, so the unsealed stray makes the agent's
-TRUE verdict invisible: `triage` goes on recommending `ADMIT` while `cycle` keeps printing
-`NEXT INVESTIGATE`. That disagreement between `triage` and `cycle` is the symptom to look for.
+`claim verdict` accepts the last **sealed** dispatch, so the verdict records normally; the admit bar
+resolves that agent's **earliest** claim dispatch, so an unsealed stray sitting in front of the
+sealed one keeps that agent's TRUE verdict off the count. `triage` reports that and names the attempt
+in the way. On a three-row panel with three TRUE verdicts on file and `a3`'s earliest dispatch
+unsealed:
+
+```text
+INDEPENDENCE INCOMPLETE — 3 TRUE on file, 2 counted across 2 kind(s); need 3 across 1. a3 resolves to attempt <id>, which has no transport — run: .crucible/<program>/crucible attempt transport <id> <multi-agent|acp|subagent> while DISPATCHED
+```
+
+`cycle` names nothing here; it keeps printing its `NEXT INVESTIGATE` line. `claim admit` refuses on
+the same attempt with
+`refused: attempt <id> has no transport (multi-agent|acp|subagent) — run: .crucible/<program>/crucible attempt transport <id> <transport> while DISPATCHED`.
+`triage` is the surface that names the agent and the attempt, so read the id out of it.
 
 An attempt that was never started is ended with `attempt finish <id> ABANDONED "<what you
 observed>"`, and the engine names that recovery inside the refusal you hit — run the command it
@@ -229,12 +269,15 @@ duplicated. Both work only while the attempt is DISPATCHED; after `attempt start
 refuses with `refused: contract-audit may only be recorded while DISPATCHED (before attempt start)`.
 
 At **claim** level it does not restore the verdict. `attempt finish <stray> ABANDONED "<reason>"`
-answers `<id> ABANDONED; claim attempt has no item state` — the abandonment is recorded, and `cycle`
-goes on ignoring that agent's TRUE because the earliest dispatch file still points at the abandoned
-attempt. There is no verb that undoes that today. Do not seal an attempt nobody launched to get past
-it: a recorded transport and contract-audit PASS for an unrun attempt is the exact dishonesty the
-seal exists to prevent. Record the abandonment, tell the operator which claim and agent are affected,
-and dispatch a different cast auditor to make up the count.
+answers `<id> ABANDONED; claim attempt has no item state` — the abandonment is recorded, and the
+admit bar goes on ignoring that agent's TRUE because the earliest dispatch file still points at the
+abandoned attempt. There is no verb that undoes that today, and abandonment makes the recovery
+`triage` prints stale rather than wrong: `triage` still reports `INDEPENDENCE INCOMPLETE` naming that
+same attempt and the `attempt transport` command, and that command now refuses with
+`refused: transport may only be recorded while DISPATCHED (before attempt start)`. Do not seal an
+attempt nobody launched to get past it: a recorded transport and contract-audit PASS for an unrun
+attempt is the exact dishonesty the seal exists to prevent. Record the abandonment, tell the operator
+which claim and agent are affected, and dispatch a different cast auditor to make up the count.
 
 **3. Seal independence while DISPATCHED.** Both steps come before the worker runs.
 
@@ -268,9 +311,10 @@ $CP claim verdict C1 a1 TRUE       # TRUE | FALSE | STALE | UNVERIFIABLE [CITE] 
 
 Verdicts append; a second verdict from the same agent moves the first into `verdicts/history/`.
 `FALSE` and `STALE` close a claim — only `TRUE` can lead to work. `--like C2 C3` copies a non-TRUE
-verdict onto isomorphic claims. Run steps 2 to 5 once per `claim-auditor` row, with a different
-agent each time: the bar is a count of distinct sealed TRUE verdicts and it is at least two. Full
-rule and the three overriding variables: [The admit bar](#the-admit-bar).
+verdict onto isomorphic claims. Repeat steps 2 to 5 until the claim has enough distinct eligible
+TRUE verdicts. A sealed scout attempt can also supply a TRUE; required claim-auditor rows set the
+threshold but do not restrict eligible TRUE verdicts to that role. Full rule and the three overriding
+variables: [The admit bar](#the-admit-bar).
 
 **6. Scout the claim.** A TRUE verdict says the report is accurate; the scout says whether the work
 already exists. This is not optional — no claim is admittable without a scout report.
@@ -281,11 +325,12 @@ AS=$(sed -n 's/^attempt-id: //p' "$DS" | head -1)
 $CP attempt transport "$AS" multi-agent
 $CP contract-audit "$AS" ca1 PASS
 $CP run-claim C1 sc1 -- <search command>
+$CP claim verdict C1 sc1 TRUE       # when the scout independently verifies the claim too
 $CP claim scout C1 ABSENT sc1      # ABSENT | PARTLY-EXISTS | FULLY-EXISTS | IN-FLIGHT
 ```
 
-The scout's dispatch contract does not print the seal steps the auditor's does, but the seal is
-required all the same. Without transport **and** a contract-audit PASS, `claim scout` refuses with
+The scout's TRUE is eligible for the admit floor and its scout result remains separately required.
+Without transport **and** a contract-audit PASS, `claim scout` refuses with
 `refused: guided scout requires a matching scout attempt (item+agent+role) on the independence
 ledger for sc1`, and `claim verdict` refuses the same way for an auditor
 (`refused: guided claim verdict requires a matching claim attempt (item+agent+role) on the
@@ -302,11 +347,79 @@ $CP triage
 ```
 
 `triage` prints one recommendation per claim — `ADMIT`, `ADMIT, NARROWED`, `DROP`, `MORE AUDIT`,
-`SCOUT FIRST`, `AUDITORS DISAGREE`, or `ASK THE OPERATOR` — each derived from recorded verdicts and
-the scout report, never from opinion. It refuses to recommend anything for a claim nobody audited and
-exits non-zero while any claim has no verdicts. Take its output to the operator as the input to
-`PROPOSAL.md`. Merging overlapping claims and splitting oversized ones is not visible from verdicts;
-that judgement is yours and the operator's.
+`INDEPENDENCE INCOMPLETE`, `SCOUT FIRST`, `AUDITORS DISAGREE`, or `ASK THE OPERATOR` — each derived
+from recorded verdicts and the scout report, never from opinion. It refuses to recommend anything for
+a claim nobody audited and exits non-zero while any claim has no verdicts. Take its output to the
+operator as the input to `PROPOSAL.md`. Merging overlapping claims and splitting oversized ones is
+not visible from verdicts; that judgement is yours and the operator's.
+
+`INDEPENDENCE INCOMPLETE` is the disposition for TRUE verdict files that do not count. `triage`
+counts the set `claim admit` counts — sealed TRUE verdicts from registered agents that still resolve
+to an independent attempt — so when the raw count of TRUE files clears the bar and the counted set
+does not, it reports the shortfall with the blocker and the command instead of recommending `ADMIT`:
+
+```text
+INDEPENDENCE INCOMPLETE — 3 TRUE on file, 2 counted across 2 kind(s); need 3 across 1. a3 resolves to attempt <id>, which has no transport — run: .crucible/<program>/crucible attempt transport <id> <multi-agent|acp|subagent> while DISPATCHED
+```
+
+It fires for a panel that is no longer current too, and there it names the panel instead:
+
+```text
+INDEPENDENCE INCOMPLETE — 3 TRUE on file, 0 counted across 0 kind(s); need 3 across 1. the agent panel is not current — run: .crucible/<program>/crucible cycle approve-panel
+```
+
+A `triage` `ADMIT` is a recommendation, not an admission. Before `claim admit`, keep the panel
+current and satisfy these requirements for each eligible TRUE:
+
+- The transport ladder, re-checked against the current panel.
+- The recorded ACP-probe failure that `subagent` transport requires.
+
+Each eligible TRUE needs at least one evidence file written by `run-claim`; the engine recognises it
+by its `crucible-run/1` header. If that file is removed, `cycle`, `triage`, and `claim admit` no longer
+accept that TRUE. On a two-row panel with `C1` audited TRUE by `a1` and `a2` and `a2`'s evidence file
+removed, `triage` reports the shortfall and names the command that would close it:
+
+```text
+INDEPENDENCE INCOMPLETE — 2 TRUE on file, 1 counted across 1 kind(s); need 2 across 1. a2 recorded no usable evidence for C1 — run: .crucible/<program>/crucible run-claim C1 a2 -- <command>.
+```
+
+`cycle` names nothing in that state either; it stays on its `NEXT INVESTIGATE` line. `claim admit`
+notes the verdict it declined to count and then refuses on the count:
+
+```text
+ignoring a2: no usable evidence for C1
+refused: C1 has 1 TRUE verdicts, need 2
+```
+
+Both lines go to stderr and stdout stays empty, so read stderr rather than only the exit status.
+Recording the missing check puts the verdict back on the count and returns `triage` to `ADMIT`.
+
+**A `subagent` seal the probe has overtaken is terminal for the claim.** One state is reachable
+through engine verbs alone. An attempt sealed on `subagent` while the ACP probe read `failed` was
+honest when it was sealed. When ACP comes back and the operator records `probe-acp ok`, the ladder
+stops accepting that seal, the TRUE verdict behind it stops counting, and `triage` says so:
+
+```text
+INDEPENDENCE INCOMPLETE — 2 TRUE on file, 1 counted across 1 kind(s); need 2 across 1. a2 resolves to attempt <id>, sealed on subagent while the ACP probe read failed; the probe now reads ok, so the ladder no longer accepts that seal. Terminal — the probe refuses a downgrade, transport is only recordable while DISPATCHED, and a redispatch resolves to the same earliest attempt. claim admit refuses on this verdict too, so a further auditor does not unblock it: C1 cannot be admitted while a2 reads TRUE. Re-file the finding as a new claim, or abandon the investigation.
+```
+
+`claim admit` refuses there on the ladder, in the same terms `attempt transport <id> subagent` uses
+when no probe failure is on record:
+
+```text
+refused: subagent requires a recorded ACP probe failure (ACP-PROBE.md status: failed, or PANEL notes ACP unavailable)
+```
+
+Each exit that disposition rules out was measured on that state:
+
+- The probe is one-way. After an `ok`, `probe-acp failed` refuses with
+  `refused: ACP probe already ok; cannot downgrade to failed to unlock weaker isolation (record PANEL ACP-unavailable if needed)`,
+  and `probe-acp unavailable` refuses in the same terms.
+- The seal cannot be rewritten. Recording the verdict terminalised the attempt, and
+  `attempt transport <id> acp` on it refuses with
+  `refused: transport may only be recorded while DISPATCHED (before attempt start)`.
+Re-file the finding as a new claim and audit it on honest seals, or abandon the investigation; either
+way tell the operator which claim and which agent are affected.
 
 Admission itself happens after the operator approves the proposal:
 
@@ -355,12 +468,23 @@ $CP phase <slug> BUILD
 `plan-audit SLUG AUDITOR PASS|FIX|STOP` is the reviewer's check on `ITEM.md` before any maker is
 launched. Without it, `dispatch <slug> maker …` refuses with
 `refused: maker dispatch requires plan-audit PASS`. The auditor needs a row in `agents.tsv` and
-nothing more — role casting is not checked here, and at this point in the sequence neither is
-independence: `plan-audit` only refuses an agent already recorded in the item's `MAKERS.tsv`
-(`refused: mk1 is a maker of json-flag — plan-audit must be independent`), and that file is written
-by the first maker dispatch, which has not happened yet. Nothing stops you naming the maker as its
-own plan auditor. Name the reviewer — this is the "fresh reviewer validates the breakdown" step, and
-the engine will not enforce it for you. The verdict is write-once: a different one refuses with
+nothing more — role casting is not checked here. Independence is checked, and how far it reaches
+depends on what the item has on record. `plan-audit` refuses an agent listed in the item's
+`MAKERS.tsv`, which the first maker dispatch writes; while that file is absent it refuses the agent
+named in `items/<slug>/MAKER`, and `crucible brief <slug> maker <agent>` writes that file with no
+gate of its own. Measured on two identical items: with neither file on record the first `plan-audit`
+by `mk1` was accepted, and after `crucible brief json-flag maker mk1` — no maker dispatched, no
+`MAKERS.tsv`, no maker attempt on the ledger — the first `plan-audit` by `mk1` refused:
+
+```text
+refused: mk1 is a maker of json-flag — plan-audit must be independent
+```
+
+Nothing was written: no `plan-audit.md` appeared, and the same command with an independent auditor
+wrote it. So the refusal reaches an agent you briefed as maker, and it does not reach an agent you
+have neither briefed nor dispatched. Name the reviewer — this is the "fresh reviewer validates the
+breakdown" step, and for an agent with nothing on record the engine will not enforce it for you. The
+verdict is write-once: a different one refuses with
 `refused: plan-audit.md is immutable (existing PASS)`.
 
 **2. Make sure the work branch exists.** `claim admit` binds the item to a Git target itself,

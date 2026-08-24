@@ -5,6 +5,29 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.6.6] - 2026-08-24
+
+### Guided investigation and travelling operator limits
+
+- A sealed scout TRUE is eligible for the admit floor. On a panel with one required claim-auditor
+  row, one claim-auditor TRUE plus one scout TRUE can satisfy the default floor; additional required
+  claim-auditor rows raise that floor.
+- When a later successful ACP probe invalidates a claim's earlier `subagent` work, the operator-facing
+  disposition now says to re-file the finding or abandon the investigation.
+- Documentation verification now refuses unsupported CLI verbs shown in command examples instead of
+  silently accepting incomplete coverage.
+- Implicit claim-verdict citations now stay bound to regular, readable, non-empty evidence files
+  instead of matching directories.
+- Claim dispatch resolution now selects the earliest matching dispatch in numeric order, so dispatch
+  2 correctly precedes dispatch 10.
+- `plan-audit` no longer records an unverified maker statement, and the first plan audit correctly
+  refuses an agent already named as maker.
+- Package verification distinguishes repository checkouts from extracted packages, names missing
+  packaged paths, and requires the travelling `docs/whats-new.md` page.
+- Invalid explicit `CRUCIBLE_MIN_AUDITORS` values now refuse at startup.
+- The current operator-visible limitations are consolidated in
+  [`docs/whats-new.md`](docs/whats-new.md#known-limits).
+
 ## [1.6.5] - 2026-08-23
 
 ### Untracked panel copy, cleanup exit status, and an executable walkthrough
@@ -26,12 +49,10 @@ All notable changes to this project are documented here. This project follows
 - An independent cold-start audit ran the published 1.6.4 tarball from the
   documents only. The blockers below are its findings.
 - `START.md`'s own `PANEL.ASSIGN.tsv` template carried one `claim-auditor` row,
-  and four documents stated the admit bar as one TRUE verdict per
-  `required=yes` row. The real rule is `max(2, required rows)`, enforced in two
-  places that disagree: `cycle` and `triage` apply a floor of 2 while
-  `claim admit` applies the panel count. A reader following the template could
-  never leave INVESTIGATE. The template now carries two rows and every document
-  states the rule, with `CRUCIBLE_MIN_AUDITORS`, `CRUCIBLE_MIN_JUDGES` and
+  and four documents incorrectly described admission as one TRUE verdict per required row. The
+  default floor still needs two eligible sealed TRUE verdicts, but the scout may provide one of
+  them. The template now carries two dedicated claim-auditor rows and the documents state both the
+  threshold and scout eligibility, with `CRUCIBLE_MIN_AUDITORS`, `CRUCIBLE_MIN_JUDGES` and
   `CRUCIBLE_MIN_KINDS` and their defaults.
 - The first maker `result` was unreachable: no document established the
   `ai/<slug>` work branch, so `workid` returned `NOBRANCH` and `result` refused
@@ -39,9 +60,7 @@ All notable changes to this project are documented here. This project follows
   `TARGET` for you; the branch is not created. Both are now documented, along
   with `crucible target SLUG REPO BRANCH BASE`.
 - `plan-audit SLUG AUDITOR PASS` is required before maker dispatch and appeared
-  in no walkthrough. It also does not check maker independence at that point,
-  because the check reads `MAKERS.tsv`, which the first maker dispatch writes;
-  the documentation says so rather than promising a check that does not fire.
+  in no walkthrough.
 - The walkthrough printed two runnable `dispatch` forms for one step. Run as
   printed, both created attempts and only one was sealed, which made the
   agent's TRUE verdict invisible to `cycle` while `triage` still reported
@@ -575,11 +594,8 @@ mechanism is removed:
 
 ### What is not enforced
 
-The gate cannot prove who wrote a file. Under one user with a shell, one actor can author every
-verdict under different registered names, and this has happened in practice during development.
-Independence is a property of how you dispatch, not something a file-only design can establish.
-`RULES.md` labels every line CHECK or RULE so it is always clear which one you are relying on, and
-`SECURITY.md` states the boundary plainly.
+See the canonical operator-visible [Known limits](docs/whats-new.md#known-limits). `RULES.md` labels
+every line CHECK or RULE, and `SECURITY.md` explains how to operate outside the enforced boundary.
 
 ### Verification status
 

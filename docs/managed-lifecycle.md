@@ -59,16 +59,20 @@ Every agent named there must also have a row in `agents.tsv`, coordinator includ
 no registry row makes `approve-panel` refuse. Placeholder `MODEL` / `AGENT_CLI` / `OTHER_CLI` rows refuse
 approval. Guided dispatches must use agents cast for that role.
 
-The admit bar is derived from the casting, with a floor the casting does not show: `claim admit`
-requires one TRUE verdict per `required=yes` `claim-auditor` row (`refused: C1 has 2 TRUE verdicts,
-need 3` with three such rows), while `cycle` and `triage` require **two** whatever the panel says
-(`MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.`). The effective bar is therefore
-`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents, across at least
-`CRUCIBLE_MIN_KINDS` model families (default 1). A panel with one `claim-auditor` row cannot leave
-INVESTIGATE; cast two.
+The admit bar is `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct
+registered agents, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). A TRUE from a
+sealed claim-auditor or scout attempt is eligible. With one required claim-auditor row, one
+claim-auditor TRUE plus one scout TRUE satisfies the default floor. Three required claim-auditor
+rows raise the floor to three; two eligible TRUEs then make `claim admit` refuse with
+`refused: C1 has 2 TRUE verdicts, need 3`.
+
+A `triage` `ADMIT` does not guarantee that `claim admit` will accept the claim. Keep each TRUE
+agent's `run-claim` evidence, keep the panel current, and use transport valid under the current
+independence ladder. `subagent` transport requires a recorded ACP-probe failure. Worked recovery
+examples: [START.md](../START.md#the-exact-investigate-sequence).
 
 `close` reads `required=yes` `reviewer` rows with no floor — one row closes on one PASS.
-`CRUCIBLE_MIN_AUDITORS` (no default; overrides both admit gates) and `CRUCIBLE_MIN_JUDGES`
+`CRUCIBLE_MIN_AUDITORS` (no default; overrides the admit bar) and `CRUCIBLE_MIN_JUDGES`
 (default 2, but the reviewer row count wins on a guided cycle) override the derived numbers. Full
 table: [CONFIGURE.md](../CONFIGURE.md).
 
@@ -96,7 +100,12 @@ Full ordering, with what each of those two gates refuses: [Work an item](#work-a
 
 Independence ladder: multi-agent preferred; ACP for single-product isolation; subagent only after a
 recorded ACP probe failure (`ACP-PROBE.md` with `status: failed` or PANEL notes). `STOP` blocks the
-item as `INDEPENDENCE_UNAVAILABLE` — do not continue as solo theatre.
+item as `INDEPENDENCE_UNAVAILABLE` — do not continue as solo theatre. The probe is one-way: after a
+`probe-acp ok`, a downgrade refuses with
+`refused: ACP probe already ok; cannot downgrade to failed to unlock weaker isolation (record PANEL ACP-unavailable if needed)`.
+A claim verdict sealed on `subagent` while the probe read `failed` stops counting once the probe reads
+`ok`, and that claim is then terminal — the exits and the way out are in
+[START.md](../START.md#the-exact-investigate-sequence).
 
 ### Investigate: claims before items
 
@@ -115,8 +124,11 @@ $CP claim admit CN SLUG
 ```
 
 The ordered walkthrough, with the seal steps between dispatch and verdict, is in
-[START.md](../START.md). `triage` prints one ADMIT/DROP recommendation per claim derived from
-recorded verdicts and exits non-zero while any claim has none.
+[START.md](../START.md). `triage` prints one recommendation per claim — `ADMIT`, `ADMIT, NARROWED`,
+`DROP`, `MORE AUDIT`, `INDEPENDENCE INCOMPLETE`, `SCOUT FIRST`, `AUDITORS DISAGREE`, or
+`ASK THE OPERATOR` — derived from recorded verdicts, and exits non-zero while any claim has none.
+`INDEPENDENCE INCOMPLETE` means TRUE verdicts are on file but do not count toward the bar; the
+recommendation names the attempt or the panel in the way, and the command that clears it.
 
 The `lifecycle enable` primitive remains only for converting an empty older installation before its first
 item; it is not an onboarding step.
@@ -160,11 +172,10 @@ $CP dispatch fix-report-flow maker <maker-name> A1 FOCUSED
 `plan-audit SLUG AUDITOR PASS|FIX|STOP` records an audit of `ITEM.md` before any maker is launched.
 On a guided cycle `dispatch … maker` refuses without it:
 `refused: maker dispatch requires plan-audit PASS`. The auditor needs a row in `agents.tsv`; role
-casting is not checked, and the independence check
-(`refused: mk1 is a maker of json-flag — plan-audit must be independent`) reads the item's
-`MAKERS.tsv`, which the first maker dispatch writes — so at plan-audit time it is empty and the
-maker's own name is accepted. Name the reviewer deliberately. The verdict is write-once; a second
-identical verdict is a no-op and a different one refuses with
+casting is not checked. `MAKERS.tsv` is authoritative when present. Before that file exists,
+`items/<slug>/MAKER` is the fallback maker record. With neither record, the engine cannot infer the
+future maker. Name the reviewer deliberately. The verdict is write-once; a second identical verdict
+is a no-op and a different one refuses with
 `refused: plan-audit.md is immutable (existing PASS)`.
 
 ### The item's Git target and its work branch
@@ -442,8 +453,7 @@ Managed lifecycle refuses:
 Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops,
 economical reuse of unchanged expensive evidence, frozen task graphs, isolated task worktrees, owned
 path enforcement, and stable integration. It does not provide conversion of active item-file programs,
-automatic agent launching or cancellation, cryptographic proof of who authored an artifact, or proof
-that a recorded command is a discriminating test. Task dispatch currently refuses a task with more than
-one direct dependency; broader fan-in remains a separate integration behavior. The coordinating agent
-supplies orchestration and human interaction; do not describe those as shell-enforced merely because
-managed lifecycle is enabled.
+automatic agent launching or cancellation, or proof that a recorded command is a discriminating test.
+Task dispatch currently refuses a task with more than one direct dependency; broader fan-in remains a
+separate integration behavior. The coordinating agent supplies orchestration and human interaction; do
+not describe those as shell-enforced merely because managed lifecycle is enabled.

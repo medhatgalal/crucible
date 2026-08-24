@@ -36,10 +36,12 @@ run its internal commands. You schedule independent agents; you do not pretend t
    Write real rows into `agents.tsv` — one per agent named in the casting, **including the
    coordinator**, or `cycle approve-panel` refuses. Write `PANEL.md` (Agents, Roles, Risk posture,
    Isolation transport, Independence ladder, Waivers) **and** authoritative `PANEL.ASSIGN.tsv`
-   (`role`, `agent`, `required`, `notes`). Cast **at least two `claim-auditor` rows**: a claim needs
-   `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts, so one row cannot leave
-   INVESTIGATE. The `required=yes` `reviewer` row count is the close bar and has no such floor.
-   Defaults and the overriding variables: `CONFIGURE.md`. Show inventory + casting table and wait for
+   (`role`, `agent`, `required`, `notes`). A claim needs
+   `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents. A sealed TRUE
+   from the cast scout is eligible, so one claim-auditor TRUE plus one scout TRUE satisfies the
+   default floor on a one-row claim-auditor panel. The `required=yes` `reviewer` row count is the close
+   bar and has no such floor. Defaults and the overriding variables: `CONFIGURE.md`. Show inventory +
+   casting table and wait for
    `cycle approve-panel`. Do not invent agents or role assignments.
 6. Preserve the supplied problem in a regular file, bind it through `cycle problem`. Ask for the
    problem only if none was supplied.

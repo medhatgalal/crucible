@@ -36,18 +36,21 @@ Then the coordinator (not the operator) writes `agents.tsv`, `PANEL.md`,
 `agents.tsv` — **including the coordinator**. Without a coordinator row,
 `approve-panel` refuses with `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
 
-The admit bar is a count with a floor. A claim needs
-`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents,
-across at least `CRUCIBLE_MIN_KINDS` model families (default 1). `claim admit` enforces
-the panel count — three required rows means it refuses until three registered auditors
-have recorded TRUE (`refused: C1 has 2 TRUE verdicts, need 3`) — while `cycle` and
-`triage` enforce 2 whatever the panel says, so a single `claim-auditor` row leaves the
-cycle at INVESTIGATE with `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.`
-**Cast at least two `claim-auditor` rows.** The close bar reads `required=yes`
-`reviewer` rows with no floor: one row closes on one PASS. `CRUCIBLE_MIN_AUDITORS`
-(no default of its own) and `CRUCIBLE_MIN_JUDGES` (default 2, overridden by the reviewer
-row count on a guided cycle) override those numbers. Scout is required
-on a guided cycle — cast it in the initial block ([CONFIGURE.md](../CONFIGURE.md)).
+The admit bar is `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct
+registered agents, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). A TRUE from a
+sealed claim-auditor or scout attempt is eligible. With one required claim-auditor row, one
+claim-auditor TRUE plus one scout TRUE satisfies the default floor. Three required claim-auditor
+rows raise the floor to three; two eligible TRUEs then make `claim admit` refuse with
+`refused: C1 has 2 TRUE verdicts, need 3`.
+
+A `triage` `ADMIT` does not guarantee that `claim admit` will accept the claim. Keep each TRUE
+agent's `run-claim` evidence, keep the panel current, and use transport valid under the current
+independence ladder. `subagent` transport requires a recorded ACP-probe failure. When TRUE verdicts
+are on file but are not eligible, `triage` reports `INDEPENDENCE INCOMPLETE` and names the recovery.
+The close bar reads `required=yes` `reviewer` rows with no floor: one row closes on one PASS.
+`CRUCIBLE_MIN_AUDITORS` (no default of its own) and `CRUCIBLE_MIN_JUDGES` (default 2, overridden by
+the reviewer row count on a guided cycle) override those numbers. Scout is required on a guided
+cycle — cast it in the initial block ([CONFIGURE.md](../CONFIGURE.md)).
 Human:
 
 ```sh
@@ -68,7 +71,7 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 produced it if it is in Git, so commit `.crucible/` in the target repository:
 
 ```sh
-git add .crucible && git commit -m "chore: crucible program state"
+git add .crucible && git commit -m "chore: record program state"
 ```
 
 `adopt` generates `.crucible/.gitignore` with `*/agents.tsv` and `*/worktrees/`, so
@@ -128,6 +131,11 @@ where `--refresh` looks and what it reports as `kept local adapter: scripts/acp-
 An adapter at the repository's own `scripts/acp-brief.py` is outside the program directory
 and is not covered by that promise (see [CONFIGURE.md](../CONFIGURE.md) — Crucible does not
 ship one and `--refresh` never creates it).
+
+If a refreshed engine is bad, stop `drive` and run the same `adopt <program> --refresh` command from
+an older known-good tag or extracted release, then run the installed program's `cycle`. Refreshing
+back replaces the engine-owned files in **Overwrites** and leaves the evidence and approved panel in
+**Keeps** untouched.
 
 The copied scripts include `verify-demand.sh`. It passes, and it is not a gate: it records
 assertions about a known hole in admission, so a green run proves nothing about your cycle.
