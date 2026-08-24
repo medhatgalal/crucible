@@ -95,8 +95,8 @@ STOP — no progress (same status and no new evidence twice)
 ```
 
 with `triage` reporting `MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and `cycle` still
-reporting `NEXT INVESTIGATE`. The coordinator dispatches the remaining cast auditors; drive does not
-do it for them.
+reporting `NEXT INVESTIGATE`. The coordinator must obtain another sealed TRUE from a distinct cast
+claim-auditor or scout; drive does not do that step.
 
 ## STATUS.md
 

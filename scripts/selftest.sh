@@ -88,6 +88,123 @@ accepts() {
   ok "$label"
 }
 
+# Print the documentation paths that travel as operator documentation. This exactly mirrors
+# adopt_install_engine's operator docs: five named root files plus top-level roles/*.md and
+# docs/*.md. CHANGELOG.md is deliberately separate: release history does not travel.
+travelling_doc_files() {
+  root=$1
+  for f in \
+    "$root/BOOTSTRAP.md" \
+    "$root/START.md" \
+    "$root/RULES.md" \
+    "$root/LOOP.md" \
+    "$root/CONFIGURE.md" \
+    "$root"/roles/*.md \
+    "$root"/docs/*.md
+  do
+    [ -f "$f" ] && printf '%s\n' "$f"
+  done
+}
+
+known_limits_section() {
+  awk '
+    $0 == "## Known limits" { in_limits=1; next }
+    in_limits && /^## / { exit }
+    in_limits { print }
+  ' "$1" 2>/dev/null
+}
+
+known_limits_has() {
+  printf '%s\n' "$1" | grep -Eiq -e "$2"
+}
+
+# Print a compact list of missing properties. Silence means the contract holds.
+known_limits_missing() {
+  root=$1
+  headings=$(travelling_doc_files "$root" | while IFS= read -r f; do
+    grep -c '^## Known limits$' "$f" 2>/dev/null || true
+  done | awk '{ n += $1 } END { print n + 0 }')
+  if [ -f "$root/docs/whats-new.md" ]; then
+    target_count=$(grep -c '^## Known limits$' "$root/docs/whats-new.md" 2>/dev/null || true)
+    section=$(known_limits_section "$root/docs/whats-new.md")
+  else
+    target_count=0
+    section=""
+  fi
+  missing=""
+  [ "$headings" -eq 1 ] && [ "$target_count" -eq 1 ] \
+    || missing="$missing placement/exactly-one"
+
+  known_limits_has "$section" 'brief' && known_limits_has "$section" 'help' \
+    || missing="$missing brief/help"
+  known_limits_has "$section" 'doc[- ]verb' \
+    && known_limits_has "$section" 'extract' \
+    && known_limits_has "$section" 'fence' \
+    && known_limits_has "$section" 'README' \
+    || missing="$missing doc-verb/extractor/fences/README"
+  known_limits_has "$section" 'doc_set' && known_limits_has "$section" 'roles?' \
+    || missing="$missing doc_set/roles"
+  known_limits_has "$section" 'guided_min_judges.*(has|have)[[:space:]]+no[[:space:]]+floor' \
+    || missing="$missing guided_min_judges/no-floor"
+  known_limits_has "$section" 'stray' \
+    && known_limits_has "$section" 'claim' \
+    && known_limits_has "$section" 'attempt' \
+    && known_limits_has "$section" 'ACP[- ]probe' \
+    && known_limits_has "$section" 'invalid' \
+    || missing="$missing stray-claim-attempt/ACP-probe-invalidation"
+  known_limits_has "$section" 'quickstart' \
+    && known_limits_has "$section" 'duplicat' \
+    && known_limits_has "$section" 'shim' \
+    || missing="$missing quickstart/duplicate-shim"
+  known_limits_has "$section" 'CHANGELOG.*does[[:space:]]+not[[:space:]]+travel.*adopted[[:space:]]+trees' \
+    || missing="$missing CHANGELOG/not-travelling-into-adopted-trees"
+  known_limits_has "$section" '--refresh' \
+    && known_limits_has "$section" 'rollback|roll back|restore' \
+    || missing="$missing --refresh/rollback"
+  known_limits_has "$section" 'single[- ]user' && known_limits_has "$section" 'author' \
+    || missing="$missing single-user/authorship"
+
+  if [ -n "$missing" ]; then
+    printf '%s\n' "$missing"
+    return 1
+  fi
+  return 0
+}
+
+# Print forbidden explanatory prose, ignoring fenced examples. These implementation details and
+# the known-false fourth-auditor divergence claim belong in tests, not release/operator prose.
+internal_mechanism_prose() {
+  root=$1
+  {
+    [ -f "$root/CHANGELOG.md" ] && printf '%s\n' "$root/CHANGELOG.md"
+    travelling_doc_files "$root"
+  } | while IFS= read -r f; do
+    awk '
+      function flush_paragraph(    lower) {
+        lower = tolower(paragraph)
+        if (lower ~ /the two surfaces can disagree in that state.*fourth[ -]+auditor.*claim admit.*still refuses/) {
+          printf "%s:%d-%d:%s\n", FILENAME, paragraph_start, FNR, paragraph
+        }
+        paragraph = ""
+        paragraph_start = 0
+      }
+      /^```/ { flush_paragraph(); fence = !fence; next }
+      !fence {
+        printf "%s:%d:%s\n", FILENAME, FNR, $0
+        if ($0 ~ /^[[:space:]]*$/) {
+          flush_paragraph()
+        } else {
+          if (paragraph == "") paragraph_start = FNR
+          paragraph = paragraph (paragraph == "" ? "" : " ") $0
+        }
+      }
+      END { flush_paragraph() }
+    ' "$f"
+  done | grep -Ei \
+    -e '(^|[^[:alpha:]])subtract(s|ed|ing)?([^[:alpha:]]|$)|(^|[^[:alpha:]])fold(s|ed|ing)?([^[:alpha:]]|$)|every[ -]+TRUE|recast[ -]+checks?' \
+    -e 'the two surfaces can disagree in that state.*fourth[ -]+auditor.*claim admit.*still refuses'
+}
+
 # two valid, distinct, evidence-citing PASS verdicts for the current work id
 pass_two() {
   w=$(./crucible workid it)
@@ -296,8 +413,11 @@ out=$(cd "$ct" && "$K" triage 2>&1) && bad "triage recommended on an unaudited c
   && bad "an invalid scout result was accepted" || ok "an invalid scout result refuses"
 ( cd "$ct" && "$K" claim verdict C2 a1 MAYBE >/dev/null 2>&1 ) \
   && bad "an invalid claim verdict was accepted" || ok "an invalid claim verdict refuses"
-[ -f "$ct/.crucible/p/BOOTSTRAP.md" ] && ok "adopt ships BOOTSTRAP.md into the program" \
-  || bad "adopt did not ship BOOTSTRAP.md"
+[ -f "$ct/.crucible/p/BOOTSTRAP.md" ] \
+  && [ -f "$ct/.crucible/p/docs/whats-new.md" ] \
+  && grep -Eq '\]\(docs/whats-new\.md\)' "$ct/.crucible/p/START.md" \
+  && ok "adopt ships BOOTSTRAP.md and a START.md link to docs/whats-new.md into the program" \
+  || bad "adopt did not ship BOOTSTRAP.md with a START.md link to docs/whats-new.md"
 
 
 printf '\nlive views\n'
@@ -373,26 +493,305 @@ cd "$HERE"
 # Only look inside fenced code blocks. An earlier version of this check scanned all
 # prose and read the words "crucible checkout" as a verb named checkout — the same
 # proxy failure the rules warn about: enumerate the property, not something near it.
-verbs=$(awk '/^```/{f=!f;next} f' *.md 2>/dev/null \
-  | grep -oE '(^|[[:space:]/])crucible [a-z][a-z]*' \
-  | sed 's|.*crucible ||' | sort -u)
+#
+# The accept side was the same proxy failure one level down, and stayed one for two releases.
+# The property is "this word is a verb the engine dispatches". Both earlier forms tested
+# something near it — whether the word appears in some help text — and neither form was the
+# property:
+#
+#   pre-1.6.5  `help | grep -q "crucible $v"`  accepted 4 of the 30 real verbs. It was already
+#              red on the shipped tree: `attempt` appears in a START.md block and is real, and
+#              the operator help does not spell "crucible attempt". Never a working baseline.
+#   1.6.5      both listings, `grep -q "\b$v\b"`  accepted any of the 197 distinct words in the
+#              two help texts — 168 of them not verbs. `crucible isolation`, `ladder`,
+#              `preferred`, `supporting` and `compatibility` all passed silently, because those
+#              words occur in help prose.
+#
+# `brief`, corrected. The 1.6.6 candidate's comment here said the 1.6.5 form "FALSELY REJECTED
+# `brief`". It did not, and no such rejection was ever observed: the accept side only ever sees
+# the words the extractor below emits, and that extractor emitted two words on this tree —
+# `attempt` and `cycle` — so `brief` was never presented to the accept side at all, under either
+# form. Writing an observation that did not happen is the failure this release exists to stop,
+# and it does not get an exception in this file. What is true about `brief` is a different fact
+# and still worth recording: it is dispatched (`brief)` sits in the case table, `./crucible
+# brief` answers "need a slug") and it appears in neither `help` nor `help protocol`, so nothing
+# in this suite asserts help completeness for it. That is a gap in the help text.
+#
+# Enumerate it. The engine's trailing `case ${1:-help} in` dispatch table IS the set of verbs;
+# nothing else decides what the script accepts. Read that table and match exactly. Note it is
+# the accept-set that is authoritative here, not help: a verb missing from help is a help
+# defect, and `brief` above is exactly that defect — asserting help membership on this line
+# would report it as a documentation error in whichever code block happened to name it.
+#
+# `tr '|' '\n'` splits the `a|b)` alternation forms. The `^ *[a-z]` anchor is deliberate: it
+# keeps `-h|--help)` and the `*)` catch-all out, since those are flags and a refusal, not verbs,
+# and the doc extractor below can never emit a leading `-` or `*` anyway.
+dispatch_verbs=$(awk '/^case .*\$\{?1/,/^esac/' ./crucible 2>/dev/null \
+  | grep -oE '^ *[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sort -u)
+n_dispatch=$(printf '%s\n' "$dispatch_verbs" | grep -c '[a-z]' || true)
+# Fail closed. An extractor that silently matches nothing turns this assertion into "every doc
+# verb is in the empty set", which agrees with any documentation at all — the exact shape of
+# failure the two forms above had. If the table cannot be read, that is a defect in this check
+# and it must say so rather than pass. 30 verbs ship today; 20 is a floor, not a target.
+if [ "$n_dispatch" -lt 20 ]; then
+  bad "cannot enumerate the engine's verb dispatch table (extracted $n_dispatch, expected at least 20): refusing to check doc verbs against a set this check failed to build"
+else
+# Hyphens included, and this was a real hole: the old class `[a-z][a-z]*` read `crucible
+# run-claim` as the verb `run`, which is also real, so `run-claim` passed by accident and was
+# never once tested as itself. Same for `plan-audit`, `contract-audit`, `probe-acp`.
+#
+# THE DOCUMENTS. The hyphen repair was inert on its own, and measuring it is what showed why:
+# the extractor's glob was `*.md`, and on this tree that emitted exactly two words — `attempt`
+# and `cycle` — against an accept-set of thirty. `docs/` was never opened, so docs/install.md and
+# docs/managed-lifecycle.md were not read at all, and no root code block spells `crucible
+# run-claim`, so "run-claim is finally tested as itself" was true of the pattern and false of the
+# run. An exact 30-verb accept-set that only ever sees 2 verbs is decoration.
+#
+# The set is what `adopt_install_engine` copies, because that is what a downstream agent is
+# handed: the root documents it names — BOOTSTRAP.md, START.md, RULES.md, LOOP.md, CONFIGURE.md —
+# plus top-level `docs/*.md`. Top-level only, matching the function's `"$src"/docs/*.md`; it does
+# not recurse, so docs/superpowers/ and docs/problems/ are out of scope here as they are out of
+# scope there. Root `*.md` is kept whole rather than narrowed to adopt's five: README.md and
+# CHANGELOG.md do not travel, but they were already in scope on the line this replaces, and
+# removing files an assertion already read is a narrowing whatever the justification.
+doc_set=""
+for f in *.md docs/*.md; do
+  [ -f "$f" ] && doc_set="$doc_set $f"
+done
+# THE INVOCATION FORMS, and this is the other half of why two words came out. docs/
+# managed-lifecycle.md line 12 defines `CP=.crucible/<program>/crucible` and the walkthrough then
+# writes `$CP attempt list` for the rest of the document, so a pattern that only knows the
+# literal word `crucible` reads almost none of what the docs actually teach.
+#
+# The variable names are read out of the documents, not listed here. Any `NAME=…/crucible`
+# assignment inside a fenced block declares NAME to be the engine, and `$NAME` and `${NAME}` are
+# then substituted before extraction. A hardcoded `CP` would be the same class of defect one
+# level down: the walkthrough renames its variable, this line stops seeing the walkthrough, and
+# it goes quiet in the direction that passes. The value's last path component must be exactly
+# `crucible`, so `X=$HOME/src/crucible-notes` does not declare anything.
+#
+# Four forms are therefore recognised: `crucible VERB`, `<any-path>/crucible VERB`, `$NAME VERB`,
+# and `$NAME/crucible VERB`. The character before the invocation must be whitespace, `/`, or one
+# of the shell openers `( ` | ; &` — that last class is not decoration either, it is what admits
+# `D=$($CP dispatch C1 claim-auditor a1)`, three lines in START.md that a whitespace-only left
+# context silently dropped.
+#
+# `FNR==1 {fence=0}` resets the fence state per file. awk carries variables across the file list,
+# so one document with an odd number of ``` lines would invert the in-fence/out-of-fence sense
+# for every document after it, and the check would then read prose and skip code.
+engine_vars=$(awk '
+  FNR==1 { fence=0 }
+  /^```/ { fence=!fence; next }
+  !fence { next }
+  {
+    a=$0; sub(/^[[:space:]]*/, "", a)
+    if (a ~ /^[A-Za-z_][A-Za-z0-9_]*=([^[:space:]]*\/)?crucible([[:space:]]|$)/)
+      print substr(a, 1, index(a, "=") - 1)
+  }' $doc_set 2>/dev/null | sort -u | tr '\n' ' ')
+# Every hit carries its file and line, so a violation is reported where its owner can act on it
+# rather than as a bare word.
+verb_hits=$(awk -v vars="$engine_vars" '
+  BEGIN {
+    n = split(vars, V, " "); for (i = 1; i <= n; i++) EV[V[i]] = 1
+    # Built as a string, not a /…/ literal: the left-context class contains a `/`, and how a
+    # `\/` inside a bracket expression is lexed differs between awks. A string has no such
+    # ambiguity. The class is the shell positions an invocation can start in — whitespace, a
+    # path separator, and the openers `( ` | ; &`.
+    inv = "[[:space:]/(`|;&]crucible[[:space:]]+[a-z][a-z-]*"
+  }
+  FNR==1 { fence=0 }
+  /^```/ { fence=!fence; next }
+  !fence { next }
+  {
+    rest = $0; out = ""
+    while (match(rest, /[$][{]?[A-Za-z_][A-Za-z0-9_]*[}]?/)) {
+      ref = substr(rest, RSTART, RLENGTH)
+      out = out substr(rest, 1, RSTART - 1)
+      rest = substr(rest, RSTART + RLENGTH)
+      name = ref; gsub(/[${}]/, "", name)
+      out = out ((name in EV) ? "crucible" : ref)
+    }
+    rest = " " out rest
+    while (match(rest, inv)) {
+      tok = substr(rest, RSTART, RLENGTH)
+      # The consumed text is replaced by one space so the next candidate on the same line still
+      # has a real left context and cannot match on a word character.
+      rest = " " substr(rest, RSTART + RLENGTH)
+      sub(/^.*crucible[[:space:]]+/, "", tok)
+      printf "%s %s:%d\n", tok, FILENAME, FNR
+    }
+  }' $doc_set 2>/dev/null | sort -u)
+verbs=$(printf '%s\n' "$verb_hits" | awk 'NF {print $1}' | sort -u)
+n_docverbs=$(printf '%s\n' "$verbs" | grep -c '[a-z]' || true)
+# Fail closed on the EXTRACT side too, for the same reason the accept side does. Two verbs out of
+# thirty passed a full release as a green assertion because nothing here ever looked at how much
+# the extractor saw. A pattern that stops matching now says so. 23 distinct verbs come out of the
+# travelling documents today; 15 is a floor, not a target, and it leaves room for a document to
+# drop an example without turning this into a tripwire.
+if [ "$n_docverbs" -lt 15 ]; then
+  bad "the doc verb extractor emitted only $n_docverbs distinct verb(s) from $(printf '%s' "$doc_set" | wc -w | tr -d ' ') document(s), expected at least 15: the pattern no longer reads the documents, so this assertion would agree with anything"
+else
+# HEAD VERB ONLY, and this is a judgement, so here is the reasoning. Docs write `claim add`,
+# `attempt finish`, `lifecycle enable`; the dispatch table holds only `claim`, `attempt`,
+# `lifecycle`. Validating the full two-word spelling would need a second authoritative set, and
+# there is no second table to read — each subverb is parsed inside its own `cmd_*` function, in
+# forms that differ per command, so any enumeration of them would itself be a proxy and would
+# rot the moment one function changed. The head verb is what `case ${1:-help}` decides, so the
+# head verb is what this line can assert as a fact. It keeps its teeth where it matters: a
+# bogus head verb such as `crucible isolation` has no dispatch entry and is refused, which is
+# the failure this check exists to catch. A wrong subverb under a real head verb is out of
+# scope here and is caught where it is decided — the command's own argument parsing, asserted
+# by the refusal cases above.
 missing=""
 for v in $verbs; do
-  # `help` prints the operator surface; `help protocol` prints the agent primitives. A verb
-  # documented in a recovery transcript — `attempt finish`, `run-claim` — is real but appears
-  # only in the protocol listing, and requiring `help` alone failed docs for showing verbs the
-  # script does have. Accept either listing; a verb in neither is still a defect.
-  { ./crucible help 2>/dev/null; ./crucible help protocol 2>/dev/null; } \
-    | grep -q "\\b$v\\b" || missing="$missing $v"
+  case " $(printf '%s' "$dispatch_verbs" | tr '\n' ' ') " in
+    *" $v "*) ;;
+    *) missing="$missing
+    $v at $(printf '%s\n' "$verb_hits" | awk -v w="$v" '$1 == w { printf "%s%s", (c++ ? " " : ""), $2 }')" ;;
+  esac
 done
-[ -z "$missing" ] && ok "every crucible verb shown in a doc code block exists in help" \
-  || bad "docs use verbs the script lacks:$missing"
+[ -z "$missing" ] && ok "every crucible verb shown in a doc code block is dispatched by the engine ($n_dispatch verbs in the table, $n_docverbs distinct verbs read from $(printf '%s' "$doc_set" | wc -w | tr -d ' ') travelling documents)" \
+  || bad "docs use verbs the script does not dispatch:$missing"
+fi
+fi
 for f in *.md; do
   [ -s "$f" ] || bad "$f is empty"
 done
 ok "no documentation file is empty"
 grep -q "\[$(cat VERSION)\]" CHANGELOG.md \
   && ok "the changelog's top entry matches VERSION" || bad "CHANGELOG does not mention $(cat VERSION)"
+
+limits_missing=""
+if limits_missing=$(known_limits_missing "$HERE"); then
+  ok "exactly one travelling Known limits section is docs/whats-new.md and covers all nine limits"
+else
+  bad "travelling Known limits contract is incomplete:$limits_missing"
+fi
+if mechanism_prose=$(internal_mechanism_prose "$HERE"); then
+  bad "CHANGELOG or travelling docs explain internal subtract/fold/every-TRUE/recast check mechanisms:$(printf '\n%s' "$mechanism_prose")"
+else
+  ok "CHANGELOG and travelling docs omit internal check-mechanism prose"
+fi
+
+# Mutation proof uses only isolated fixture trees. The repository documents are never edited.
+limits_fixture=$(mktemp -d "$SELFTEST_TMP/known-limits.XXXXXX")
+mkdir -p "$limits_fixture/docs" "$limits_fixture/roles"
+printf '# Front door\n' > "$limits_fixture/README.md"
+printf '# Bootstrap\n' > "$limits_fixture/BOOTSTRAP.md"
+printf '# Release history\n' > "$limits_fixture/CHANGELOG.md"
+cat > "$limits_fixture/docs/near-miss.md" <<'EOF'
+# Legitimate distinctions
+
+Reporting surfaces can disagree when documentation is stale. A fourth auditor may review a
+separate claim, and claim admit still refuses when that claim lacks evidence.
+EOF
+cat > "$limits_fixture/docs/whats-new.md" <<'EOF'
+# What is new
+
+## Known limits
+
+- brief is dispatched but absent from help.
+- The doc-verb extractor has known fence and README boundaries.
+- doc_set does not include roles.
+- guided_min_judges deliberately has no floor once a required reviewer row exists.
+- A stray claim attempt plus ACP-probe invalidation can require recovery.
+- The quickstart duplicate shim remains for compatibility.
+- CHANGELOG does not travel into adopted trees.
+- A bad --refresh needs rollback or restore from version control.
+- Single-user authorship cannot establish independent identity.
+
+## Installation
+
+Install normally.
+EOF
+cat >> "$limits_fixture/BOOTSTRAP.md" <<'EOF'
+
+```text
+subtract fold every TRUE recast check
+```
+EOF
+if known_limits_missing "$limits_fixture" >/dev/null \
+  && ! internal_mechanism_prose "$limits_fixture" >/dev/null; then
+  ok "the Known limits and prose predicates accept a complete isolated fixture"
+else
+  bad "the documentation predicates reject their complete isolated fixture"
+fi
+
+known_limits_mutation_red() {
+  label=$1; pattern=$2; opposite=${3:-}
+  mutant=$(mktemp -d "$SELFTEST_TMP/known-limits-mutant.XXXXXX")
+  cp -R "$limits_fixture/." "$mutant"
+  grep -Ev -e "$pattern" "$mutant/docs/whats-new.md" > "$mutant/docs/whats-new.tmp"
+  mv "$mutant/docs/whats-new.tmp" "$mutant/docs/whats-new.md"
+  accepted=""
+  if known_limits_missing "$mutant" >/dev/null; then
+    accepted="missing-line"
+  fi
+  if [ -n "$opposite" ]; then
+    opposite_mutant=$(mktemp -d "$SELFTEST_TMP/known-limits-opposite.XXXXXX")
+    cp -R "$limits_fixture/." "$opposite_mutant"
+    awk -v pattern="$pattern" -v replacement="$opposite" '
+      $0 ~ pattern { $0 = replacement }
+      { print }
+    ' "$opposite_mutant/docs/whats-new.md" > "$opposite_mutant/docs/whats-new.tmp"
+    mv "$opposite_mutant/docs/whats-new.tmp" "$opposite_mutant/docs/whats-new.md"
+    if known_limits_missing "$opposite_mutant" >/dev/null; then
+      accepted="${accepted:+$accepted, }opposite-meaning"
+    fi
+  fi
+  if [ -n "$accepted" ]; then
+    bad "Known limits mutation was accepted ($accepted): $label"
+  elif [ -n "$opposite" ]; then
+    ok "Known limits predicate rejects fixtures missing or contradicting $label"
+  else
+    ok "Known limits predicate rejects a fixture missing $label"
+  fi
+}
+
+known_limits_mutation_red "brief/help" '^- brief '
+known_limits_mutation_red "doc-verb extractor/fences/README" '^- The doc-verb '
+known_limits_mutation_red "doc_set/roles" '^- doc_set '
+known_limits_mutation_red "guided_min_judges no-floor meaning" '^- guided_min_judges ' \
+  '- guided_min_judges is a deliberate floor once a required reviewer row exists.'
+known_limits_mutation_red "stray claim attempt and ACP-probe invalidation" '^- A stray claim '
+known_limits_mutation_red "quickstart duplicate shim" '^- The quickstart '
+known_limits_mutation_red "CHANGELOG not travelling into adopted trees" '^- CHANGELOG ' \
+  '- CHANGELOG travels into adopted trees.'
+known_limits_mutation_red "bad --refresh rollback" '^- A bad --refresh '
+known_limits_mutation_red "single-user authorship" '^- Single-user '
+
+limits_duplicate=$(mktemp -d "$SELFTEST_TMP/known-limits-duplicate.XXXXXX")
+cp -R "$limits_fixture/." "$limits_duplicate"
+printf '\n## Known limits\n\nDuplicate.\n' > "$limits_duplicate/roles/duplicate.md"
+known_limits_missing "$limits_duplicate" >/dev/null \
+  && bad "a second travelling Known limits section was accepted" \
+  || ok "the Known limits predicate rejects a duplicate section in another travelling doc"
+limits_moved=$(mktemp -d "$SELFTEST_TMP/known-limits-moved.XXXXXX")
+cp -R "$limits_fixture/." "$limits_moved"
+grep -v '^## Known limits$' "$limits_moved/docs/whats-new.md" > "$limits_moved/docs/whats-new.tmp"
+mv "$limits_moved/docs/whats-new.tmp" "$limits_moved/docs/whats-new.md"
+printf '\n## Known limits\n\nMoved.\n' > "$limits_moved/roles/moved.md"
+known_limits_missing "$limits_moved" >/dev/null \
+  && bad "a Known limits section outside docs/whats-new.md was accepted" \
+  || ok "the Known limits predicate rejects the section when it is in the wrong travelling doc"
+
+mechanism_mutation_red() {
+  label=$1; prose=$2
+  mutant=$(mktemp -d "$SELFTEST_TMP/mechanism-prose.XXXXXX")
+  cp -R "$limits_fixture/." "$mutant"
+  printf '%s\n' "$prose" > "$mutant/docs/internal.md"
+  if internal_mechanism_prose "$mutant" >/dev/null; then
+    ok "the prose predicate rejects an isolated $label explanation"
+  else
+    bad "the prose predicate missed an isolated $label explanation"
+  fi
+}
+mechanism_mutation_red "subtract" "The counter subtracts TRUE verdicts before admission."
+mechanism_mutation_red "fold" "The gate folds transport checks into the count."
+mechanism_mutation_red "every-TRUE" "The gate walks every TRUE verdict on file."
+mechanism_mutation_red "recast check" "The recast check compares the current panel."
+mechanism_mutation_red "fourth-auditor false divergence" "The two surfaces can disagree in that state: triage can recommend ADMIT after counting a
+fourth auditor while claim admit still refuses on the broken verdict."
 
 
 # The README is the operator front door. It must stay on the cycle and must not regress

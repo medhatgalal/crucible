@@ -161,14 +161,13 @@ and coordinator-as-auditor / maker-as-contract-auditor casting. On **drive**, it
 coordinator edits to owned product paths, verdict writes, and merges, and it will not auto-approve
 a panel or proposal.
 
-Crucible is not a security boundary. Under one operating-system user, it cannot cryptographically prove
-who authored a file or that a passing test meaningfully tests the intended behavior. Transport labels
-and contract audits are process discipline, not multi-principal identity. See [SECURITY.md](SECURITY.md)
-and [RULES.md](RULES.md).
+Crucible is not a security boundary. Read the canonical [known limits](docs/whats-new.md#known-limits),
+then see [SECURITY.md](SECURITY.md) and [RULES.md](RULES.md) for operating guidance.
 
 ## 📚 Go deeper
 
 - [BOOTSTRAP.md](BOOTSTRAP.md) — cold start in a target repo (what a fresh agent should read first)
+- [docs/whats-new.md](docs/whats-new.md) — canonical operator-visible limits that travel with installs
 - [docs/install.md](docs/install.md) — first install vs upgrade; confirm `engine:`; `--next`; `drive`
 - [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
 - [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement

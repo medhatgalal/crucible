@@ -69,8 +69,8 @@ reviewer	j1	yes	≠ maker
 adversary	adv	no	required when risk is HIGH
 ```
 
-Two `claim-auditor` rows is the minimum that works. One row cannot leave INVESTIGATE — see the bars
-below.
+The template uses two dedicated claim-auditors, but that is not an eligibility minimum. Cast only the
+claim-auditors you will actually run.
 
 Cast `scout` in this first block. It is structurally required on a guided cycle, not optional:
 `claim admit` refuses a claim with no scout report, `claim scout` refuses without a scout dispatch
@@ -84,21 +84,31 @@ even though the coordinator is this session and is never launched as a worker. C
 with no registry row makes `cycle approve-panel` refuse with
 `PANEL.md / PANEL.ASSIGN.tsv incomplete`.
 
-The counts in this file are the bars, with one floor the counts do not show. A claim needs
-`max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct agents, across at least
-`CRUCIBLE_MIN_KINDS` model families (default 1). Two gates read that number differently: `cycle` and
-`triage` demand 2 whatever the panel says, so a single `claim-auditor` row leaves `triage` printing
-`MORE AUDIT — 1 TRUE across 1 kind(s); need 2 across 1.` and `cycle` printing `NEXT INVESTIGATE`
-forever; `claim admit` demands the panel count, so three rows and two TRUEs refuses with
-`refused: C1 has 2 TRUE verdicts, need 3`. Cast **two `claim-auditor` rows minimum**, and no more
-than the number of auditors you will actually run.
+A claim needs `max(2, required=yes claim-auditor rows)` sealed TRUE verdicts from distinct registered
+agents, across at least `CRUCIBLE_MIN_KINDS` model families (default 1). A TRUE recorded from a sealed
+claim-auditor or scout attempt is eligible. With one required claim-auditor row, one claim-auditor
+TRUE plus one scout TRUE satisfies the default floor. Three required claim-auditor rows raise the
+floor to three; two eligible TRUEs then make `claim admit` refuse with
+`refused: C1 has 2 TRUE verdicts, need 3`.
+
+`cycle` prints the number only when at least one claim is not polarity `ABSENT`. On an all-`ABSENT`
+problem it prints
+`NEXT INVESTIGATE — independently fact-check every unresolved ABSENT claim (NO-BUILD if all FALSE/STALE)`
+with no number in it. With one `DEFECT` or `EXISTS` claim recorded it prints
+`NEXT INVESTIGATE — independently fact-check every unresolved claim (FALSE/STALE closes a claim; admit needs 2 sealed TRUE to create work)`
+instead, and `admit needs 3 sealed TRUE to create work` at three required claim-auditor rows.
+
+A `triage` `ADMIT` does not prove that `claim admit` will accept the claim. Keep each TRUE agent's
+`run-claim` evidence, keep the panel current, and use a transport valid under the current independence
+ladder. `subagent` transport requires a recorded ACP-probe failure. The worked recovery examples are
+in [START.md](START.md#the-exact-investigate-sequence).
 
 `close` has no floor: it requires one PASS per `required=yes` `reviewer` row, and one row closes on
 one PASS.
 
 | Variable | Default | What it overrides |
 | --- | --- | --- |
-| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | Both admit gates; `=1` admits on a single TRUE |
+| `CRUCIBLE_MIN_AUDITORS` | unset — the rule above applies | The admit bar at every gate; `=1` admits on a single TRUE |
 | `CRUCIBLE_MIN_JUDGES` | 2, but the `required=yes` `reviewer` row count wins on a guided cycle | The close bar |
 | `CRUCIBLE_MIN_KINDS` | 1 | The model-family spread; at 1, two same-family TRUEs admit |
 
