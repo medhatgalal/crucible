@@ -1737,14 +1737,21 @@ F=$(mktemp -d "${TMPDIR:-/tmp}/ht.XXXXXX")
 trap 'rm -rf "$F"' 0
 printf 'crucible-run/1\nagent: mk\n--- output ---\nhello\n--- exit 0 ---\n'  > "$F/normal"
 printf 'crucible-run/1\nagent: mk\n--- output ---\nhello\n--- exit 7 ---\n'  > "$F/nonzero"
+printf 'crucible-run/1\nagent: mk\n--- output ---\nhi\n--- exit 127 ---\n'   > "$F/multidigit"
 printf -- '--- exit 9 ---\nmiddle\n--- exit 0 ---\n'                         > "$F/firstline"
 printf 'crucible-run/1\n--- output ---\n--- exit 5 ------ exit 0 ---\n'      > "$F/joined"
 printf 'crucible-run/1\n--- output ---\ndone.--- exit 3 ---\n'               > "$F/joinedplain"
+# K1-reaching: trailer-shaped first line, non-trailer last line — head -1 reddens empty reads.
+printf -- '--- exit 9 ---\nno trailer here\n'                               > "$F/notrailer"
+printf -- '--- exit 1 ---\n\n'                                               > "$F/empty"
 [ "$(evidence_exit "$F/normal")" = 0 ] && ok 'the trailer read returns the recorded zero status' || bad 'the trailer read lost a recorded zero status'
 [ "$(evidence_exit "$F/nonzero")" = 7 ] && ok 'the trailer read returns a recorded nonzero status' || bad 'the trailer read lost a recorded nonzero status'
+[ "$(evidence_exit "$F/multidigit")" = 127 ] && ok 'the trailer read returns every digit of a multi-digit status' || bad 'the trailer read truncated a multi-digit status'
 [ "$(evidence_exit "$F/firstline")" = 0 ] && ok 'the trailer read takes the last physical line, not the first' || bad 'the trailer read took a trailer-shaped first line instead of the last physical line'
 [ "$(evidence_exit "$F/joined")" = 0 ] && ok 'the trailer read finds a trailer joined to another trailer' || bad 'the trailer read could not read a trailer joined to another trailer'
 [ "$(evidence_exit "$F/joinedplain")" = 3 ] && ok 'the trailer read finds a trailer joined to plain output bytes' || bad 'the trailer read could not read a trailer joined to plain output bytes'
+[ -z "$(evidence_exit "$F/notrailer")" ] && ok 'a recording with no trailer reads empty' || bad 'a recording with no trailer did not read empty'
+[ -z "$(evidence_exit "$F/empty")" ] && ok 'an empty recording reads empty' || bad 'an empty recording did not read empty'
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
 HT
