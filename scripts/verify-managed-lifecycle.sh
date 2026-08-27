@@ -197,6 +197,10 @@ $P/crucible attempt start "$maker_attempt" "$$" >/dev/null
 )
 maker_out=$(cd "$repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo focused-maker')
 maker_evidence=$(basename "$(printf '%s' "$maker_out" | awk '{print $1}')")
+# Item-scoped falsifier pair must be recorded during the live maker BUILD
+# attempt (architect M1). A second maker after REVIEW is unregistered / wrong
+# stage; against a pre-change engine the helper is a no-op on usage refusal.
+record_managed_pair "$repo" "$P" alpha mk1
 $P/crucible attempt finish "$maker_attempt" RETURNED observed-exit-zero >/dev/null
 $P/crucible result "$maker_attempt" PASS "$maker_evidence" CLOSE - >/dev/null
 refuses 'managed evidence requires a live attempt' 'in-flight attempt' \
@@ -230,11 +234,20 @@ $P/crucible attempt finish "$j2_attempt" RETURNED observed-exit-zero >/dev/null
 $P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
 
 # Pair-gate close path. When the engine ships the pair refusal, close without a
-# pair must refuse and leave STATE/LESSONS untouched, then a recorded pair must
-# allow close. Against the pre-change engine the pair stem is absent: keep the
+# pair must refuse and leave STATE/LESSONS untouched, then the BUILD-recorded
+# pair must allow close. Hide only the pair files for the absence probe, then
+# restore them. Against the pre-change engine the pair stem is absent: keep the
 # historical closeable path so non-cohort verify scripts stay green. Red-at-T1
 # for the missing stem is owned by the bounded h-engine harness in ASSERTIONS.tsv.
 if grep -q 'no falsifier run pair' "$HERE/crucible"; then
+  pair_stash="$tmp/pair-stash"
+  mkdir -p "$pair_stash"
+  if [ -n "${MPAIR_REMOVED:-}" ] && [ -f "$P/items/alpha/evidence/$MPAIR_REMOVED" ]; then
+    mv "$P/items/alpha/evidence/$MPAIR_REMOVED" "$pair_stash/"
+  fi
+  if [ -n "${MPAIR_RESTORED:-}" ] && [ -f "$P/items/alpha/evidence/$MPAIR_RESTORED" ]; then
+    mv "$P/items/alpha/evidence/$MPAIR_RESTORED" "$pair_stash/"
+  fi
   cp "$P/STATE.tsv" "$P/STATE.before_close_probe"
   lessons_before=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
   close_out=$("$P/crucible" close alpha 'should-refuse-without-pair' 2>&1) && close_st=0 || close_st=$?
@@ -251,13 +264,12 @@ if grep -q 'no falsifier run pair' "$HERE/crucible"; then
       ;;
     *) bad 'managed close without a falsifier pair did not refuse' ;;
   esac
-  pair_contract=$($P/crucible dispatch alpha maker mk2 A1 FOCUSED 2>/dev/null) || true
-  if [ -n "${pair_contract:-}" ]; then
-    pair_attempt=$(basename "$(dirname "$pair_contract")")
-    bind_independence "$P" "$pair_attempt"
-    $P/crucible attempt start "$pair_attempt" "$$" >/dev/null
-    record_managed_pair "$repo" "$P" alpha mk2
-    $P/crucible attempt finish "$pair_attempt" RETURNED observed-exit-zero >/dev/null || true
+  # Restore the BUILD-recorded pair so close can succeed.
+  if [ -d "$pair_stash" ]; then
+    for f in "$pair_stash"/*; do
+      [ -f "$f" ] || continue
+      mv "$f" "$P/items/alpha/evidence/"
+    done
   fi
 fi
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
