@@ -286,8 +286,10 @@ if grep -q 'a falsifier pair is item-scoped' "$HERE/crucible"; then
 fi
 
 # M34 — record_managed_pair helper records both directions by name.
+# The restored token must appear inside the helper body, not merely in this
+# file's assertion text or elsewhere.
 grep -q '^record_managed_pair() {' "$HERE/scripts/verify-managed-lifecycle.sh" \
-  && grep -q 'falsifier restored' "$HERE/scripts/verify-managed-lifecycle.sh" \
+  && awk '/^record_managed_pair\(\) \{/,/^}/' "$HERE/scripts/verify-managed-lifecycle.sh" | grep -q -- '--falsifier restored' \
   && ok 'the managed record_managed_pair helper records both directions' \
   || bad 'the managed record_managed_pair helper is missing a direction'
 

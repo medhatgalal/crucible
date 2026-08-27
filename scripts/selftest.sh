@@ -1705,8 +1705,10 @@ done
   || bad "a travelling document claims the falsifier pair proves causation"
 
 # M33 — record_pair helper is present and records both directions by name.
+# The restored token must appear inside the helper body, not merely somewhere
+# else in this file (other fixtures also say --falsifier restored).
 grep -q '^record_pair() {' "$HERE/scripts/selftest.sh" \
-  && grep -q -- '--falsifier restored' "$HERE/scripts/selftest.sh" \
+  && awk '/^record_pair\(\) \{/,/^}/' "$HERE/scripts/selftest.sh" | grep -q -- '--falsifier restored' \
   && ok "the suite record_pair helper records both directions" \
   || bad "the suite record_pair helper is missing a direction"
 
