@@ -28,6 +28,30 @@ refuses() {
   printf '%s\n' "$out" | grep -q "$pattern" && ok || bad "$label: wanted $pattern, got $out"
 }
 
+# Record an item-scoped falsifier pair. Against an engine that does not accept
+# --falsifier, usage refusal is expected and this returns without failing.
+# Marker path is $mrepo/mechanism — outside the item work tree.
+record_managed_pair() {   # record_managed_pair REPO PROGRAM ITEM AGENT
+  mrepo=$1; mprog=$2; mitem=$3; magent=$4
+  MPAIR_REMOVED=; MPAIR_RESTORED=; mrc=0
+  rm -f "$mrepo/mechanism"
+  mout=$(cd "$mrepo" && "$mprog/crucible" run "$mitem" "$magent" \
+         --falsifier removed -- sh -c 'test -f mechanism' 2>&1) || mrc=$?
+  if [ "$mrc" -ne 0 ]; then
+    case $mout in
+      *'usage: crucible run'*) : > "$mrepo/mechanism"; return 0 ;;
+      *) bad "record_managed_pair: the recorder refused for an unexpected reason: $mout"; return 0 ;;
+    esac
+  fi
+  MPAIR_REMOVED=$(basename "$(printf '%s' "$mout" | awk '{print $1}')")
+  : > "$mrepo/mechanism"
+  mrc=0
+  mout=$(cd "$mrepo" && "$mprog/crucible" run "$mitem" "$magent" \
+         --falsifier restored -- sh -c 'test -f mechanism' 2>&1) || mrc=$?
+  [ "$mrc" -eq 0 ] || { bad 'record_managed_pair: the recorder accepted a removed direction and refused a restored one'; return 0; }
+  MPAIR_RESTORED=$(basename "$(printf '%s' "$mout" | awk '{print $1}')")
+  return 0
+}
 
 bind_independence() {
   prog=$1; id=$2; transport=${3:-multi-agent}; auditor=${4:-}
@@ -205,10 +229,55 @@ j2_evidence=$(basename "$(printf '%s' "$j2_out" | awk '{print $1}')")
 $P/crucible attempt finish "$j2_attempt" RETURNED observed-exit-zero >/dev/null
 $P/crucible result "$j2_attempt" PASS "$j2_evidence" CLOSE - >/dev/null
 
+# Pair-gate close path. When the engine ships the pair refusal, close without a
+# pair must refuse and leave STATE/LESSONS untouched, then a recorded pair must
+# allow close. Against the pre-change engine the pair stem is absent: keep the
+# historical closeable path so non-cohort verify scripts stay green. Red-at-T1
+# for the missing stem is owned by the bounded h-engine harness in ASSERTIONS.tsv.
+if grep -q 'no falsifier run pair' "$HERE/crucible"; then
+  cp "$P/STATE.tsv" "$P/STATE.before_close_probe"
+  lessons_before=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
+  close_out=$("$P/crucible" close alpha 'should-refuse-without-pair' 2>&1) && close_st=0 || close_st=$?
+  case $close_out in
+    *'no falsifier run pair'*|*'falsifier run pair'*)
+      ok 'managed close without a falsifier pair refuses and names the pair'
+      grep -q "^alpha${tab}CLOSED${tab}" "$P/STATE.tsv" \
+        && bad 'managed close without a pair still marked the item CLOSED' \
+        || ok 'managed close without a pair left STATE open'
+      lessons_after=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
+      [ "$lessons_before" = "$lessons_after" ] \
+        && ok 'managed close without a pair left LESSONS unchanged' \
+        || bad 'managed close without a pair mutated LESSONS'
+      ;;
+    *) bad 'managed close without a falsifier pair did not refuse' ;;
+  esac
+  pair_contract=$($P/crucible dispatch alpha maker mk2 A1 FOCUSED 2>/dev/null) || true
+  if [ -n "${pair_contract:-}" ]; then
+    pair_attempt=$(basename "$(dirname "$pair_contract")")
+    bind_independence "$P" "$pair_attempt"
+    $P/crucible attempt start "$pair_attempt" "$$" >/dev/null
+    record_managed_pair "$repo" "$P" alpha mk2
+    $P/crucible attempt finish "$pair_attempt" RETURNED observed-exit-zero >/dev/null || true
+  fi
+fi
 expect 'managed check is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
 expect 'managed close' '^closed alpha at ' "$P/crucible" close alpha 'state is authoritative'
 grep -q "^alpha${tab}CLOSED${tab}REVIEW${tab}" "$P/STATE.tsv" && ok || bad 'close did not update authoritative state'
 expect 'closed program is done' '^DONE$' "$P/crucible" next
+
+# M18 — when the engine carries the item-scoped refusal string, assert it.
+# Against the pre-change engine the string is absent; do not fail this script
+# (non-cohort verify-cleanup uses it as the leak representative). Red-at-T1 is
+# recorded via ASSERTIONS.tsv owning command `sh ./h-engine.sh`.
+if grep -q 'a falsifier pair is item-scoped' "$HERE/crucible"; then
+  ok 'engine names the item-scoped falsifier-pair refusal'
+fi
+
+# M34 — record_managed_pair helper records both directions by name.
+grep -q '^record_managed_pair() {' "$HERE/scripts/verify-managed-lifecycle.sh" \
+  && grep -q 'falsifier restored' "$HERE/scripts/verify-managed-lifecycle.sh" \
+  && ok 'the managed record_managed_pair helper records both directions' \
+  || bad 'the managed record_managed_pair helper is missing a direction'
 
 item_file="$tmp/item-file"
 mkdir -p "$item_file"

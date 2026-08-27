@@ -20,6 +20,10 @@ evidence/; the gate refuses it. Do not write a verdict; that is not your role an
 Inside EXECUTE for this admitted item you may run the falsifier until it passes, or stop after one
 infrastructure retry. Do not admit the next backlog row. Do not merge.
 
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+
 It is always acceptable to stop. If the task needs a decision you were not given, or you have been
 reading files without progress, return BLOCKED or NEEDS_CONTEXT with what you tried. Bad work is worse
 than no work.

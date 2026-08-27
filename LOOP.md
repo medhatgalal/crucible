@@ -88,3 +88,10 @@ stops here and does not invent the next investigation.
 The panel stays. The operator starts the next problem-to-done pass with
 `cycle problem FILE --next` (archives the closed investigation under `history/`, keeps
 `PANEL*` and `agents.tsv`). Recasting the panel is not required.
+
+## Falsifier pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+

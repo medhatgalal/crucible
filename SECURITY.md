@@ -24,3 +24,10 @@ happen.
 Open an issue. If you find a way for a non-adversarial workflow to close an item that should have
 been refused, that is the most valuable report possible — include the shortest reproduction and, if
 you can, the assertion that would have caught it.
+
+## Falsifier pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+

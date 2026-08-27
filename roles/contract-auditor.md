@@ -36,3 +36,7 @@ INDEPENDENCE: ok | weak | unavailable
 On FIX the attempt is SUPERSEDED: the coordinator revises the contract via **redispatch** and a new
 audit. On STOP the coordinator escalates `INDEPENDENCE_UNAVAILABLE` and does **not** perform the
 role itself.
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.

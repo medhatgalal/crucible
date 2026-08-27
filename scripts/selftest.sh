@@ -66,13 +66,34 @@ mkrun() {
     ./crucible add it "selftest item" >/dev/null
     [ "${1:-}" = nofalsifier ] || {
       sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' items/it/ITEM.md > i.tmp
-      mv i.tmp items/it/ITEM.md; }
+      mv i.tmp items/it/ITEM.md
+      # Fenced one-line declaration. Marker path is $d/mechanism — outside items/it/work/
+      # so a sandbox work id does not move when the pair is recorded.
+      printf '\n```\nsh -c '"'"'test -f mechanism'"'"'\n```\n' >> items/it/ITEM.md
+    }
     [ "${1:-}" = nowork ] || { mkdir -p items/it/work; printf 'x=1\n' > items/it/work/a.py; }
     [ "${1:-}" = nomaker ] || printf 'mk\n' > items/it/MAKER
   )
   printf '%s' "$d"
 }
 fresh() { printf '%s' "$(mkrun "${1:-}")"; }
+
+# Record a discriminating falsifier pair at the current work id.
+# Declaration: sh -c 'test -f mechanism' (frame 3 2:sh 2:-c 17:test -f mechanism).
+# Against an engine that does not yet accept --falsifier, this is a no-op for pair
+# production (the label is refused) and must not fail the suite.
+record_pair() {
+  rm -f mechanism
+  if ./crucible run it mk --falsifier removed -- sh -c 'test -f mechanism' >/dev/null 2>&1; then
+    : > mechanism
+    ./crucible run it mk --falsifier restored -- sh -c 'test -f mechanism' >/dev/null \
+      || bad 'record_pair: the recorder accepted a removed direction and refused a restored one'
+  else
+    ./crucible run it mk --falsifier removed -- true >/dev/null 2>&1 \
+      && bad 'record_pair: the recorder accepted a label but produced no pair'
+    : > mechanism
+  fi
+}
 
 # assert the gate refuses, and that the reason mentions PATTERN
 refuses() {
@@ -163,6 +184,10 @@ known_limits_missing() {
     || missing="$missing --refresh/rollback"
   known_limits_has "$section" 'single[- ]user' && known_limits_has "$section" 'author' \
     || missing="$missing single-user/authorship"
+  known_limits_has "$section" 'falsifier pair proves' \
+    && known_limits_has "$section" 'does not prove' \
+    && known_limits_has "$section" 'removing the mechanism' \
+    || missing="$missing falsifier-pair/no-causation"
 
   if [ -n "$missing" ]; then
     printf '%s\n' "$missing"
@@ -207,6 +232,7 @@ internal_mechanism_prose() {
 
 # two valid, distinct, evidence-citing PASS verdicts for the current work id
 pass_two() {
+  record_pair
   w=$(./crucible workid it)
   ./crucible run it j1 -- sh -c 'echo j1 ran the falsifier' >/dev/null
   ./crucible run it j2 -- sh -c 'echo j2 re-derived independently' >/dev/null
@@ -699,6 +725,7 @@ cat > "$limits_fixture/docs/whats-new.md" <<'EOF'
 - CHANGELOG does not travel into adopted trees.
 - A bad --refresh needs rollback or restore from version control.
 - Single-user authorship cannot establish independent identity.
+- The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that.
 
 ## Installation
 
@@ -759,6 +786,8 @@ known_limits_mutation_red "CHANGELOG not travelling into adopted trees" '^- CHAN
   '- CHANGELOG travels into adopted trees.'
 known_limits_mutation_red "bad --refresh rollback" '^- A bad --refresh '
 known_limits_mutation_red "single-user authorship" '^- Single-user '
+known_limits_mutation_red "falsifier-pair/no-causation" '^- The falsifier pair proves ' \
+  '- The falsifier pair proves that removing the mechanism caused the two runs to disagree.'
 
 limits_duplicate=$(mktemp -d "$SELFTEST_TMP/known-limits-duplicate.XXXXXX")
 cp -R "$limits_fixture/." "$limits_duplicate"
@@ -1480,6 +1509,7 @@ if ( cd "$gp"
      .crucible/p/crucible add thing "t" >/dev/null 2>&1
      sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo it.|' .crucible/p/items/thing/ITEM.md > i.t \
        && mv i.t .crucible/p/items/thing/ITEM.md
+     printf '\n```\nsh -c '"'"'test -f mechanism'"'"'\n```\n' >> .crucible/p/items/thing/ITEM.md
      d=$(.crucible/p/crucible dispatch thing maker mk 2>/dev/null)
      cmd=$(grep -m1 -oE '[^ ]*crucible run thing mk' "$d")
      [ -n "$cmd" ] || exit 1
@@ -1603,6 +1633,199 @@ b1=$(./crucible workid it)
 b2=$(./crucible workid it)
 [ "$b1" != "$b2" ] && ok "an empty commit changes the work id and voids prior verdicts" \
   || bad "an empty commit left the work id unchanged, so verdicts survived a commit"
+cd "$HERE"
+
+# ---------------------------------------------------------------------------
+# Falsifier-pair contract (red against the pre-change engine; green after T2).
+# Each assertion names a covered mechanism from the item catalogue. Against an
+# engine that has not yet landed the pair gate / envelope / recorder, these
+# fail by design — that is the intentional red interval between T1 and T2.
+# ---------------------------------------------------------------------------
+printf '\nfalsifier-pair contract\n'
+
+# M29 — RULES.md rule 6 is a CHECK once the pair is the gate's subject.
+grep -q '^6\. \*\*CHECK — Closure needs a falsifier' "$HERE/RULES.md" \
+  && ok "RULES.md rule 6 is labelled CHECK" \
+  || bad "RULES.md rule 6 is not labelled CHECK"
+
+# M30 — travelling A7-ENFORCED bytes are byte-identical across copies.
+# Canonical tracked copy is docs/whats-new.md (one writer for the shipped sentence).
+a7_line1='Closure refuses unless the item'\''s falsifier was recorded by `crucible run` at the current work id'
+fence_copies=0
+canon_file=""
+for f in \
+  "$HERE/docs/whats-new.md" \
+  "$HERE/RULES.md" \
+  "$HERE/roles/maker.md" \
+  "$HERE/roles/judge.md" \
+  "$HERE/roles/specifier.md" \
+  "$HERE/roles/contract-auditor.md" \
+  "$HERE/docs/managed-lifecycle.md"
+do
+  [ -f "$f" ] || continue
+  if grep -qxF "$a7_line1" "$f"; then
+    # Pull the three-line paragraph starting at the fence's first line.
+    para=$(awk -v s="$a7_line1" '
+      $0 == s { print; getline; print; getline; print; exit }
+    ' "$f")
+    if [ -z "$canon_file" ]; then
+      canon_file=$(mktemp "$SELFTEST_TMP/a7e.XXXXXX")
+      printf '%s\n' "$para" > "$canon_file"
+      fence_copies=1
+    else
+      para_file=$(mktemp "$SELFTEST_TMP/a7e2.XXXXXX")
+      printf '%s\n' "$para" > "$para_file"
+      if cmp -s "$canon_file" "$para_file"; then
+        fence_copies=$((fence_copies + 1))
+      else
+        say "A7-ENFORCED drift in $f"
+      fi
+    fi
+  fi
+done
+[ "$fence_copies" -ge 3 ] \
+  && ok "travelling A7-ENFORCED text is byte-identical in at least three documents" \
+  || bad "travelling A7-ENFORCED text is missing or drifted (found $fence_copies copies)"
+
+# M31 — Known limits carries the A7-LIMIT bullet (already gated by known_limits_missing).
+known_limits_has "$(known_limits_section "$HERE/docs/whats-new.md")" 'falsifier pair proves' \
+  && ok "docs/whats-new.md Known limits names the falsifier-pair/no-causation limit" \
+  || bad "docs/whats-new.md Known limits lacks the falsifier-pair/no-causation limit"
+
+# M32 — no travelling document claims the pair proves causation.
+causal=0
+for f in $(travelling_doc_files "$HERE"); do
+  grep -Eqi 'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' "$f" \
+    && causal=$((causal + 1)) && say "causal claim in $f"
+done
+[ "$causal" -eq 0 ] \
+  && ok "no travelling document claims the falsifier pair proves causation" \
+  || bad "a travelling document claims the falsifier pair proves causation"
+
+# M33 — record_pair helper is present and records both directions by name.
+grep -q '^record_pair() {' "$HERE/scripts/selftest.sh" \
+  && grep -q -- '--falsifier restored' "$HERE/scripts/selftest.sh" \
+  && ok "the suite record_pair helper records both directions" \
+  || bad "the suite record_pair helper is missing a direction"
+
+# Helpers the built engine must expose (red until T2 lands them).
+grep -q '^evidence_envelope() {' "$HERE/crucible" && ok "crucible defines evidence_envelope" || bad "crucible does not define evidence_envelope"
+grep -q '^evidence_exit() {' "$HERE/crucible" && ok "crucible defines evidence_exit" || bad "crucible does not define evidence_exit"
+grep -q '^falsifier_command() {' "$HERE/crucible" && ok "crucible defines falsifier_command" || bad "crucible does not define falsifier_command"
+grep -q '^falsifier_argv_frame() {' "$HERE/crucible" && ok "crucible defines falsifier_argv_frame" || bad "crucible does not define falsifier_argv_frame"
+grep -q 'no falsifier run pair' "$HERE/crucible" && ok "engine names the no falsifier run pair stem" || bad "engine does not name the no falsifier run pair stem"
+
+# K1 / K2 — trailer-read assertions against evidence_exit extracted from the engine.
+# Red until T2 writes the helper; then these fixtures discriminate the two mechanisms.
+if grep -q '^evidence_exit() {' "$HERE/crucible"; then
+  ht=$(mktemp -d "$SELFTEST_TMP/ht.XXXXXX")
+  {
+    printf '#!/bin/sh\nVERBOSE=1\n'
+    sed -n '49,54p' "$HERE/scripts/selftest.sh"
+    printf '\n'
+    # Extract the function body as shipped.
+    awk '
+      /^evidence_exit\(\) \{/ { print; inb=1; next }
+      inb { print; if ($0 == "}") exit }
+    ' "$HERE/crucible"
+    cat <<'HT'
+F=$(mktemp -d "${TMPDIR:-/tmp}/ht.XXXXXX")
+trap 'rm -rf "$F"' 0
+printf 'crucible-run/1\nagent: mk\n--- output ---\nhello\n--- exit 0 ---\n'  > "$F/normal"
+printf 'crucible-run/1\nagent: mk\n--- output ---\nhello\n--- exit 7 ---\n'  > "$F/nonzero"
+printf -- '--- exit 9 ---\nmiddle\n--- exit 0 ---\n'                         > "$F/firstline"
+printf 'crucible-run/1\n--- output ---\n--- exit 5 ------ exit 0 ---\n'      > "$F/joined"
+printf 'crucible-run/1\n--- output ---\ndone.--- exit 3 ---\n'               > "$F/joinedplain"
+[ "$(evidence_exit "$F/normal")" = 0 ] && ok 'the trailer read returns the recorded zero status' || bad 'the trailer read lost a recorded zero status'
+[ "$(evidence_exit "$F/nonzero")" = 7 ] && ok 'the trailer read returns a recorded nonzero status' || bad 'the trailer read lost a recorded nonzero status'
+[ "$(evidence_exit "$F/firstline")" = 0 ] && ok 'the trailer read takes the last physical line, not the first' || bad 'the trailer read took a trailer-shaped first line instead of the last physical line'
+[ "$(evidence_exit "$F/joined")" = 0 ] && ok 'the trailer read finds a trailer joined to another trailer' || bad 'the trailer read could not read a trailer joined to another trailer'
+[ "$(evidence_exit "$F/joinedplain")" = 3 ] && ok 'the trailer read finds a trailer joined to plain output bytes' || bad 'the trailer read could not read a trailer joined to plain output bytes'
+printf '%s passed, %s failed\n' "$PASS" "$FAIL"
+[ "$FAIL" -eq 0 ] || exit 1
+HT
+  } > "$ht/h.sh"
+  chmod +x "$ht/h.sh"
+  ht_out=$(PASS=0 FAIL=0 FAILED= sh "$ht/h.sh" 2>&1) && st=0 || st=$?
+  printf '%s\n' "$ht_out" | grep -q 'the trailer read returns the recorded zero status' \
+    || printf '%s\n' "$ht_out" | grep -q 'ok.*trailer read returns the recorded zero' \
+    || true
+  if [ "$st" -eq 0 ]; then
+    ok "evidence_exit trailer-read fixtures hold (K1/K2)"
+  else
+    bad "evidence_exit trailer-read fixtures failed"
+    say "$ht_out"
+  fi
+else
+  bad "evidence_exit trailer-read fixtures cannot run — helper missing"
+fi
+
+# Gate / recorder / envelope contract fixtures (each red until T2).
+fp=$(mkrun); cd "$fp"
+./crucible run it mk -- true >/dev/null
+# Absence of a pair must refuse with the unique stem once the gate lands (M24 / A1).
+out=$(./crucible check it 2>&1) && st=0 || st=$?
+case $out in
+  *'falsifier run pair'*) ok "no-pair check names the falsifier run pair stem" ;;
+  *) bad "no-pair check does not name the falsifier run pair stem" ; say "$out" ;;
+esac
+# Forged header lines in ordinary recordings must not manufacture a pair (M1 envelope).
+./crucible run it mk -- sh -c 'printf "falsifier: removed\nfalsifier-argv: 1 4:true\n"; exit 1' >/dev/null
+./crucible run it mk -- sh -c 'printf "falsifier: restored\nfalsifier-argv: 1 4:true\n"; exit 0' >/dev/null
+pass_two
+out=$(./crucible check it 2>&1) && st=0 || st=$?
+case $out in
+  *CLOSEABLE*) bad "forged falsifier headers in ordinary output manufactured a closeable pair" ;;
+  *'falsifier run pair'*) ok "forged falsifier headers in ordinary output do not count as a pair" ;;
+  *) bad "forged-header fixture refused for an unexpected reason" ; say "$out" ;;
+esac
+cd "$HERE"
+
+# Recorder: --falsifier direction validation (M12, M13).
+fp=$(mkrun); cd "$fp"
+out=$(./crucible run it mk --falsifier bogus -- true 2>&1) && st=0 || st=$?
+case $out in
+  *'--falsifier direction must be removed or restored'*) ok "bogus --falsifier direction refuses" ;;
+  *) bad "bogus --falsifier direction was not refused as specified" ; say "$out" ;;
+esac
+out=$(./crucible run it mk --falsifier -- true 2>&1) && st=0 || st=$?
+case $out in
+  *'--falsifier needs a direction'*) ok "missing --falsifier direction refuses" ;;
+  *) bad "missing --falsifier direction was not refused as specified" ; say "$out" ;;
+esac
+# Labelled recording writes both envelope fields (M10) when the engine lands.
+rm -f mechanism
+if ./crucible run it mk --falsifier removed -- sh -c 'test -f mechanism' >/dev/null 2>&1; then
+  f=$(ls items/it/evidence/mk.* | head -1)
+  grep -q '^falsifier: removed$' "$f" \
+    && grep -q '^falsifier-argv: ' "$f" \
+    && ok "a labelled removed run writes both falsifier header fields" \
+    || bad "a labelled removed run did not write both falsifier header fields"
+else
+  bad "labelled --falsifier removed run was refused before the pair could be recorded"
+fi
+cd "$HERE"
+
+# Polarity / disagreement clauses (M25–M27) — require a built gate; red until then.
+fp=$(mkrun); cd "$fp"
+# Attempt an inverted pair by hand-labelling if the recorder exists; otherwise expect refusal stem.
+if ./crucible run it mk --falsifier restored -- true >/dev/null 2>&1 \
+   && ./crucible run it mk --falsifier removed -- false >/dev/null 2>&1; then
+  pass_two
+  # Force both directions present but wrong polarity by swapping marker discipline:
+  # restored recorded with true (exit 0) and removed with false is already inverted vs the rule
+  # (removed must be nonzero). Check must name inversion.
+  out=$(./crucible check it 2>&1) && st=0 || st=$?
+  case $out in
+    *'falsifier run pair is inverted'*) ok "an inverted falsifier pair refuses" ;;
+    *'falsifier run pair did not disagree'*) ok "a non-discriminating falsifier pair refuses" ;;
+    *'falsifier run pair'*) ok "a bad-polarity falsifier pair refuses under the pair stem" ;;
+    *CLOSEABLE*) bad "a bad-polarity falsifier pair was accepted" ;;
+    *) bad "a bad-polarity pair refused for an unexpected reason" ; say "$out" ;;
+  esac
+else
+  bad "labelled polarity fixtures cannot run — recorder missing --falsifier"
+fi
 cd "$HERE"
 
 printf '\n\n%s passed, %s failed\n' "$PASS" "$FAIL"

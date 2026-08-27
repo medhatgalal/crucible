@@ -448,6 +448,10 @@ Managed lifecycle refuses:
 - duplicate current-work PASSes and duplicate canonical expensive checks.
 - managed closure when a compatibility verdict is not backed by its matching attempt result.
 
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+
 ## What this behavior does not yet provide
 
 Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops,

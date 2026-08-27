@@ -216,3 +216,10 @@ mid-cherry-pick worktree recovery: [managed-lifecycle.md](managed-lifecycle.md#s
 
 `STATUS.md` `worth:` is `BUILD` (scout ABSENT), `DOCS` (only PARTLY-EXISTS),
 `NO-BUILD` (no ABSENT/PARTLY), or `UNKNOWN` (investigation incomplete).
+
+## Falsifier pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+

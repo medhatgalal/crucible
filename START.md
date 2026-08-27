@@ -592,3 +592,10 @@ Do not persist personal memory. Do not bind the next PROBLEM yourself. Keep the 
   `could not safely remove worktree`, an integration worktree was left mid-cherry-pick: inspect it,
   then `git -C <worktree> cherry-pick --abort` and retry. Full story:
   [docs/managed-lifecycle.md](docs/managed-lifecycle.md#session-cleanup).
+
+## Falsifier pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+

@@ -19,9 +19,13 @@ a RULE into a CHECK, do it and say so in the lesson.
    itself is refused.
 5. **RULE — Claims carry their source inline.** Not "the tests pass" but "the tests pass:
    `evidence/j1.2.<wid>.txt`, exit 0". If a claim has no artifact, label it ASSUMPTION.
-6. **RULE — Closure needs a falsifier.** "It works" is worthless. "It works, and when I undo the
-   change this named check fails, and here is that output" is proof. Every item's `ITEM.md` names
-   its falsifier before any build starts; the gate refuses the template placeholder.
+6. **CHECK — Closure needs a falsifier.** Converted from RULE to CHECK. Every item's `ITEM.md`
+   names its falsifier before any build starts; the gate refuses the template placeholder. The
+   enforced refusal is:
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
 
 ## Independence
 

@@ -2,6 +2,12 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## Falsifier run pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+
 ## Known limits
 
 - `brief` is dispatched by the CLI but is absent from `help`.
@@ -13,3 +19,4 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 - `adopt` does not copy `CHANGELOG.md`, so it does not travel into adopted trees.
 - Rollback after a bad `--refresh`: the refreshed old engine is gone. Recovery is refreshing the same program from an older known-good tag; its evidence and approved panel remain untouched.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
+- The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that.

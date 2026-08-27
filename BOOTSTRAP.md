@@ -93,3 +93,10 @@ implement the role yourself.
 Do not store project lessons, personas, or cycle state in global agent memory. Durable facts belong to
 the target repository. Live contexts, processes, worktrees, and machine-specific invocations are
 disposable and may be cleaned only after an exact preview and operator approval.
+
+## Falsifier pair
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+

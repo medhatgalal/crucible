@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+- Falsifier pair gate: closure requires two recorded directions of the named falsifier.
+
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+
+
 ## [1.6.6] - 2026-08-24
 
 ### Guided investigation and travelling operator limits

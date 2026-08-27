@@ -14,6 +14,10 @@ stale — the tool binds it — but nothing proves it was a meaningful check. Re
 PASS requires that you ran the item's falsifier yourself and cite the recorded output. The gate refuses
 a PASS that names no evidence you recorded.
 
+Closure refuses unless the item's falsifier was recorded by `crucible run` at the current work id
+in both directions — once failing with the mechanism removed, once passing with it restored — and
+the gate reads those two files rather than running the falsifier itself.
+
 REJECT requires file:line for every finding, the property violated, and the observation showing it. A
 finding without a location is not actionable and wastes a cycle.
 
