@@ -127,6 +127,53 @@ travelling_doc_files() {
   done
 }
 
+# Every file that may carry the A7-ENFORCED sentence: travelling docs plus other
+# tracked copies found in-tree (SECURITY/CHANGELOG). Canon remains docs/whats-new.md.
+a7_fence_carriers() {
+  root=$1
+  travelling_doc_files "$root"
+  for extra in SECURITY.md CHANGELOG.md README.md; do
+    [ -f "$root/$extra" ] && printf '%s\n' "$root/$extra"
+  done
+}
+
+# True when a travelling document claims the falsifier pair/runs prove that
+# mechanism removal caused the failure. Scrubs the accepted A7-ENFORCED fence and
+# A7-LIMIT disclosure first so polarity text and the no-causation limit stay green.
+claims_pair_causation() {
+  f=$1
+  a7_line1=$2
+  scrub=$(mktemp "$SELFTEST_TMP/scrub.XXXXXX")
+  awk -v e1="$a7_line1" '
+    $0 == e1 { getline; getline; next }
+    index($0, "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id") { next }
+    tolower($0) ~ /does[ \t]+not[ \t]+prove[ \t]+that[ \t]+removing[ \t]+the[ \t]+mechanism/ { next }
+    { print }
+  ' "$f" > "$scrub"
+  if grep -Eqi \
+    '(recorded[[:space:]]+)?(pair|runs?)[[:space:]]+(demonstrates?|proves?|establishes?|shows?)[[:space:]].{0,120}((delet|remov).{0,40}mechanism|mechanism[[:space:]]+(removal|change))' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    '(removing|deleting)[[:space:]]+the[[:space:]]+mechanism[[:space:]]+is[[:space:]]+what[[:space:]]+made' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    '(falsifier|pair|runs?|evidence).{0,100}(proves?|demonstrates?|establishes?|shows?).{0,100}(mechanism[[:space:]]+(removal|change)|removing[[:space:]]+the[[:space:]]+mechanism|deleting[[:space:]]+the[[:space:]]+mechanism).{0,80}(caused|produced|made)' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    'mechanism[[:space:]]+removal[[:space:]]+(caused|produced|made)' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  rm -f "$scrub"
+  return 1
+}
+
 known_limits_section() {
   awk '
     $0 == "## Known limits" { in_limits=1; next }
@@ -1650,43 +1697,36 @@ grep -q '^6\. \*\*CHECK — Closure needs a falsifier' "$HERE/RULES.md" \
   && ok "RULES.md rule 6 is labelled CHECK" \
   || bad "RULES.md rule 6 is not labelled CHECK"
 
-# M30 — travelling A7-ENFORCED bytes are byte-identical across copies.
+# M30 — A7-ENFORCED bytes are byte-identical across every copy that carries them.
 # Canonical tracked copy is docs/whats-new.md (one writer for the shipped sentence).
+# One-byte drift in any carrier (including BOOTSTRAP/START/install) must fail.
 a7_line1='Closure refuses unless the item'\''s falsifier was recorded by `crucible run` at the current work id'
 fence_copies=0
-canon_file=""
-for f in \
-  "$HERE/docs/whats-new.md" \
-  "$HERE/RULES.md" \
-  "$HERE/roles/maker.md" \
-  "$HERE/roles/judge.md" \
-  "$HERE/roles/specifier.md" \
-  "$HERE/roles/contract-auditor.md" \
-  "$HERE/docs/managed-lifecycle.md"
-do
-  [ -f "$f" ] || continue
-  if grep -qxF "$a7_line1" "$f"; then
-    # Pull the three-line paragraph starting at the fence's first line.
-    para=$(awk -v s="$a7_line1" '
+fence_drift=0
+canon_file=$(mktemp "$SELFTEST_TMP/a7e.XXXXXX")
+if grep -qxF "$a7_line1" "$HERE/docs/whats-new.md"; then
+  awk -v s="$a7_line1" '
+    $0 == s { print; getline; print; getline; print; exit }
+  ' "$HERE/docs/whats-new.md" > "$canon_file"
+  a7_list=$(mktemp "$SELFTEST_TMP/a7list.XXXXXX")
+  a7_fence_carriers "$HERE" | sort -u > "$a7_list"
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    grep -qxF "$a7_line1" "$f" || continue
+    para_file=$(mktemp "$SELFTEST_TMP/a7e2.XXXXXX")
+    awk -v s="$a7_line1" '
       $0 == s { print; getline; print; getline; print; exit }
-    ' "$f")
-    if [ -z "$canon_file" ]; then
-      canon_file=$(mktemp "$SELFTEST_TMP/a7e.XXXXXX")
-      printf '%s\n' "$para" > "$canon_file"
-      fence_copies=1
+    ' "$f" > "$para_file"
+    if cmp -s "$canon_file" "$para_file"; then
+      fence_copies=$((fence_copies + 1))
     else
-      para_file=$(mktemp "$SELFTEST_TMP/a7e2.XXXXXX")
-      printf '%s\n' "$para" > "$para_file"
-      if cmp -s "$canon_file" "$para_file"; then
-        fence_copies=$((fence_copies + 1))
-      else
-        say "A7-ENFORCED drift in $f"
-      fi
+      fence_drift=$((fence_drift + 1))
+      say "A7-ENFORCED drift in $f"
     fi
-  fi
-done
-[ "$fence_copies" -ge 3 ] \
-  && ok "travelling A7-ENFORCED text is byte-identical in at least three documents" \
+  done < "$a7_list"
+fi
+[ "$fence_drift" -eq 0 ] && [ "$fence_copies" -ge 3 ] \
+  && ok "travelling A7-ENFORCED text is byte-identical across every copy that carries it" \
   || bad "travelling A7-ENFORCED text is missing or drifted (found $fence_copies copies)"
 
 # M31 — Known limits carries the A7-LIMIT bullet (already gated by known_limits_missing).
@@ -1694,12 +1734,18 @@ known_limits_has "$(known_limits_section "$HERE/docs/whats-new.md")" 'falsifier 
   && ok "docs/whats-new.md Known limits names the falsifier-pair/no-causation limit" \
   || bad "docs/whats-new.md Known limits lacks the falsifier-pair/no-causation limit"
 
-# M32 — no travelling document claims the pair proves causation.
+# M32 — no travelling document claims the pair/runs prove mechanism removal caused the fail.
+# Phrase-proxy regexes alone are not enough: paraphrases and an extra Known-limits
+# causation bullet beside A7-LIMIT must also redden. A7-ENFORCED / A7-LIMIT stay green.
 causal=0
-for f in $(travelling_doc_files "$HERE"); do
-  grep -Eqi 'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' "$f" \
-    && causal=$((causal + 1)) && say "causal claim in $f"
-done
+tdocs=$(mktemp "$SELFTEST_TMP/tdocs.XXXXXX")
+travelling_doc_files "$HERE" | sort -u > "$tdocs"
+while IFS= read -r f; do
+  if claims_pair_causation "$f" "$a7_line1"; then
+    causal=$((causal + 1))
+    say "causal claim in $f"
+  fi
+done < "$tdocs"
 [ "$causal" -eq 0 ] \
   && ok "no travelling document claims the falsifier pair proves causation" \
   || bad "a travelling document claims the falsifier pair proves causation"
