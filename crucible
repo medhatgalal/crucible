@@ -1207,7 +1207,9 @@ ${title:-Describe the work, and quote the report sentence that caused this item.
 ## Falsifier
 
 TEMPLATE-FALSIFIER-UNWRITTEN. Replace this line: name the change to undo and the check
-that must then fail. The gate refuses closure while this marker is present.
+that must then fail. Then add exactly one fenced one-line command in one of the two
+accepted forms (sh -c 'SCRIPT' or a plain space-separated vector) so the gate can bind
+a recorded pair to it. The gate refuses closure while this marker is present.
 EOF
   fi
   if [ -f "$ROOT/PROGRAM" ]; then
@@ -1332,9 +1334,35 @@ cmd_run_claim() {
 }
 
 cmd_run() {
-  need "${1:-}"; slug=$1; name=${2:-}; shift 2 2>/dev/null || die "usage: crucible run SLUG NAME -- CMD..."
-  [ "${1:-}" = "--" ] || die "usage: crucible run SLUG NAME -- CMD..."
+  need "${1:-}"; slug=$1; name=${2:-}; shift 2 2>/dev/null || die "usage: crucible run SLUG NAME [--falsifier removed|restored] -- CMD..."
+  run_falsifier=-
+  while [ $# -gt 0 ] && [ "${1:-}" != "--" ]; do
+    case $1 in
+      --falsifier)
+        shift
+        case ${1:-} in
+          removed|restored) run_falsifier=$1 ;;
+          ''|--) die "--falsifier needs a direction" ;;
+          *) die "--falsifier direction must be removed or restored" ;;
+        esac ;;
+      *) die "unknown option before -- in run" ;;
+    esac
+    shift
+  done
+  [ "${1:-}" = "--" ] || die "usage: crucible run SLUG NAME [--falsifier removed|restored] -- CMD..."
   shift; [ $# -gt 0 ] || die "no command given"
+  if [ "$run_falsifier" != - ]; then
+    # A labelled recording carries its argument vector on one header line, and every header
+    # read in this engine is line-oriented. The two things that line cannot represent are
+    # refused here, before any file exists, rather than mangled into it.
+    for fa in "$@"; do
+      [ "$(printf '%s' "$fa" | wc -l | tr -d ' ')" -eq 0 ] \
+        || die "refused: a labelled falsifier argument may not contain a newline"
+      if printf '%s' "$fa" | LC_ALL=C grep -q '[^ -~]'; then
+        die "refused: a labelled falsifier argument must be printable ASCII"
+      fi
+    done
+  fi
   reg "$name"; d=$(D "$slug"); wid=$(workid "$slug")
   run_attempt=-
   if uses_managed_lifecycle; then
@@ -1353,6 +1381,11 @@ cmd_run() {
     esac
     run_task=$(attempt_meta "$run_attempt" 3)
     if [ "$run_task" != - ]; then
+      # A falsifier pair is item-scoped. Task-scoped evidence is stamped with the task
+      # branch's tree and is skipped outright by the closure gate's evidence loop, so a pair
+      # recorded here could never count. Refusing before any file is created is the only
+      # honest answer: the alternative is a recording that looks like a pair and is not.
+      [ "$run_falsifier" = - ] || die "refused: a falsifier pair is item-scoped — start an item-scoped attempt (crucible attempt start $slug $name) and record both directions there, not under task $run_task"
       task_repo=$(awk -F '\t' 'NR == 2 { print $1 }' "$ROOT/attempts/$run_attempt/task.tsv")
       task_branch=$(awk -F '\t' 'NR == 2 { print $2 }' "$ROOT/attempts/$run_attempt/task.tsv")
       wid=$(git -C "$task_repo" rev-parse --verify "$task_branch" | cut -c1-12)
@@ -1367,6 +1400,12 @@ cmd_run() {
   tmp="$d/evidence/.partial.$name.$tok.$wid"
   { printf '%s\n' "$MARK"; printf 'agent: %s\n' "$name"; printf 'work-id: %s\n' "$wid"
     [ "$run_attempt" = - ] || printf 'attempt-id: %s\n' "$run_attempt"
+    if [ "$run_falsifier" != - ]; then
+      printf 'falsifier: %s\n' "$run_falsifier"
+      printf 'falsifier-argv: %s' "$#"
+      for fa in "$@"; do printf ' %s:%s' "${#fa}" "$fa"; done
+      printf '\n'
+    fi
     printf 'when: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"; printf 'command:'
     for a in "$@"; do printf ' %s' "$a"; done; printf '\n'; printf -- '--- output ---\n'; } > "$tmp"
   rc=0; "$@" >> "$tmp" 2>&1 || rc=$?
@@ -1807,6 +1846,67 @@ cmd_dispatch() {
     printf '%s\n' "$(invocation "$name" "$out")"
     printf '# or give %s any way you like, with exactly: read %s and follow it exactly\n' "$name" "$out"
   } >&2
+}
+
+evidence_envelope() {
+  # The evidence metadata envelope: the bytes after the `crucible-run/1` marker line and
+  # before the FIRST line that is exactly `--- output ---`. Everything the recorded command
+  # printed lands after that line, so header-looking output is output and never metadata.
+  # Exit 3 when the file carries no marker at all: a file whose envelope cannot be bounded
+  # must never be read as metadata.
+  awk 'NR == 1 { next }
+       $0 == "--- output ---" { bounded = 1; exit }
+       { print }
+       END { if (!bounded) exit 3 }' "$1"
+}
+
+evidence_exit() {
+  # The status the trailer reports. `cmd_run` appends the trailer after the command output,
+  # so a command whose output has no trailing newline leaves the trailer at the end of that
+  # same line. The greedy match takes the last trailer on the last line, which is always
+  # the engine's own. Two stages only (11A): last-physical-line selection, then joined-trailer
+  # extraction. No trailing `| tail -1` — that stage cannot fail and is a non-mechanism.
+  tail -1 "$1" | sed -n 's/.*--- exit \([0-9][0-9]*\) ---$/\1/p'
+}
+
+falsifier_command() {
+  # The one runnable falsifier ITEM.md names, or nothing. Managed items already declare it
+  # as one bounded command; classic items must now declare it as exactly one fenced block
+  # holding exactly one line.
+  fc_file=$1
+  if uses_managed_lifecycle; then item_section_body "$fc_file" 'Focused falsifier'; return; fi
+  awk '/^## Falsifier/{f=1;next} f&&/^## /{exit} f{print}' "$fc_file" 2>/dev/null | awk '
+    /^```/ { fence = !fence; if (fence) blocks++; next }
+    fence  { lines++; line = $0 }
+    END    { if (blocks == 1 && lines == 1) print line }'
+}
+
+falsifier_argv_frame() {
+  # The declaration line as an injective identity: the argument count, then one
+  # LENGTH:ARGUMENT group per argument. Length prefixes make the encoding prefix-free, so
+  # two different argument vectors cannot produce one string — and nothing ever parses it
+  # back, so there is no decoder to attack.
+  fa_line=$1
+  # Emptiness before ASCII (DESIGN §13 / M8): an empty line must refuse as empty, not as
+  # not-printable-ASCII — grep over empty input produces no match.
+  case $fa_line in '') printf 'empty'; return 1 ;; esac
+  printf '%s' "$fa_line" | LC_ALL=C grep -q '^[ -~]*$' || { printf 'not printable ASCII'; return 1; }
+  case $fa_line in
+    "sh -c '"*"'")
+      fa_script=${fa_line#sh -c \'}; fa_script=${fa_script%\'}
+      case $fa_script in '') printf 'empty wrapper script'; return 1 ;; esac
+      case $fa_script in *\'*) printf 'interior single quote'; return 1 ;; esac
+      printf '3 2:sh 2:-c %s:%s' "${#fa_script}" "$fa_script"; return 0 ;;
+    *\'*) printf 'single quote outside the sh -c wrapper'; return 1 ;;
+    *\"*) printf 'double quote'; return 1 ;;
+    ' '*) printf 'leading space'; return 1 ;;
+    *' ') printf 'trailing space'; return 1 ;;
+    *'  '*) printf 'double space'; return 1 ;;
+    *)
+      case $- in *f*) fa_hadf=1 ;; *) fa_hadf=0 ;; esac
+      set -f; set -- $fa_line; [ "$fa_hadf" = 1 ] || set +f
+      printf '%s' "$#"; for fa in "$@"; do printf ' %s:%s' "${#fa}" "$fa"; done; return 0 ;;
+  esac
 }
 
 item_section_body() {
@@ -5484,7 +5584,7 @@ cmd_check() {
     esac
   fi
 
-  ok_agents=""; en=0
+  ok_agents=""; en=0; ok_files=""
   if [ -z "$(find "$d/evidence" -type f 2>/dev/null | head -1)" ]; then
     say "FAIL no evidence — use: crucible run $slug NAME -- CMD"; bad=1
   else
@@ -5517,9 +5617,80 @@ cmd_check() {
         { say "FAIL evidence $b says agent $ia inside — renamed"; bad=1; continue; }
       grep -q '^--- exit ' "$f" || { say "FAIL evidence $b has no exit line (truncated)"; bad=1; continue; }
       case " $ok_agents " in *" $an "*) : ;; *) ok_agents="$ok_agents $an" ;; esac
-      en=$((en+1))
+      en=$((en+1)); ok_files="$ok_files $b"
     done
     [ "$en" -gt 0 ] || { say "FAIL no usable evidence for $wid"; bad=1; }
+  fi
+
+  # Closure requires a recorded falsifier run pair at the current work id. The metadata that
+  # names a direction is read only from the header envelope, so text a recorded command
+  # printed cannot manufacture or poison a pair.
+  fdecl=$(falsifier_command "$d/ITEM.md")
+  fframe=
+  if [ -z "$fdecl" ]; then
+    say "FAIL ITEM.md names no falsifier command"; bad=1
+  elif ! fframe=$(falsifier_argv_frame "$fdecl"); then
+    if [ "$fframe" = empty ]; then
+      say "FAIL falsifier command is empty"; bad=1
+    else
+      say "FAIL falsifier command is not an accepted one-line form: $fframe"; bad=1
+    fi
+    fframe=
+  fi
+  if [ -n "$fframe" ]; then
+    fp_removed=0; fp_restored=0; fp_rm_zero=0; fp_rs_nonzero=0; fp_notran=0
+    for b in $ok_files; do
+      f="$d/evidence/$b"
+      if ! fenv=$(evidence_envelope "$f"); then
+        if grep -q '^falsifier:\|^falsifier-argv:' "$f"; then
+          say "FAIL evidence $b has no output marker, so its falsifier metadata is unbounded"; bad=1
+        fi
+        continue
+      fi
+      fnd=$(printf '%s\n' "$fenv" | grep -c '^falsifier:' || true)
+      fni=$(printf '%s\n' "$fenv" | grep -c '^falsifier-argv:' || true)
+      [ "$fnd" -eq 0 ] && [ "$fni" -eq 0 ] && continue
+      if [ "$fnd" -gt 1 ] || [ "$fni" -gt 1 ]; then
+        say "FAIL evidence $b carries duplicate falsifier metadata"; bad=1; continue
+      fi
+      if [ "$fnd" -ne 1 ] || [ "$fni" -ne 1 ]; then
+        say "FAIL evidence $b is half-labelled falsifier evidence"; bad=1; continue
+      fi
+      fdir=$(printf '%s\n' "$fenv" | sed -n 's/^falsifier: //p')
+      fid=$(printf '%s\n' "$fenv" | sed -n 's/^falsifier-argv: //p')
+      if [ -z "$fdir" ] || [ -z "$fid" ]; then
+        say "FAIL evidence $b: falsifier metadata has no value"; bad=1; continue
+      fi
+      case $fdir in removed|restored) : ;;
+        *) say "FAIL evidence $b names falsifier direction $fdir, which is not removed or restored"; bad=1; continue ;;
+      esac
+      if [ "$fid" != "$fframe" ]; then
+        say "FAIL evidence $b: falsifier run pair does not match the falsifier ITEM.md names"; bad=1; continue
+      fi
+      fst=$(evidence_exit "$f")
+      if [ -z "$fst" ]; then
+        say "FAIL evidence $b: falsifier run has no readable exit trailer"; bad=1; continue
+      fi
+      if [ "$fdir" = removed ]; then
+        fp_removed=$((fp_removed+1))
+        [ "$fst" -eq 0 ] && fp_rm_zero=1
+        case $fst in 126|127) fp_notran=1 ;; esac
+      else
+        fp_restored=$((fp_restored+1))
+        [ "$fst" -eq 0 ] || fp_rs_nonzero=1
+      fi
+    done
+    if [ "$fp_removed" -eq 0 ] || [ "$fp_restored" -eq 0 ]; then
+      say "FAIL no falsifier run pair at $wid — record: crucible run $slug NAME --falsifier removed -- $fdecl (and again --falsifier restored)"; bad=1
+    elif [ "$fp_notran" -eq 1 ]; then
+      say "FAIL falsifier run pair never ran — a removed direction exited 126 or 127"; bad=1
+    elif [ "$fp_rm_zero" -eq 1 ] && [ "$fp_rs_nonzero" -eq 1 ]; then
+      say "FAIL falsifier run pair is inverted — the removed direction exited 0 and the restored direction did not"; bad=1
+    elif [ "$fp_rm_zero" -eq 1 ]; then
+      say "FAIL falsifier run pair did not disagree — the removed direction exited 0"; bad=1
+    elif [ "$fp_rs_nonzero" -eq 1 ]; then
+      say "FAIL falsifier run pair did not disagree — the restored direction did not exit 0"; bad=1
+    fi
   fi
 
   vn=0; kinds=""; bodies=""
