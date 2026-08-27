@@ -1073,6 +1073,7 @@ parts=$(ls items/it/evidence/.partial.* 2>/dev/null | wc -l | tr -d ' ')
 # Closing must be atomic: parallel closes must not both append a lesson.
 cd "$HERE"; cc=$(mkrun); cd "$cc"
 ./crucible run it mk -- true >/dev/null
+record_pair
 w=$(./crucible workid it)
 ./crucible run it j1 -- sh -c 'echo j1' >/dev/null; ./crucible run it j2 -- sh -c 'echo j2' >/dev/null
 e1=$(ls items/it/evidence | grep '^j1\.' | head -1); e2=$(ls items/it/evidence | grep '^j2\.' | head -1)
@@ -1123,6 +1124,7 @@ parts=$(ls items/it/evidence/.partial.* 2>/dev/null | wc -l | tr -d ' ')
 # Closing read STATUS and then wrote it, so two callers both saw OPEN and both appended.
 cd "$HERE"; cc=$(mkrun); cd "$cc"
 ./crucible run it mk -- true >/dev/null
+record_pair
 w=$(./crucible workid it)
 ./crucible run it j1 -- sh -c 'echo j1' >/dev/null; ./crucible run it j2 -- sh -c 'echo j2' >/dev/null
 e1=$(ls items/it/evidence | grep '^j1\.' | head -1); e2=$(ls items/it/evidence | grep '^j2\.' | head -1)
@@ -1770,9 +1772,16 @@ case $out in
   *) bad "no-pair check does not name the falsifier run pair stem" ; say "$out" ;;
 esac
 # Forged header lines in ordinary recordings must not manufacture a pair (M1 envelope).
+# Verdicts only — do not call pass_two/record_pair; a real pair would mask the forgery.
 ./crucible run it mk -- sh -c 'printf "falsifier: removed\nfalsifier-argv: 1 4:true\n"; exit 1' >/dev/null
 ./crucible run it mk -- sh -c 'printf "falsifier: restored\nfalsifier-argv: 1 4:true\n"; exit 0' >/dev/null
-pass_two
+w=$(./crucible workid it)
+./crucible run it j1 -- sh -c 'echo j1 forged-header review' >/dev/null
+./crucible run it j2 -- sh -c 'echo j2 forged-header review' >/dev/null
+e1=$(ls items/it/evidence | grep '^j1\.' | head -1)
+e2=$(ls items/it/evidence | grep '^j2\.' | head -1)
+printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$e1" > items/it/verdicts/j1.md
+printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$e2" > items/it/verdicts/j2.md
 out=$(./crucible check it 2>&1) && st=0 || st=$?
 case $out in
   *CLOSEABLE*) bad "forged falsifier headers in ordinary output manufactured a closeable pair" ;;

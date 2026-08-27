@@ -166,7 +166,7 @@ MEDIUM
 
 ## Focused falsifier
 
-scripts/verify-managed-lifecycle.sh
+sh -c 'test -f mechanism'
 
 ## Expensive evidence
 
