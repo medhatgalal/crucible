@@ -1783,9 +1783,10 @@ e2=$(ls items/it/evidence | grep '^j2\.' | head -1)
 printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$e1" > items/it/verdicts/j1.md
 printf 'VERDICT: PASS\nWORK-ID: %s\nsee %s\n' "$w" "$e2" > items/it/verdicts/j2.md
 out=$(./crucible check it 2>&1) && st=0 || st=$?
+# Pair-stem first: a refusing gate prints "NOT CLOSEABLE", which also matches *CLOSEABLE*.
 case $out in
-  *CLOSEABLE*) bad "forged falsifier headers in ordinary output manufactured a closeable pair" ;;
   *'falsifier run pair'*) ok "forged falsifier headers in ordinary output do not count as a pair" ;;
+  *CLOSEABLE*) bad "forged falsifier headers in ordinary output manufactured a closeable pair" ;;
   *) bad "forged-header fixture refused for an unexpected reason" ; say "$out" ;;
 esac
 cd "$HERE"
