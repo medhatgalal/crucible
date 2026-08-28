@@ -169,9 +169,9 @@ a7_enforced_canon() {
 # lines first so polarity text and the no-causation limit stay green. Prefix scrub
 # is forbidden: a same-line smuggle after the A7-LIMIT first-line prefix must remain
 # visible. Detection is structural co-occurrence, not an enumerated connector list:
-# NFKC + soft-hyphen→space + strip Cf + fold Latin lookalikes (Cyrillic incl. el,
-# and Greek α/ε/ο/ρ/κ), then fail when a file contains a pair-class token AND a
-# mechanism-class token. No connector allowlist. No tiny window.
+# NFKC + soft-hyphen/dashes/ZWSP→space + strip Cf + fold Latin lookalikes
+# (Cyrillic incl. el, and Greek α/ε/ο/ρ/κ), then fail when a file contains a
+# pair-class token AND a mechanism-class token. No connector allowlist. No tiny window.
 claims_pair_causation() {
   f=$1
   a7_line1=$2
@@ -209,19 +209,26 @@ LOOKALIKES = {
     "\u0391": "A", "\u0395": "E", "\u039f": "O", "\u03a1": "R", "\u039a": "K",
 }
 # Soft hyphen U+00AD is Cf; turn it into a space before stripping other Cf so
-# two\u00ADruns becomes "two runs", not the glued "tworuns". Hard hyphen-minus
-# is also space so two-runs matches the same class as two runs.
-raw = raw.replace("\u00AD", " ")
+# two\u00ADruns becomes "two runs", not the glued "tworuns". Fold every dash
+# and ZWSP to space so en/em/non-breaking/minus/ZWSP smuggles match two runs.
+for _d in ("\u00AD", "\u2013", "\u2014", "\u2011", "\u2212", "\u200B", "-"):
+    raw = raw.replace(_d, " ")
 text = unicodedata.normalize("NFKC", raw)
 text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 text = "".join(LOOKALIKES.get(ch, ch) for ch in text).lower()
 text = text.replace("-", " ")
+# Known non-claim idiom in travelling docs (START.md): not a falsifier pair.
+text = text.replace("that pair of refusals", " ")
 PAIR = re.compile(
-    r"\b(falsifier\s+pair|the\s+pair|this\s+pair|a\s+pair|evidence\s+pair|"
+    r"\b(falsifier\s+pair|the\s+pair|this\s+pair|that\s+pair|our\s+pair|a\s+pair|"
+    r"the\s+pairs|those\s+pairs|evidence\s+pair|run\s+pair|"
     r"pair\s+disagreement|pair\s+divergence|"
     r"pair\s+exits|pair'?s?\s+disagreement|disagreement\s+of\s+the\s+pair|"
-    r"divergent\s+pair|(?:two|both)\s+runs|paired\s+runs|"
+    r"divergent\s+pair|(?:two|both|dual|these)\s+runs|paired\s+runs|"
+    r"paired\s+falsifier(?:\s+trials?)?|falsifier\s+trials?|"
+    r"a\s+pairing\s+of\s+runs|pairing\s+of\s+runs|"
     r"(?:two|both)\s+captures?|both\s+directions|"
+    r"(?:both|two)\s+sides|(?:both|two)\s+executions?|(?:both|two)\s+attempts?|"
     r"two\s+recordings?|recorded\s+(?:pair|runs?|recordings?)|"
     r"falsifier\s+runs?|falsifier\s+executions?|two\s+falsifier\s+executions?|"
     r"recordings)\b"
@@ -229,8 +236,13 @@ PAIR = re.compile(
 MECH = re.compile(
     r"\b(mechanism|removal|removing|deleting|deleted|deletion|removed|absence|absent|"
     r"taken\s+out|taken\s+away|refusal\s+branch|gate|stripped|stripping|strip|"
-    r"excised|nullified|withdrawn|disabled|disabling|omitted|gone|undoing|"
-    r"checked\s+feature)\b"
+    r"excised|nullified|withdrawn|disabled|disabling|omitted|gone|undoing|undo|undone|"
+    r"checked\s+(?:feature|behavior|behaviour)|"
+    r"eliminat(?:e|es|ed|ing)|suppress(?:e|es|ed|ing)?|bypass(?:e|es|ed|ing)?|"
+    r"revert(?:s|ed|ing)?|rolled\s+back|rolling\s+back|"
+    r"turned\s+off|turning\s+off|vanish(?:es|ed|ing)?|missing|without|"
+    r"yank(?:s|ed|ing)?|deactivat(?:e|es|ed|ing)|elid(?:e|es|ed|ing)|"
+    r"ripping\s+out|rip(?:s|ped)?\s+out)\b"
 )
 # No connector allowlist and no tiny window: any file that co-mentions a
 # pair-class token and a mechanism-class token is a causation claim. Exact
