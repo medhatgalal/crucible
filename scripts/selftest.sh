@@ -127,13 +127,31 @@ travelling_doc_files() {
   done
 }
 
-# Every file that may carry the A7-ENFORCED sentence or a causation claim about it:
+# Every file that may carry the A7-ENFORCED sentence (M30 carrier set).
 # travelling docs plus other tracked copies (SECURITY/CHANGELOG/README/CONTRIBUTING).
 a7_fence_carriers() {
   root=$1
   travelling_doc_files "$root"
   for extra in SECURITY.md CHANGELOG.md README.md CONTRIBUTING.md; do
     [ -f "$root/$extra" ] && printf '%s\n' "$root/$extra"
+  done
+}
+
+# All tracked text files under root (M32). Not a named carrier list — LICENSE and
+# RELEASE.md must be visible to the causation scan the same as README.
+tracked_text_files() {
+  root=$1
+  (
+    CDPATH= cd -- "$root" || exit 1
+    git ls-files -z 2>/dev/null | tr '\0' '\n'
+  ) | while IFS= read -r rel; do
+    [ -n "$rel" ] || continue
+    case $rel in
+      *.md|*.txt|*.rst) ;;
+      LICENSE|LICENSE.*|RELEASE|RELEASE.md|CHANGELOG|CHANGELOG.md|README|README.md|SECURITY.md|CONTRIBUTING.md|RULES.md|LOOP.md|START.md|BOOTSTRAP.md|CONFIGURE.md|VERSION) ;;
+      *) continue ;;
+    esac
+    [ -f "$root/$rel" ] && printf '%s\n' "$root/$rel"
   done
 }
 
@@ -146,11 +164,14 @@ a7_enforced_canon() {
     'the gate reads those two files rather than running the falsifier itself.'
 }
 
-# True when a document claims or implies that mechanism removal / the gate branch
-# caused the pair's disagreement or a CLOSEABLE outcome. Scrubs the accepted
-# A7-ENFORCED fence and exact A7-LIMIT disclosure lines first so polarity text
-# and the no-causation limit stay green. Prefix scrub is forbidden: a same-line
-# smuggle after the A7-LIMIT first-line prefix must remain visible to the greps.
+# True when a document claims or implies that mechanism removal caused the pair's
+# disagreement. Scrubs the accepted A7-ENFORCED fence and exact A7-LIMIT disclosure
+# lines first so polarity text and the no-causation limit stay green. Prefix scrub
+# is forbidden: a same-line smuggle after the A7-LIMIT first-line prefix must remain
+# visible. Detection is structural (term-class co-occurrence), not an enumerated
+# phrase list: NFKC + strip Cf + fold Latin lookalikes, then fail when a paragraph
+# or a causal-centered window of >=500 tokens contains a pair-term AND a causal
+# connector AND a mechanism/removal/absence term.
 claims_pair_causation() {
   f=$1
   a7_line1=$2
@@ -170,72 +191,81 @@ claims_pair_causation() {
     $0 == "It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
     { print }
   ' "$f" > "$scrub"
-  # Strip Unicode Cf (ZWSP U+200B, ZWJ U+200D, …) so zero-width smuggles cannot hide causation.
-  scan=$(mktemp "$SELFTEST_TMP/scan.XXXXXX")
-  perl -CSD -pe 's/\p{Cf}//g' "$scrub" > "$scan"
+  python3 - "$scrub" <<'PY2'
+import re, sys, unicodedata
+path = sys.argv[1]
+raw = open(path, encoding="utf-8", errors="replace").read()
+CYR = {
+    "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0441": "c", "\u0456": "i",
+    "\u0440": "r", "\u0445": "x", "\u0443": "y",
+    "\u0410": "A", "\u0415": "E", "\u041e": "O", "\u0421": "C", "\u0406": "I",
+    "\u0420": "R", "\u0425": "X", "\u0423": "Y",
+}
+text = unicodedata.normalize("NFKC", raw)
+text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+text = "".join(CYR.get(ch, ch) for ch in text).lower()
+PAIR = re.compile(
+    r"\b(falsifier\s+pair|the\s+pair|pair\s+disagreement|pair\s+divergence|"
+    r"pair\s+exits|pair'?s?\s+disagreement|disagreement\s+of\s+the\s+pair|"
+    r"divergent\s+pair|two\s+runs|recorded\s+(?:pair|runs?)|falsifier\s+runs?|"
+    r"disagreement|divergence|diverge)\b"
+)
+CAUSAL = re.compile(
+    r"\b(stems\s+from|attributable\s+to|responsible\s+for|brought\s+about|led\s+to|"
+    r"owing\s+to|because\s+of|gave\s+rise\s+to|comes\s+from|traces\s+to|"
+    r"on\s+account\s+of|caused|results\s+from|accounts\s+for|owes\s+to|due\s+to|"
+    r"is\s+the\s+reason|are\s+the\s+reason|changed\s+the\s+outcome|"
+    r"became\s+closeable|made\s+them\s+disagree|proves?|demonstrates?|"
+    r"establishes?|shows?|explains?)\b"
+)
+MECH = re.compile(
+    r"\b(mechanism|removal|removing|deleting|deleted|removed|absence|taken\s+out)\b"
+)
+STRONG = re.compile(
+    r"\b(stems\s+from|attributable\s+to|responsible\s+for|brought\s+about|led\s+to|"
+    r"owing\s+to|because\s+of|gave\s+rise\s+to|comes\s+from|traces\s+to|"
+    r"on\s+account\s+of|caused|results\s+from|accounts\s+for|owes\s+to|due\s+to|"
+    r"is\s+the\s+reason|are\s+the\s+reason|changed\s+the\s+outcome|"
+    r"became\s+closeable|made\s+them\s+disagree)\b"
+)
+
+def token_starts(rx, joined):
+    return [joined[: m.start()].count(" ") for m in rx.finditer(joined)]
+
+def class_hit(ps, cs, ms, radius):
+    for c in cs:
+        if any(abs(p - c) <= radius for p in ps) and any(abs(m - c) <= radius for m in ms):
+            return True
+    return False
+
+for para in re.split(r"\n\s*\n", text):
+    if not (PAIR.search(para) and CAUSAL.search(para) and MECH.search(para)):
+        continue
+    toks = re.findall(r"\S+", para)
+    joined = " ".join(toks)
+    ps, cs, ms = token_starts(PAIR, joined), token_starts(CAUSAL, joined), token_starts(MECH, joined)
+    # Strong causal anywhere in the paragraph, or local 80-token nexus around a causal.
+    if STRONG.search(para) or class_hit(ps, cs, ms, 80):
+        sys.exit(0)
+
+tokens = re.findall(r"\S+", text)
+joined = " ".join(tokens)
+ps, cs, ms = token_starts(PAIR, joined), token_starts(CAUSAL, joined), token_starts(MECH, joined)
+# >=500-token window centered on each causal connector (radius 250).
+for c in cs:
+    if not (any(abs(p - c) <= 250 for p in ps) and any(abs(m - c) <= 250 for m in ms)):
+        continue
+    lo = max(0, c - 250)
+    hi = min(len(tokens), c + 251)
+    win = " ".join(tokens[lo:hi])
+    if STRONG.search(win):
+        sys.exit(0)
+sys.exit(1)
+PY2
+  st=$?
   rm -f "$scrub"
-  hit=1
-  if grep -Eqi \
-    '(recorded[[:space:]]+)?(pair|runs?)[[:space:]]+(demonstrates?|proves?|establishes?|shows?)[[:space:]].{0,120}((delet|remov).{0,40}mechanism|mechanism[[:space:]]+(removal|change))' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(removing|deleting)[[:space:]]+the[[:space:]]+mechanism[[:space:]]+is[[:space:]]+what[[:space:]]+made' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(falsifier|pair|runs?|evidence).{0,100}(proves?|demonstrates?|establishes?|shows?).{0,100}(mechanism[[:space:]]+(removal|change)|removing[[:space:]]+the[[:space:]]+mechanism|deleting[[:space:]]+the[[:space:]]+mechanism).{0,80}(caused|produced|made)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    'mechanism[[:space:]]+removal[[:space:]]+(caused|produced|made)|caused[[:space:]]+by[[:space:]]+mechanism[[:space:]]+removal' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(pair|runs?).{0,60}(disagreement|disagree).{0,40}caused|disagreement[[:space:]]+is[[:space:]]+caused' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(gate|branch|mechanism).{0,40}(is[[:space:]]+the[[:space:]]+reason|are[[:space:]]+the[[:space:]]+reason).{0,60}(disagree|runs?|outcome)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(gate|mechanism|removal|branch).{0,60}(what[[:space:]]+changed[[:space:]]+the[[:space:]]+outcome|changed[[:space:]]+the[[:space:]]+outcome)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(deleted|removed|removing|deleting).{0,50}(branch|mechanism).{0,80}(CLOSEABLE|closeable)|became[[:space:]]+CLOSEABLE' \
-    "$scan"
-  then hit=0
-  # A8 paraphrases: results from / accounts for / explains / owes to / diverge because /
-  # taken out / due to / absence — still require a pair/runs ↔ mechanism nexus.
-  elif grep -Eqi \
-    '(pair|runs?).{0,80}(disagreement|disagree|divergence|diverge|exits?).{0,80}(results[[:space:]]+from|accounts[[:space:]]+for|owes[[:space:]]+to|due[[:space:]]+to|caused[[:space:]]+by)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(disagreement|divergence).{0,40}(results[[:space:]]+from|accounts[[:space:]]+for|owes[[:space:]]+to|due[[:space:]]+to).{0,60}(delet|remov|mechanism)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(removing|deleting|removed|deleted)[[:space:]]+the[[:space:]]+mechanism[[:space:]]+(accounts[[:space:]]+for|explains?|results[[:space:]]+in)' \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    "mechanism'?s?[[:space:]]+absence[[:space:]]+explains?|(pair|runs?).{0,60}diverge[[:space:]]+because.{0,80}(mechanism|taken[[:space:]]+out)|mechanism[[:space:]]+was[[:space:]]+taken[[:space:]]+out" \
-    "$scan"
-  then hit=0
-  elif grep -Eqi \
-    '(pair|runs?).{0,40}(divergence|disagreement).{0,40}owes[[:space:]]+to[[:space:]]+mechanism|owes[[:space:]]+to[[:space:]]+mechanism[[:space:]]+(deletion|removal)' \
-    "$scan"
-  then hit=0
-  fi
-  rm -f "$scan"
-  return $hit
+  # python exits 0 on claim found (shell true); 1 on clean (shell false)
+  [ "$st" -eq 0 ]
 }
 
 known_limits_section() {
@@ -1803,18 +1833,22 @@ done < "$a7_list"
   && ok "travelling A7-ENFORCED text is byte-identical across every copy that carries it" \
   || bad "travelling A7-ENFORCED text is missing or drifted"
 
-# M31 — Known limits carries the A7-LIMIT bullet (already gated by known_limits_missing).
-known_limits_has "$(known_limits_section "$HERE/docs/whats-new.md")" 'falsifier pair proves' \
+# M31 — Known limits carries the full A7-LIMIT bullet, including the no-causation half.
+# Keeping only the "falsifier pair proves" prefix must fail (not a weaker proxy).
+_m31sec=$(known_limits_section "$HERE/docs/whats-new.md")
+known_limits_has "$_m31sec" 'falsifier pair proves' \
+  && known_limits_has "$_m31sec" 'does not prove' \
+  && known_limits_has "$_m31sec" 'removing the mechanism' \
   && ok "docs/whats-new.md Known limits names the falsifier-pair/no-causation limit" \
   || bad "docs/whats-new.md Known limits lacks the falsifier-pair/no-causation limit"
 
-# M32 — no document in the carrier set claims the pair/runs prove mechanism removal
-# caused the fail. Scan a7_fence_carriers (includes CHANGELOG/SECURITY/README/
-# CONTRIBUTING), not travelling docs alone. Paraphrases and an extra Known-limits
-# causation bullet beside A7-LIMIT must redden. A7-ENFORCED / A7-LIMIT stay green.
+# M32 — no tracked text file claims the pair/runs prove mechanism removal caused the
+# fail. Scan tracked_text_files (all tracked .md/.txt plus LICENSE/RELEASE/…), not a
+# named carrier list. Paraphrases, lookalikes, long-window filler, and plants in
+# LICENSE/RELEASE must redden. A7-ENFORCED / A7-LIMIT stay green via scrub.
 causal=0
 tdocs=$(mktemp "$SELFTEST_TMP/tdocs.XXXXXX")
-a7_fence_carriers "$HERE" | sort -u > "$tdocs"
+tracked_text_files "$HERE" | sort -u > "$tdocs"
 while IFS= read -r f; do
   if claims_pair_causation "$f" "$a7_line1"; then
     causal=$((causal + 1))
