@@ -128,11 +128,11 @@ travelling_doc_files() {
 }
 
 # Every file that may carry the A7-ENFORCED sentence or a causation claim about it:
-# travelling docs plus other tracked copies (SECURITY/CHANGELOG/README).
+# travelling docs plus other tracked copies (SECURITY/CHANGELOG/README/CONTRIBUTING).
 a7_fence_carriers() {
   root=$1
   travelling_doc_files "$root"
-  for extra in SECURITY.md CHANGELOG.md README.md; do
+  for extra in SECURITY.md CHANGELOG.md README.md CONTRIBUTING.md; do
     [ -f "$root/$extra" ] && printf '%s\n' "$root/$extra"
   done
 }
@@ -148,16 +148,26 @@ a7_enforced_canon() {
 
 # True when a document claims or implies that mechanism removal / the gate branch
 # caused the pair's disagreement or a CLOSEABLE outcome. Scrubs the accepted
-# A7-ENFORCED fence and A7-LIMIT disclosure first so polarity text and the
-# no-causation limit stay green.
+# A7-ENFORCED fence and exact A7-LIMIT disclosure lines first so polarity text
+# and the no-causation limit stay green. Prefix scrub is forbidden: a same-line
+# smuggle after the A7-LIMIT first-line prefix must remain visible to the greps.
 claims_pair_causation() {
   f=$1
   a7_line1=$2
   scrub=$(mktemp "$SELFTEST_TMP/scrub.XXXXXX")
   awk -v e1="$a7_line1" '
     $0 == e1 { getline; getline; next }
-    index($0, "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id") { next }
-    tolower($0) ~ /does[ \t]+not[ \t]+prove[ \t]+that[ \t]+removing[ \t]+the[ \t]+mechanism/ { next }
+    $0 == "- The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
+    $0 == "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
+    $0 == "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current" {
+      getline l2; getline l3
+      if (l2 == "work id. It does not prove that removing the mechanism is what made them disagree, and under a" \
+          && l3 == "single user nothing in files can prove that.") next
+      print; print l2; print l3; next
+    }
+    $0 == "work id. It does not prove that removing the mechanism is what made them disagree, and under a" { next }
+    $0 == "single user nothing in files can prove that." { next }
+    $0 == "It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
     { print }
   ' "$f" > "$scrub"
   if grep -Eqi \
@@ -1772,9 +1782,9 @@ known_limits_has "$(known_limits_section "$HERE/docs/whats-new.md")" 'falsifier 
   || bad "docs/whats-new.md Known limits lacks the falsifier-pair/no-causation limit"
 
 # M32 — no document in the carrier set claims the pair/runs prove mechanism removal
-# caused the fail. Scan a7_fence_carriers (includes CHANGELOG/SECURITY/README), not
-# travelling docs alone. Paraphrases and an extra Known-limits causation bullet
-# beside A7-LIMIT must redden. A7-ENFORCED / A7-LIMIT stay green.
+# caused the fail. Scan a7_fence_carriers (includes CHANGELOG/SECURITY/README/
+# CONTRIBUTING), not travelling docs alone. Paraphrases and an extra Known-limits
+# causation bullet beside A7-LIMIT must redden. A7-ENFORCED / A7-LIMIT stay green.
 causal=0
 tdocs=$(mktemp "$SELFTEST_TMP/tdocs.XXXXXX")
 a7_fence_carriers "$HERE" | sort -u > "$tdocs"
