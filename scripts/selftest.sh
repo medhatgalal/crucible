@@ -170,45 +170,72 @@ claims_pair_causation() {
     $0 == "It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
     { print }
   ' "$f" > "$scrub"
+  # Strip Unicode Cf (ZWSP U+200B, ZWJ U+200D, …) so zero-width smuggles cannot hide causation.
+  scan=$(mktemp "$SELFTEST_TMP/scan.XXXXXX")
+  perl -CSD -pe 's/\p{Cf}//g' "$scrub" > "$scan"
+  rm -f "$scrub"
+  hit=1
   if grep -Eqi \
     '(recorded[[:space:]]+)?(pair|runs?)[[:space:]]+(demonstrates?|proves?|establishes?|shows?)[[:space:]].{0,120}((delet|remov).{0,40}mechanism|mechanism[[:space:]]+(removal|change))' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(removing|deleting)[[:space:]]+the[[:space:]]+mechanism[[:space:]]+is[[:space:]]+what[[:space:]]+made' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(falsifier|pair|runs?|evidence).{0,100}(proves?|demonstrates?|establishes?|shows?).{0,100}(mechanism[[:space:]]+(removal|change)|removing[[:space:]]+the[[:space:]]+mechanism|deleting[[:space:]]+the[[:space:]]+mechanism).{0,80}(caused|produced|made)' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     'mechanism[[:space:]]+removal[[:space:]]+(caused|produced|made)|caused[[:space:]]+by[[:space:]]+mechanism[[:space:]]+removal' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  # Paraphrases that keep the causation claim without "proves that removing…"
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(pair|runs?).{0,60}(disagreement|disagree).{0,40}caused|disagreement[[:space:]]+is[[:space:]]+caused' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(gate|branch|mechanism).{0,40}(is[[:space:]]+the[[:space:]]+reason|are[[:space:]]+the[[:space:]]+reason).{0,60}(disagree|runs?|outcome)' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(gate|mechanism|removal|branch).{0,60}(what[[:space:]]+changed[[:space:]]+the[[:space:]]+outcome|changed[[:space:]]+the[[:space:]]+outcome)' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  if grep -Eqi \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
     '(deleted|removed|removing|deleting).{0,50}(branch|mechanism).{0,80}(CLOSEABLE|closeable)|became[[:space:]]+CLOSEABLE' \
-    "$scrub"
-  then rm -f "$scrub"; return 0; fi
-  rm -f "$scrub"
-  return 1
+    "$scan"
+  then hit=0
+  # A8 paraphrases: results from / accounts for / explains / owes to / diverge because /
+  # taken out / due to / absence — still require a pair/runs ↔ mechanism nexus.
+  elif grep -Eqi \
+    '(pair|runs?).{0,80}(disagreement|disagree|divergence|diverge|exits?).{0,80}(results[[:space:]]+from|accounts[[:space:]]+for|owes[[:space:]]+to|due[[:space:]]+to|caused[[:space:]]+by)' \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
+    '(disagreement|divergence).{0,40}(results[[:space:]]+from|accounts[[:space:]]+for|owes[[:space:]]+to|due[[:space:]]+to).{0,60}(delet|remov|mechanism)' \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
+    '(removing|deleting|removed|deleted)[[:space:]]+the[[:space:]]+mechanism[[:space:]]+(accounts[[:space:]]+for|explains?|results[[:space:]]+in)' \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
+    "mechanism'?s?[[:space:]]+absence[[:space:]]+explains?|(pair|runs?).{0,60}diverge[[:space:]]+because.{0,80}(mechanism|taken[[:space:]]+out)|mechanism[[:space:]]+was[[:space:]]+taken[[:space:]]+out" \
+    "$scan"
+  then hit=0
+  elif grep -Eqi \
+    '(pair|runs?).{0,40}(divergence|disagreement).{0,40}owes[[:space:]]+to[[:space:]]+mechanism|owes[[:space:]]+to[[:space:]]+mechanism[[:space:]]+(deletion|removal)' \
+    "$scan"
+  then hit=0
+  fi
+  rm -f "$scan"
+  return $hit
 }
 
 known_limits_section() {
