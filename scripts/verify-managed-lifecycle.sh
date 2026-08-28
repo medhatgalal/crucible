@@ -251,19 +251,21 @@ if grep -q 'no falsifier run pair' "$HERE/crucible"; then
   cp "$P/STATE.tsv" "$P/STATE.before_close_probe"
   lessons_before=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
   close_out=$("$P/crucible" close alpha 'should-refuse-without-pair' 2>&1) && close_st=0 || close_st=$?
+  lessons_after=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
+  # Three independent assertions (not complementary case arms): each has its own
+  # mutation in ASSERTIONS.tsv and can emit its own exact red in one owning run.
   case $close_out in
     *'no falsifier run pair'*|*'falsifier run pair'*)
       ok 'managed close without a falsifier pair refuses and names the pair'
-      grep -q "^alpha${tab}CLOSED${tab}" "$P/STATE.tsv" \
-        && bad 'managed close without a pair still marked the item CLOSED' \
-        || ok 'managed close without a pair left STATE open'
-      lessons_after=$(wc -c < "$P/LESSONS.md" 2>/dev/null || echo 0)
-      [ "$lessons_before" = "$lessons_after" ] \
-        && ok 'managed close without a pair left LESSONS unchanged' \
-        || bad 'managed close without a pair mutated LESSONS'
       ;;
     *) bad 'managed close without a falsifier pair did not refuse' ;;
   esac
+  grep -q "^alpha${tab}CLOSED${tab}" "$P/STATE.tsv" \
+    && bad 'managed close without a pair still marked the item CLOSED' \
+    || ok 'managed close without a pair left STATE open'
+  [ "$lessons_before" = "$lessons_after" ] \
+    && ok 'managed close without a pair left LESSONS unchanged' \
+    || bad 'managed close without a pair mutated LESSONS'
   # Restore the BUILD-recorded pair so close can succeed.
   if [ -d "$pair_stash" ]; then
     for f in "$pair_stash"/*; do
