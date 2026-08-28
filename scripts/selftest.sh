@@ -209,21 +209,28 @@ LOOKALIKES = {
     "\u0391": "A", "\u0395": "E", "\u039f": "O", "\u03a1": "R", "\u039a": "K",
 }
 # Soft hyphen U+00AD is Cf; turn it into a space before stripping other Cf so
-# two\u00ADruns becomes "two runs", not the glued "tworuns".
+# two\u00ADruns becomes "two runs", not the glued "tworuns". Hard hyphen-minus
+# is also space so two-runs matches the same class as two runs.
 raw = raw.replace("\u00AD", " ")
 text = unicodedata.normalize("NFKC", raw)
 text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 text = "".join(LOOKALIKES.get(ch, ch) for ch in text).lower()
+text = text.replace("-", " ")
 PAIR = re.compile(
-    r"\b(falsifier\s+pair|the\s+pair|this\s+pair|pair\s+disagreement|pair\s+divergence|"
+    r"\b(falsifier\s+pair|the\s+pair|this\s+pair|a\s+pair|evidence\s+pair|"
+    r"pair\s+disagreement|pair\s+divergence|"
     r"pair\s+exits|pair'?s?\s+disagreement|disagreement\s+of\s+the\s+pair|"
-    r"divergent\s+pair|two\s+runs|two\s+recordings?|recorded\s+(?:pair|runs?|recordings?)|"
+    r"divergent\s+pair|(?:two|both)\s+runs|paired\s+runs|"
+    r"(?:two|both)\s+captures?|both\s+directions|"
+    r"two\s+recordings?|recorded\s+(?:pair|runs?|recordings?)|"
     r"falsifier\s+runs?|falsifier\s+executions?|two\s+falsifier\s+executions?|"
     r"recordings)\b"
 )
 MECH = re.compile(
     r"\b(mechanism|removal|removing|deleting|deleted|deletion|removed|absence|absent|"
-    r"taken\s+out|refusal\s+branch|gate|stripped|stripping|strip)\b"
+    r"taken\s+out|taken\s+away|refusal\s+branch|gate|stripped|stripping|strip|"
+    r"excised|nullified|withdrawn|disabled|disabling|omitted|gone|undoing|"
+    r"checked\s+feature)\b"
 )
 # No connector allowlist and no tiny window: any file that co-mentions a
 # pair-class token and a mechanism-class token is a causation claim. Exact
