@@ -170,7 +170,7 @@ a7_enforced_canon() {
 # is forbidden: a same-line smuggle after the A7-LIMIT first-line prefix must remain
 # visible. Detection is structural co-occurrence, not an enumerated connector list:
 # NFKC + strip Cf + fold Latin lookalikes (Cyrillic and Greek α/ε/ο/ρ/κ), then fail
-# when a paragraph contains a pair-class token AND a mechanism-class token. No
+# when a file contains a pair-class token AND a mechanism-class token. No
 # connector allowlist. No tiny window.
 claims_pair_causation() {
   f=$1
@@ -178,6 +178,9 @@ claims_pair_causation() {
   scrub=$(mktemp "$SELFTEST_TMP/scrub.XXXXXX")
   awk -v e1="$a7_line1" '
     $0 == e1 { getline; getline; next }
+    $0 == "## Falsifier pair" { next }
+    $0 == "## Falsifier run pair" { next }
+    $0 == "- Falsifier pair gate: closure requires two recorded directions of the named falsifier." { next }
     $0 == "- The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
     $0 == "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current work id. It does not prove that removing the mechanism is what made them disagree, and under a single user nothing in files can prove that." { next }
     $0 == "The falsifier pair proves that two recorded runs of the named falsifier disagreed at the current" {
@@ -211,19 +214,19 @@ text = "".join(LOOKALIKES.get(ch, ch) for ch in text).lower()
 PAIR = re.compile(
     r"\b(falsifier\s+pair|the\s+pair|pair\s+disagreement|pair\s+divergence|"
     r"pair\s+exits|pair'?s?\s+disagreement|disagreement\s+of\s+the\s+pair|"
-    r"divergent\s+pair|two\s+runs|recorded\s+(?:pair|runs?)|falsifier\s+runs?|"
-    r"falsifier\s+executions?|two\s+falsifier\s+executions?)\b"
+    r"divergent\s+pair|two\s+runs|two\s+recordings?|recorded\s+(?:pair|runs?|recordings?)|"
+    r"falsifier\s+runs?|falsifier\s+executions?|two\s+falsifier\s+executions?|"
+    r"recordings)\b"
 )
 MECH = re.compile(
-    r"\b(mechanism|removal|removing|deleting|deleted|removed|absence|absent|"
-    r"taken\s+out)\b"
+    r"\b(mechanism|removal|removing|deleting|deleted|deletion|removed|absence|absent|"
+    r"taken\s+out|refusal\s+branch|gate)\b"
 )
-# No connector allowlist and no tiny window: any paragraph that co-mentions a
+# No connector allowlist and no tiny window: any file that co-mentions a
 # pair-class token and a mechanism-class token is a causation claim. Exact
 # A7-ENFORCED / A7-LIMIT lines were scrubbed above.
-for para in re.split(r"\n\s*\n", text):
-    if PAIR.search(para) and MECH.search(para):
-        sys.exit(0)
+if PAIR.search(text) and MECH.search(text):
+    sys.exit(0)
 sys.exit(1)
 PY2
   st=$?
