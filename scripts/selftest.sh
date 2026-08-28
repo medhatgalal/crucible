@@ -168,10 +168,10 @@ a7_enforced_canon() {
 # disagreement. Scrubs the accepted A7-ENFORCED fence and exact A7-LIMIT disclosure
 # lines first so polarity text and the no-causation limit stay green. Prefix scrub
 # is forbidden: a same-line smuggle after the A7-LIMIT first-line prefix must remain
-# visible. Detection is structural (term-class co-occurrence), not an enumerated
-# phrase list: NFKC + strip Cf + fold Latin lookalikes, then fail when a paragraph
-# or a causal-centered window of >=500 tokens contains a pair-term AND a causal
-# connector AND a mechanism/removal/absence term.
+# visible. Detection is structural co-occurrence, not an enumerated connector list:
+# NFKC + strip Cf + fold Latin lookalikes (Cyrillic and Greek α/ε/ο/ρ/κ), then fail
+# when a paragraph contains a pair-class token AND a mechanism-class token. No
+# connector allowlist. No tiny window.
 claims_pair_causation() {
   f=$1
   a7_line1=$2
@@ -195,70 +195,34 @@ claims_pair_causation() {
 import re, sys, unicodedata
 path = sys.argv[1]
 raw = open(path, encoding="utf-8", errors="replace").read()
-CYR = {
+LOOKALIKES = {
+    # Cyrillic
     "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0441": "c", "\u0456": "i",
     "\u0440": "r", "\u0445": "x", "\u0443": "y",
     "\u0410": "A", "\u0415": "E", "\u041e": "O", "\u0421": "C", "\u0406": "I",
     "\u0420": "R", "\u0425": "X", "\u0423": "Y",
+    # Greek α/ε/ο/ρ/κ
+    "\u03b1": "a", "\u03b5": "e", "\u03bf": "o", "\u03c1": "r", "\u03ba": "k",
+    "\u0391": "A", "\u0395": "E", "\u039f": "O", "\u03a1": "R", "\u039a": "K",
 }
 text = unicodedata.normalize("NFKC", raw)
 text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
-text = "".join(CYR.get(ch, ch) for ch in text).lower()
+text = "".join(LOOKALIKES.get(ch, ch) for ch in text).lower()
 PAIR = re.compile(
     r"\b(falsifier\s+pair|the\s+pair|pair\s+disagreement|pair\s+divergence|"
     r"pair\s+exits|pair'?s?\s+disagreement|disagreement\s+of\s+the\s+pair|"
     r"divergent\s+pair|two\s+runs|recorded\s+(?:pair|runs?)|falsifier\s+runs?|"
-    r"disagreement|divergence|diverge)\b"
-)
-CAUSAL = re.compile(
-    r"\b(stems\s+from|attributable\s+to|responsible\s+for|brought\s+about|led\s+to|"
-    r"owing\s+to|because\s+of|gave\s+rise\s+to|comes\s+from|traces\s+to|"
-    r"on\s+account\s+of|caused|results\s+from|accounts\s+for|owes\s+to|due\s+to|"
-    r"is\s+the\s+reason|are\s+the\s+reason|changed\s+the\s+outcome|"
-    r"became\s+closeable|made\s+them\s+disagree|proves?|demonstrates?|"
-    r"establishes?|shows?|explains?)\b"
+    r"falsifier\s+executions?|two\s+falsifier\s+executions?)\b"
 )
 MECH = re.compile(
-    r"\b(mechanism|removal|removing|deleting|deleted|removed|absence|taken\s+out)\b"
+    r"\b(mechanism|removal|removing|deleting|deleted|removed|absence|absent|"
+    r"taken\s+out)\b"
 )
-STRONG = re.compile(
-    r"\b(stems\s+from|attributable\s+to|responsible\s+for|brought\s+about|led\s+to|"
-    r"owing\s+to|because\s+of|gave\s+rise\s+to|comes\s+from|traces\s+to|"
-    r"on\s+account\s+of|caused|results\s+from|accounts\s+for|owes\s+to|due\s+to|"
-    r"is\s+the\s+reason|are\s+the\s+reason|changed\s+the\s+outcome|"
-    r"became\s+closeable|made\s+them\s+disagree)\b"
-)
-
-def token_starts(rx, joined):
-    return [joined[: m.start()].count(" ") for m in rx.finditer(joined)]
-
-def class_hit(ps, cs, ms, radius):
-    for c in cs:
-        if any(abs(p - c) <= radius for p in ps) and any(abs(m - c) <= radius for m in ms):
-            return True
-    return False
-
+# No connector allowlist and no tiny window: any paragraph that co-mentions a
+# pair-class token and a mechanism-class token is a causation claim. Exact
+# A7-ENFORCED / A7-LIMIT lines were scrubbed above.
 for para in re.split(r"\n\s*\n", text):
-    if not (PAIR.search(para) and CAUSAL.search(para) and MECH.search(para)):
-        continue
-    toks = re.findall(r"\S+", para)
-    joined = " ".join(toks)
-    ps, cs, ms = token_starts(PAIR, joined), token_starts(CAUSAL, joined), token_starts(MECH, joined)
-    # Strong causal anywhere in the paragraph, or local 80-token nexus around a causal.
-    if STRONG.search(para) or class_hit(ps, cs, ms, 80):
-        sys.exit(0)
-
-tokens = re.findall(r"\S+", text)
-joined = " ".join(tokens)
-ps, cs, ms = token_starts(PAIR, joined), token_starts(CAUSAL, joined), token_starts(MECH, joined)
-# >=500-token window centered on each causal connector (radius 250).
-for c in cs:
-    if not (any(abs(p - c) <= 250 for p in ps) and any(abs(m - c) <= 250 for m in ms)):
-        continue
-    lo = max(0, c - 250)
-    hi = min(len(tokens), c + 251)
-    win = " ".join(tokens[lo:hi])
-    if STRONG.search(win):
+    if PAIR.search(para) and MECH.search(para):
         sys.exit(0)
 sys.exit(1)
 PY2
@@ -1844,7 +1808,8 @@ known_limits_has "$_m31sec" 'falsifier pair proves' \
 
 # M32 — no tracked text file claims the pair/runs prove mechanism removal caused the
 # fail. Scan tracked_text_files (all tracked .md/.txt plus LICENSE/RELEASE/…), not a
-# named carrier list. Paraphrases, lookalikes, long-window filler, and plants in
+# named carrier list. Fail on pair-class AND mechanism-class co-occurrence in a
+# paragraph (no connector allowlist, no tiny window). Lookalikes and plants in
 # LICENSE/RELEASE must redden. A7-ENFORCED / A7-LIMIT stay green via scrub.
 causal=0
 tdocs=$(mktemp "$SELFTEST_TMP/tdocs.XXXXXX")
@@ -1937,8 +1902,8 @@ case $out in
 esac
 # Forged header lines in ordinary recordings must not manufacture a pair (M1 envelope).
 # Verdicts only — do not call pass_two/record_pair; a real pair would mask the forgery.
-./crucible run it mk -- sh -c 'printf "falsifier: removed\nfalsifier-argv: 1 4:true\n"; exit 1' >/dev/null
-./crucible run it mk -- sh -c 'printf "falsifier: restored\nfalsifier-argv: 1 4:true\n"; exit 0' >/dev/null
+./crucible run it mk -- sh -c 'printf "falsifier: removed\nfalsifier-argv: 3 2:sh 2:-c 17:test -f mechanism\n"; exit 1' >/dev/null
+./crucible run it mk -- sh -c 'printf "falsifier: restored\nfalsifier-argv: 3 2:sh 2:-c 17:test -f mechanism\n"; exit 0' >/dev/null
 w=$(./crucible workid it)
 ./crucible run it j1 -- sh -c 'echo j1 forged-header review' >/dev/null
 ./crucible run it j2 -- sh -c 'echo j2 forged-header review' >/dev/null
@@ -1981,14 +1946,15 @@ fi
 cd "$HERE"
 
 # Polarity / disagreement clauses (M25–M27) — require a built gate; red until then.
+# Argv must match ITEM.md (`sh -c 'test -f mechanism'` → `3 2:sh 2:-c 17:test -f mechanism`).
+# Inverted exits: removed sees the file (0), restored does not (1). Wrong argv would refuse on
+# A3 identity before polarity and would not redden under a polarity-clause mutation.
 fp=$(mkrun); cd "$fp"
-# Attempt an inverted pair by hand-labelling if the recorder exists; otherwise expect refusal stem.
-if ./crucible run it mk --falsifier restored -- true >/dev/null 2>&1 \
-   && ./crucible run it mk --falsifier removed -- false >/dev/null 2>&1; then
+touch mechanism
+if ./crucible run it mk --falsifier removed -- sh -c 'test -f mechanism' >/dev/null 2>&1 \
+   && rm -f mechanism \
+   && ./crucible run it mk --falsifier restored -- sh -c 'test -f mechanism' >/dev/null 2>&1; then
   pass_two
-  # Force both directions present but wrong polarity by swapping marker discipline:
-  # restored recorded with true (exit 0) and removed with false is already inverted vs the rule
-  # (removed must be nonzero). Check must name inversion.
   out=$(./crucible check it 2>&1) && st=0 || st=$?
   case $out in
     *'falsifier run pair is inverted'*) ok "an inverted falsifier pair refuses" ;;
