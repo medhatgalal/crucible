@@ -127,8 +127,8 @@ travelling_doc_files() {
   done
 }
 
-# Every file that may carry the A7-ENFORCED sentence: travelling docs plus other
-# tracked copies found in-tree (SECURITY/CHANGELOG). Canon remains docs/whats-new.md.
+# Every file that may carry the A7-ENFORCED sentence or a causation claim about it:
+# travelling docs plus other tracked copies (SECURITY/CHANGELOG/README).
 a7_fence_carriers() {
   root=$1
   travelling_doc_files "$root"
@@ -137,9 +137,19 @@ a7_fence_carriers() {
   done
 }
 
-# True when a travelling document claims the falsifier pair/runs prove that
-# mechanism removal caused the failure. Scrubs the accepted A7-ENFORCED fence and
-# A7-LIMIT disclosure first so polarity text and the no-causation limit stay green.
+# ITEM.md ### FENCE A7-ENFORCED bytes (273, sha256-12 18101d2a6a19). Not derived from
+# any mutable carrier — coordinated drift of whats-new with its peers must still fail.
+a7_enforced_canon() {
+  printf '%s\n' \
+    "Closure refuses unless the item's falsifier was recorded by \`crucible run\` at the current work id" \
+    'in both directions — once failing with the mechanism removed, once passing with it restored — and' \
+    'the gate reads those two files rather than running the falsifier itself.'
+}
+
+# True when a document claims or implies that mechanism removal / the gate branch
+# caused the pair's disagreement or a CLOSEABLE outcome. Scrubs the accepted
+# A7-ENFORCED fence and A7-LIMIT disclosure first so polarity text and the
+# no-causation limit stay green.
 claims_pair_causation() {
   f=$1
   a7_line1=$2
@@ -163,11 +173,28 @@ claims_pair_causation() {
     "$scrub"
   then rm -f "$scrub"; return 0; fi
   if grep -Eqi \
-    'mechanism[[:space:]]+removal[[:space:]]+(caused|produced|made)' \
+    'mechanism[[:space:]]+removal[[:space:]]+(caused|produced|made)|caused[[:space:]]+by[[:space:]]+mechanism[[:space:]]+removal' \
     "$scrub"
   then rm -f "$scrub"; return 0; fi
   if grep -Eqi \
     'falsifier pair proves that removing|pair proves that .* caused|proves that removing the mechanism is what' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  # Paraphrases that keep the causation claim without "proves that removing…"
+  if grep -Eqi \
+    '(pair|runs?).{0,60}(disagreement|disagree).{0,40}caused|disagreement[[:space:]]+is[[:space:]]+caused' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    '(gate|branch|mechanism).{0,40}(is[[:space:]]+the[[:space:]]+reason|are[[:space:]]+the[[:space:]]+reason).{0,60}(disagree|runs?|outcome)' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    '(gate|mechanism|removal|branch).{0,60}(what[[:space:]]+changed[[:space:]]+the[[:space:]]+outcome|changed[[:space:]]+the[[:space:]]+outcome)' \
+    "$scrub"
+  then rm -f "$scrub"; return 0; fi
+  if grep -Eqi \
+    '(deleted|removed|removing|deleting).{0,50}(branch|mechanism).{0,80}(CLOSEABLE|closeable)|became[[:space:]]+CLOSEABLE' \
     "$scrub"
   then rm -f "$scrub"; return 0; fi
   rm -f "$scrub"
@@ -1697,49 +1724,60 @@ grep -q '^6\. \*\*CHECK — Closure needs a falsifier' "$HERE/RULES.md" \
   && ok "RULES.md rule 6 is labelled CHECK" \
   || bad "RULES.md rule 6 is not labelled CHECK"
 
-# M30 — A7-ENFORCED bytes are byte-identical across every copy that carries them.
-# Canonical tracked copy is docs/whats-new.md (one writer for the shipped sentence).
-# One-byte drift in any carrier (including BOOTSTRAP/START/install) must fail.
+# M30 — every A7-ENFORCED copy matches ITEM ### FENCE A7-ENFORCED bytes, not peers.
+# Canon is fixed (a7_enforced_canon). One-byte drift, coordinated drift of all
+# carriers including whats-new, a second drifted copy after a clean first, and a
+# refusal paraphrase under a Falsifier-pair heading that drops line 1 must fail.
 a7_line1='Closure refuses unless the item'\''s falsifier was recorded by `crucible run` at the current work id'
 fence_copies=0
 fence_drift=0
+fence_para=0
 canon_file=$(mktemp "$SELFTEST_TMP/a7e.XXXXXX")
-if grep -qxF "$a7_line1" "$HERE/docs/whats-new.md"; then
-  awk -v s="$a7_line1" '
-    $0 == s { print; getline; print; getline; print; exit }
-  ' "$HERE/docs/whats-new.md" > "$canon_file"
-  a7_list=$(mktemp "$SELFTEST_TMP/a7list.XXXXXX")
-  a7_fence_carriers "$HERE" | sort -u > "$a7_list"
-  while IFS= read -r f; do
-    [ -f "$f" ] || continue
-    grep -qxF "$a7_line1" "$f" || continue
+a7_enforced_canon > "$canon_file"
+a7_list=$(mktemp "$SELFTEST_TMP/a7list.XXXXXX")
+a7_fence_carriers "$HERE" | sort -u > "$a7_list"
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  matches=0
+  # Every occurrence of line 1 must open an exact three-line fence (not only the first).
+  grep -nFx "$a7_line1" "$f" 2>/dev/null > "$SELFTEST_TMP/a7idx.XXXXXX" || true
+  while IFS=: read -r lineno _rest; do
+    [ -n "$lineno" ] || continue
     para_file=$(mktemp "$SELFTEST_TMP/a7e2.XXXXXX")
-    awk -v s="$a7_line1" '
-      $0 == s { print; getline; print; getline; print; exit }
-    ' "$f" > "$para_file"
+    awk -v n="$lineno" 'NR >= n && NR < n + 3 { print }' "$f" > "$para_file"
     if cmp -s "$canon_file" "$para_file"; then
-      fence_copies=$((fence_copies + 1))
+      matches=$((matches + 1))
     else
       fence_drift=$((fence_drift + 1))
       say "A7-ENFORCED drift in $f"
     fi
-  done < "$a7_list"
-fi
-[ "$fence_drift" -eq 0 ] && [ "$fence_copies" -ge 3 ] \
+  done < "$SELFTEST_TMP/a7idx.XXXXXX"
+  fence_copies=$((fence_copies + matches))
+  # Heading that announces the refusal with no a7_line1 left is a paraphrase
+  # replacement (drift of an existing triple is already counted above).
+  line1_hits=$(grep -cxF "$a7_line1" "$f" 2>/dev/null || true)
+  if grep -Eq '^## Falsifier( run)? pair[[:space:]]*$' "$f" \
+    && [ "${line1_hits:-0}" -eq 0 ]; then
+    fence_para=$((fence_para + 1))
+    say "A7-ENFORCED paraphrase (no exact fence) in $f"
+  fi
+done < "$a7_list"
+[ "$fence_drift" -eq 0 ] && [ "$fence_para" -eq 0 ] && [ "$fence_copies" -ge 3 ] \
   && ok "travelling A7-ENFORCED text is byte-identical across every copy that carries it" \
-  || bad "travelling A7-ENFORCED text is missing or drifted (found $fence_copies copies)"
+  || bad "travelling A7-ENFORCED text is missing or drifted"
 
 # M31 — Known limits carries the A7-LIMIT bullet (already gated by known_limits_missing).
 known_limits_has "$(known_limits_section "$HERE/docs/whats-new.md")" 'falsifier pair proves' \
   && ok "docs/whats-new.md Known limits names the falsifier-pair/no-causation limit" \
   || bad "docs/whats-new.md Known limits lacks the falsifier-pair/no-causation limit"
 
-# M32 — no travelling document claims the pair/runs prove mechanism removal caused the fail.
-# Phrase-proxy regexes alone are not enough: paraphrases and an extra Known-limits
-# causation bullet beside A7-LIMIT must also redden. A7-ENFORCED / A7-LIMIT stay green.
+# M32 — no document in the carrier set claims the pair/runs prove mechanism removal
+# caused the fail. Scan a7_fence_carriers (includes CHANGELOG/SECURITY/README), not
+# travelling docs alone. Paraphrases and an extra Known-limits causation bullet
+# beside A7-LIMIT must redden. A7-ENFORCED / A7-LIMIT stay green.
 causal=0
 tdocs=$(mktemp "$SELFTEST_TMP/tdocs.XXXXXX")
-travelling_doc_files "$HERE" | sort -u > "$tdocs"
+a7_fence_carriers "$HERE" | sort -u > "$tdocs"
 while IFS= read -r f; do
   if claims_pair_causation "$f" "$a7_line1"; then
     causal=$((causal + 1))
