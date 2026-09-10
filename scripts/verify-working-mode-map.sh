@@ -545,6 +545,23 @@ SPEC-AUTHOR: operator
 EOF
 refuses 'SPEC owned path outside modules' 'refused:' "$WM" check-module-fit
 
+# Extra inventory grammars must not widen MODULE-FIT (TSV root_path only).
+setup_map_repo t-fit-tsv-only
+write_architecture_fixture alice
+impl_ok 'record-mapper for TSV-only fit' "$WM" record-mapper --from MAP.md || true
+mkdir -p src/widget-extra
+printf '# extra\n' > src/widget-extra/x.py
+refuses 'sibling prefix src/widget-extra vs TSV src/widget' 'refused:' \
+  "$WM" check-module-fit --path src/widget-extra/x.py
+printf '\nroot: src\n' >> architecture/modules.md
+refuses 'root: src line must not widen MODULE-FIT' 'refused:' \
+  "$WM" check-module-fit --path src/widget-extra/x.py
+printf '\n| module_id | root_path |\n| extra | src |\n' >> architecture/modules.md
+refuses 'markdown table must not widen MODULE-FIT' 'refused:' \
+  "$WM" check-module-fit --path src/widget-extra/x.py
+impl_ok 'honest TSV path still fits after ignored extra grammars' \
+  "$WM" check-module-fit --path src/widget/api.py || true
+
 # CHANGES-ARCHITECTURE → STOP (no silent second pattern)
 setup_map_repo t-changes-arch
 write_architecture_fixture alice

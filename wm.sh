@@ -122,8 +122,9 @@ falsifier_slot() {
 }
 
 owned_paths() {
-  [ -f SPEC.md ] || return 0
-  section_body '## Owned files' SPEC.md | awk '
+  _op_file=${1:-SPEC.md}
+  [ -f "$_op_file" ] || return 0
+  section_body '## Owned files' "$_op_file" | awk '
     /^- / {
       sub(/^- /, "")
       gsub(/^[[:space:]]+|[[:space:]]+$/, "")
@@ -646,41 +647,20 @@ refuse_if_mapper_is_maker() {
   [ "$_rmm_agent" != "$_rmm_mapper" ] || die "mapper cannot be maker ($_rmm_agent)"
 }
 
+# TSV only (module_id, root_path, …). root: lines and markdown tables do not name roots.
 list_module_roots() {
   [ -f architecture/modules.md ] || return 1
-  awk '
+  awk -F '\t' '
     function trim(s) {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
       return s
     }
     /^#/ { next }
     /^[[:space:]]*$/ { next }
-    /^root:[[:space:]]*/ {
-      sub(/^root:[[:space:]]*/, "")
-      r = trim($0)
-      if (r != "") print r
-      next
-    }
-    /^\|/ {
-      n = split($0, a, "|")
-      if (!rc) {
-        for (i = 1; i <= n; i++) {
-          c = trim(a[i])
-          if (c == "root_path") rc = i
-        }
-        next
-      }
-      if ($0 ~ /[[:space:]]-[-[:space:]|]*$/) next
-      c = trim(a[rc])
-      if (c != "" && c != "root_path") print c
-      next
-    }
+    NF < 2 { next }
+    trim($1) == "module_id" { next }
     {
-      if (index($0, "\t") == 0) next
-      n = split($0, a, "\t")
-      if (n < 2) next
-      if (trim(a[1]) == "module_id") next
-      r = trim(a[2])
+      r = trim($2)
       if (r != "") print r
     }
   ' architecture/modules.md
@@ -709,17 +689,6 @@ path_fits_modules() {
 $_pfm_roots
 EOF
   return 1
-}
-
-emit_spec_owned() {
-  [ -f "$1" ] || return 0
-  section_body '## Owned files' "$1" | awk '
-    /^- / {
-      sub(/^- /, "")
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-      if ($0 != "" && $0 != "(none)") print
-    }
-  '
 }
 
 emit_map_owned() {
@@ -844,9 +813,9 @@ EOF
     printf '%s\n' "$_cm_extra" >> "$_cm_list"
   fi
   if [ -n "$_cm_spec" ]; then
-    emit_spec_owned "$_cm_spec" >> "$_cm_list"
+    owned_paths "$_cm_spec" >> "$_cm_list"
   elif [ -f SPEC.md ]; then
-    emit_spec_owned SPEC.md >> "$_cm_list"
+    owned_paths >> "$_cm_list"
   fi
   while IFS= read -r _cm_cell || [ -n "$_cm_cell" ]; do
     [ -n "$_cm_cell" ] || continue
