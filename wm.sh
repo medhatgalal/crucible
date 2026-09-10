@@ -517,6 +517,62 @@ check_falsifier_meta() {
   fi
 }
 
+# Cycle logbook. Adopted programs: .crucible/<prog>/LESSONS.md.
+# Kernel fixtures without adopt: repo-root LESSONS.md (not $HOME, not .wm).
+lessons_file() {
+  if [ -n "${WM_PROGRAM:-}" ] && [ -d ".crucible/${WM_PROGRAM}" ]; then
+    printf '%s\n' ".crucible/${WM_PROGRAM}/LESSONS.md"
+    return 0
+  fi
+  if [ -d .crucible ]; then
+    for _lf_p in .crucible/*/PROGRAM; do
+      [ -f "$_lf_p" ] || continue
+      printf '%s/LESSONS.md\n' "$(dirname "$_lf_p")"
+      return 0
+    done
+  fi
+  printf '%s\n' "LESSONS.md"
+}
+
+arch_fence_active() {
+  _af_f=$(lessons_file)
+  [ -f "$_af_f" ] || return 1
+  awk '/^ARCH:/ { found=1 } END { exit found ? 0 : 1 }' "$_af_f"
+}
+
+# RULE 23 analogue: maker briefs include LESSONS (or NONE). ARCH: lines are
+# not maker-binding bullets (12e); they STOP-ASK instead of starting a maker.
+emit_lessons_section() {
+  printf '\n## Lessons from earlier items — these bind you\n\n'
+  _el_f=$(lessons_file)
+  if [ ! -s "$_el_f" ]; then
+    printf 'NONE\n'
+    return 0
+  fi
+  _el_any=0
+  while IFS= read -r _el_line || [ -n "$_el_line" ]; do
+    case $_el_line in
+      ARCH:*) continue ;;
+    esac
+    printf '%s\n' "$_el_line"
+    _el_any=1
+  done < "$_el_f"
+  if [ "$_el_any" -eq 0 ]; then
+    printf 'NONE\n'
+  fi
+}
+
+resolve_loop_lesson() {
+  _rl=${WM_LESSON:-}
+  if [ -z "$_rl" ] && [ -f "$WM/lesson" ]; then
+    _rl=$(awk 'NF { print; exit }' "$WM/lesson")
+  fi
+  if [ -z "$_rl" ]; then
+    _rl=NONE
+  fi
+  printf '%s\n' "$_rl"
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
@@ -529,9 +585,11 @@ write_brief() {
     case $_wb_role in
       maker-falsify)
         printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts.\n'
+        emit_lessons_section
         ;;
       maker-build)
         printf 'Implement owned files. Commit. Do not write verdicts.\n'
+        emit_lessons_section
         ;;
       reviewer)
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. Do not use maker rationale.\n' "$_wb_agent"
@@ -1365,6 +1423,10 @@ cmd_verdict() {
 }
 
 cmd_close() {
+  _cl_lesson=${1:-}
+  [ -n "$_cl_lesson" ] || die "close without a lesson line"
+  _cl_nl=$(printf '%s' "$_cl_lesson" | wc -l | tr -d ' ')
+  [ "$_cl_nl" = 0 ] || die "lesson must be one line"
   ensure_wm
   [ -d "$WM/verdicts" ] || die "no verdicts"
   _cl_pass=0
@@ -1397,14 +1459,40 @@ cmd_close() {
     [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || die "PASS path requires green.status=ok"
     printf 'CLOSED PASS\n' > "$WM/CLOSED"
     say "CLOSED PASS"
-    return 0
+    if close_append_lesson "$_cl_lesson"; then
+      return 0
+    fi
+    return 1
   fi
   if [ "$_cl_nobuild" -eq 1 ]; then
     printf 'CLOSED NO-BUILD\n' > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
-    return 0
+    if close_append_lesson "$_cl_lesson"; then
+      return 0
+    fi
+    return 1
   fi
   die "close without PASS or worker NO-BUILD"
+}
+
+# Exactly one line per successful close. ARCH: → STOP-ASK (nonzero).
+close_append_lesson() {
+  _ca_lesson=$1
+  _ca_lf=$(lessons_file)
+  case $_ca_lf in
+    .crucible/*)
+      _ca_dir=$(dirname "$_ca_lf")
+      [ -d "$_ca_dir" ] || die "program dir missing for LESSONS"
+      ;;
+  esac
+  printf '%s\n' "$_ca_lesson" >> "$_ca_lf"
+  case $_ca_lesson in
+    ARCH:*)
+      say "STOP-ASK ARCH"
+      return 1
+      ;;
+  esac
+  return 0
 }
 
 cmd_next() {
@@ -1446,6 +1534,10 @@ cmd_next() {
           return 0
         fi
         if [ -n "$_nx_sid" ]; then
+          if arch_fence_active; then
+            say "STOP-ASK ARCH"
+            return 0
+          fi
           say "NEXT SLICE $_nx_sid"
           return 0
         fi
@@ -1454,6 +1546,10 @@ cmd_next() {
   fi
   if [ ! -f SPEC.md ] || ! spec_ok; then
     say "NEXT SPEC"
+    return 0
+  fi
+  if arch_fence_active; then
+    say "STOP-ASK ARCH"
     return 0
   fi
   if closed_is_closeable; then
@@ -1543,6 +1639,9 @@ cmd_run() {
   if [ "$_ru_prole" = maker ]; then
     refuse_if_mapper_is_maker "$_ru_agent"
     guard_map_before_maker
+    if arch_fence_active; then
+      die "STOP-ASK ARCH"
+    fi
   fi
   _ru_command=$(panel_cmd "$_ru_prole")
   if [ -z "$_ru_command" ] || [ "$_ru_command" = - ]; then
@@ -1631,6 +1730,7 @@ cmd_loop() {
   _lp_i=0
   _lp_ran_reviewer=0
   _lp_slice=
+  _lp_lesson=$(resolve_loop_lesson)
   if [ -f "$WM/slice-in-flight" ]; then
     _lp_slice=$(kv_get "$WM/slice-in-flight" id)
   fi
@@ -1719,7 +1819,11 @@ cmd_loop() {
           "$WM_BIN" run reviewer || exit 1
           _lp_ran_reviewer=1
         fi
-        "$WM_BIN" close || exit 1
+        "$WM_BIN" close "$_lp_lesson" || exit 1
+        if arch_fence_active; then
+          say "STOP-ASK ARCH"
+          exit 1
+        fi
         exit 0
         ;;
       DONE)

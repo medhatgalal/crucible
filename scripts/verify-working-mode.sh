@@ -19,12 +19,18 @@ chmod +x "$WM" 2>/dev/null || true
 export WM_ENGINE="$WM"
 
 BASE=$(mktemp -d "${TMPDIR:-/tmp}/wm-verify.XXXXXX")
+EMPTY_HOME=$(mktemp -d "${TMPDIR:-/tmp}/wm-empty-home.XXXXXX")
 OUT="$BASE/out.txt"
 ERR="$BASE/err.txt"
-trap 'rm -rf "$BASE"' 0
-trap 'rm -rf "$BASE"; exit 129' 1
-trap 'rm -rf "$BASE"; exit 130' 2
-trap 'rm -rf "$BASE"; exit 143' 15
+HOME="$EMPTY_HOME"
+export HOME
+GIT_CONFIG_GLOBAL=/dev/null
+GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
+trap 'rm -rf "$BASE" "$EMPTY_HOME"' 0
+trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 129' 1
+trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 130' 2
+trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
 sha256_file() {
   f=$1
@@ -254,6 +260,44 @@ EOF
   chmod +x tools/loop-reviewer-nobuild.sh
 }
 
+# Task 7: honest reviewer exec so close/LESSONS CHECKs can run.
+install_rev_pass() {
+  mkdir -p tools
+  cat > tools/rev-pass.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/rev-pass.sh
+  "$WM" cast reviewer bob grok './tools/rev-pass.sh {BRIEF}' >/dev/null
+}
+
+reach_reviewer_pass() {
+  reach_green
+  install_rev_pass
+  if ! "$WM" run reviewer >"$OUT" 2>"$ERR"; then
+    printf 'FIXTURE BROKEN: run reviewer\n%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" >&2
+    exit 1
+  fi
+}
+
+install_maker_dump() {
+  mkdir -p tools .wm
+  cat > tools/maker-dump.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/maker-ran
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  cp "$BRIEF" .wm/dumped-brief.md
+fi
+exit 0
+EOF
+  chmod +x tools/maker-dump.sh
+}
+
 run_wm_loop() {
   set +e
   "$WM" loop >"$OUT" 2>"$ERR"
@@ -456,7 +500,7 @@ setup_repo t06-planted
 reach_green
 mkdir -p .wm/verdicts
 printf 'VERDICT: PASS\nAGENT: bob\nWORK-ID: %s\nISOLATION: SUBAGENT-ISOLATED\nMODEL-SWITCH: UNVERIFIED\n' "$("$WM" workid)" > .wm/verdicts/bob.md
-refuses 'close planted PASS without reviewer run' 'refused:' "$WM" close
+refuses 'close planted PASS without reviewer run' 'refused:' "$WM" close NONE
 
 # ---------------------------------------------------------------------------
 # (7) after maker-build, next is NEXT RUN reviewer (ignore leftover reviewer receipts)
@@ -493,7 +537,7 @@ printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 } > .wm/verdicts/bob.md
 printf 't: 1\nabsent_return: yes\npath: .wm/return/bob.md\nrole: reviewer\nrun-id: forged.1\n' > .wm/spawn/bob.stamp
 printf 'role: reviewer\nagent: bob\nwriter: wm-run\nafter-maker: forged\nISOLATION: SUBAGENT-ISOLATED\n' > .wm/invoke/reviewer.log
-refuses 'close forged invoke.log not after last maker-*' 'refused:' "$WM" close
+refuses 'close forged invoke.log not after last maker-*' 'refused:' "$WM" close NONE
 card=$("$WM" next)
 printf '%s\n' "$card" | grep -q 'NEXT CLOSE' && bad "forged invoke.log must not NEXT CLOSE (got $card)" || ok
 printf '%s\n' "$card" | grep -q 'NEXT RUN reviewer' && ok || bad "forged receipts should still need reviewer, got $card"
@@ -525,7 +569,7 @@ if [ -f .wm/last-maker-run ] && [ -f .wm/invoke/reviewer.log ]; then
 else
   bad 'missing last-maker-run or invoke/reviewer.log'
 fi
-expect 'close CLOSED PASS after reviewer exec' 'CLOSED PASS' "$WM" close
+expect 'close CLOSED PASS after reviewer exec' 'CLOSED PASS' "$WM" close NONE
 
 # loopfull: maker-build writes judge artifacts without exec'ing reviewer
 setup_repo t08-loopfull
@@ -560,7 +604,7 @@ chmod +x tools/forge-build.sh
 refuses 'maker-build that forges reviewer receipts' 'refused:' "$WM" run maker-build
 card=$("$WM" next)
 printf '%s\n' "$card" | grep -q 'NEXT CLOSE' && bad "loopfull next must not be NEXT CLOSE (got $card)" || ok
-refuses 'close after loopfull forge without reviewer exec' 'refused:' "$WM" close
+refuses 'close after loopfull forge without reviewer exec' 'refused:' "$WM" close NONE
 
 # ---------------------------------------------------------------------------
 # (9) live/push-main/rm -rf in falsifier or evidence argv → refuse (2c)
@@ -938,6 +982,335 @@ fi
 [ "$LOOP_RC" -ne 0 ] && ok || bad 'maker-written CLOSED loop must not exit 0'
 grep -q 'maker wrote judge artifacts' "$ERR" || grep -q '^refused:' "$ERR" \
   && ok || bad "maker-written CLOSED expected refused: (err=$(cat "$ERR"))"
+
+# ---------------------------------------------------------------------------
+# Task 7: Learning (12e) — LESSONS.md + ARCH fence. Kernel fixtures without
+# adopt write repo-root LESSONS.md (not $HOME, not .wm). NONE is a valid line.
+# ---------------------------------------------------------------------------
+
+# (20) close without a lesson line refuses (does not CLOSED PASS, no LESSONS)
+setup_repo t20-close-no-lesson
+reach_reviewer_pass
+refuses 'close without a lesson line refuses' 'refused:' "$WM" close
+if [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  bad 'close without lesson must not write CLOSED PASS'
+else
+  ok
+fi
+if [ -f LESSONS.md ] && [ -s LESSONS.md ]; then
+  bad 'close without lesson must not append LESSONS.md'
+else
+  ok
+fi
+if [ -f "$HOME/LESSONS.md" ]; then
+  bad 'close without lesson wrote $HOME/LESSONS.md'
+else
+  ok
+fi
+
+# (21) close NONE: exactly one line at repo-root LESSONS.md; not $HOME
+setup_repo t21-close-none
+reach_reviewer_pass
+expect 'close NONE is CLOSED PASS' 'CLOSED PASS' "$WM" close NONE
+[ -f LESSONS.md ] && ok || bad 'close NONE must write repo-root LESSONS.md'
+n=0
+[ -f LESSONS.md ] && n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "close NONE must append exactly one line, got $n"
+if [ -f LESSONS.md ] && grep -q '^NONE$' LESSONS.md; then
+  ok
+else
+  bad "close NONE wanted ^NONE$, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -f "$HOME/LESSONS.md" ]; then
+  bad 'close wrote LESSONS.md under $HOME'
+else
+  ok
+fi
+if [ -f .wm/LESSONS.md ]; then
+  bad 'kernel fixture must use repo-root LESSONS.md, not .wm/LESSONS.md'
+else
+  ok
+fi
+
+# (22) adopted program dir: append .crucible/<prog>/LESSONS.md, not repo-root
+setup_repo t22-close-program
+reach_reviewer_pass
+mkdir -p .crucible/work
+printf 'name: work\n' > .crucible/work/PROGRAM
+expect 'close NONE with program dir' 'CLOSED PASS' "$WM" close NONE
+[ -f .crucible/work/LESSONS.md ] && ok || bad 'program dir close must write .crucible/work/LESSONS.md'
+grep -q '^NONE$' .crucible/work/LESSONS.md \
+  && ok || bad "program LESSONS wanted ^NONE$, got $(cat .crucible/work/LESSONS.md 2>/dev/null || echo ABSENT)"
+n=$(wc -l < .crucible/work/LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "program LESSONS must be exactly one line, got $n"
+if [ -f LESSONS.md ]; then
+  bad 'program dir close must not also write repo-root LESSONS.md'
+else
+  ok
+fi
+if [ -f "$HOME/LESSONS.md" ]; then
+  bad 'program dir close wrote $HOME/LESSONS.md'
+else
+  ok
+fi
+
+# (23) ARCH: close → STOP-ASK; do not start next maker
+setup_repo t23-arch-close
+reach_reviewer_pass
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+set +e
+"$WM" close 'ARCH: add a second pattern' >"$OUT" 2>"$ERR"
+arch_rc=$?
+set -e
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "ARCH close wanted CLOSED PASS then fence, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
+fi
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "ARCH: lesson must STOP-ASK (out=$(cat "$OUT") err=$(cat "$ERR"))"
+[ -f LESSONS.md ] && grep -q '^ARCH: add a second pattern$' LESSONS.md \
+  && ok || bad "ARCH close must append ^ARCH: line, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "ARCH close must append exactly one line, got $n"
+rm -f .wm/maker-ran .wm/dumped-brief.md
+set +e
+"$WM" run maker-build >"$OUT" 2>"$ERR"
+mb_rc=$?
+set -e
+[ "$mb_rc" -ne 0 ] && ok || bad "ARCH fence: wm run maker-build must not succeed (out=$(cat "$OUT"))"
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "ARCH fence maker-build wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -f .wm/maker-ran ]; then
+  bad 'ARCH fence must not exec the next maker (maker-ran present)'
+else
+  ok
+fi
+rm -f .wm/maker-ran
+set +e
+"$WM" run maker-falsify >"$OUT" 2>"$ERR"
+mf_rc=$?
+set -e
+[ "$mf_rc" -ne 0 ] && ok || bad 'ARCH fence: wm run maker-falsify must not succeed'
+if [ -f .wm/maker-ran ]; then
+  bad 'ARCH fence must not exec maker-falsify'
+else
+  ok
+fi
+card=$("$WM" next)
+printf '%s\n' "$card" | grep -q 'STOP-ASK' \
+  && ok || bad "after ARCH close, next must be STOP-ASK not a maker card (got $card)"
+printf '%s\n' "$card" | grep -q 'NEXT RUN maker' \
+  && bad "after ARCH close, next must not start maker (got $card)" || ok
+
+# (24) planted ^ARCH: line fences makers without going through close
+setup_repo t24-arch-planted
+printf 'ARCH: planted second pattern\n' > LESSONS.md
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+card=$("$WM" next)
+printf '%s\n' "$card" | grep -q 'STOP-ASK' \
+  && ok || bad "planted ARCH: next wanted STOP-ASK, got $card"
+printf '%s\n' "$card" | grep -E -q 'NEXT RUN maker|NEXT RECORD PRE-FALSIFY' \
+  && bad "planted ARCH: next must not start maker (got $card)" || ok
+rm -f .wm/maker-ran .wm/FALSIFIER
+refuses 'planted ARCH: run maker-falsify STOP-ASK' 'STOP-ASK' "$WM" run maker-falsify
+if [ -f .wm/maker-ran ] || [ -f .wm/FALSIFIER ]; then
+  bad 'planted ARCH: must not exec maker-falsify'
+else
+  ok
+fi
+run_wm_loop
+assert_loop_foreground 't24-arch-planted'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "planted ARCH loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'planted ARCH loop must not exit 0'
+if [ -f .wm/maker-ran ] || [ -f .wm/FALSIFIER ]; then
+  bad 'planted ARCH loop must not start a maker'
+else
+  ok
+fi
+if closed_pass_present; then
+  bad 'planted ARCH loop must not CLOSED PASS'
+else
+  ok
+fi
+
+# (25) RULE 23 analogue: next maker brief concatenates LESSONS (or NONE)
+setup_repo t25-brief-concat
+reach_reviewer_pass
+expect 'close behavioral lesson' 'CLOSED PASS' "$WM" close 'check issue-key shape before interpolating a path'
+grep -q '^check issue-key shape before interpolating a path$' LESSONS.md \
+  && ok || bad "behavioral close must append the lesson line, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+if ! "$WM" run maker-build >"$OUT" 2>"$ERR"; then
+  bad "behavioral lesson must not fence maker-build: $(cat "$OUT") $(cat "$ERR")"
+else
+  ok
+fi
+[ -f .wm/maker-ran ] && ok || bad 'behavioral lesson must still exec next maker'
+if [ -f .wm/dumped-brief.md ]; then
+  grep -q 'check issue-key shape before interpolating a path' .wm/dumped-brief.md \
+    && ok || bad "maker brief must concatenate LESSONS, got $(cat .wm/dumped-brief.md)"
+  grep -qi 'Lessons' .wm/dumped-brief.md \
+    && ok || bad 'maker brief must name Lessons (RULE 23 analogue)'
+else
+  bad 'maker-build did not dump BRIEF'
+fi
+# reviewer brief must not include LESSONS (RULE 10 analogue)
+if ! "$WM" run reviewer >"$OUT" 2>"$ERR"; then
+  bad "reviewer re-run after close failed: $(cat "$OUT") $(cat "$ERR")"
+else
+  ok
+fi
+revb=
+for f in .wm/briefs/reviewer.*; do
+  [ -f "$f" ] || continue
+  revb=$f
+done
+if [ -n "$revb" ] && [ -f "$revb" ]; then
+  grep -qi 'Lessons from earlier' "$revb" \
+    && bad "reviewer brief must not concatenate LESSONS (got $revb)" || ok
+  grep -q 'check issue-key shape' "$revb" \
+    && bad 'reviewer brief must not contain the lesson line' || ok
+else
+  bad 'reviewer brief missing after re-run'
+fi
+
+# NONE in the next maker brief when that was the lesson
+setup_repo t25-brief-none
+reach_reviewer_pass
+expect 'close NONE for brief' 'CLOSED PASS' "$WM" close NONE
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+if ! "$WM" run maker-build >"$OUT" 2>"$ERR"; then
+  bad "NONE lesson must not fence maker-build: $(cat "$OUT") $(cat "$ERR")"
+else
+  ok
+fi
+if [ -f .wm/dumped-brief.md ]; then
+  grep -q 'NONE' .wm/dumped-brief.md \
+    && ok || bad "maker brief must include NONE, got $(cat .wm/dumped-brief.md)"
+else
+  bad 'NONE brief dump missing'
+fi
+
+# ARCH: lines are not maker-binding bullets (fence already covers run; brief skip is extra)
+setup_repo t25-brief-arch-skip
+reach_reviewer_pass
+set +e
+"$WM" close 'ARCH: never bind this' >"$OUT" 2>"$ERR"
+set -e
+# If a brief were written, it must not bind the ARCH line. Fence must prevent the run.
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+rm -f .wm/dumped-brief.md .wm/maker-ran
+set +e
+"$WM" run maker-build >"$OUT" 2>"$ERR"
+set -e
+if [ -f .wm/dumped-brief.md ] && grep -q 'never bind this' .wm/dumped-brief.md; then
+  bad 'ARCH: lesson must not be concatenated as a maker-binding bullet'
+else
+  ok
+fi
+if [ -f .wm/maker-ran ]; then
+  bad 'ARCH: brief-skip fixture must not exec maker'
+else
+  ok
+fi
+
+# (26) loop-design debrief may write proposals/ only; kernel does not apply patches
+setup_repo t26-proposals
+reach_reviewer_pass
+mkdir -p proposals .crucible/skills/loop-design
+printf 'ORIGINAL-SKILL\n' > .crucible/skills/loop-design/SKILL.md
+printf 'PATCH-SHOULD-NOT-APPLY\n' > proposals/loop-design.patch
+expect 'close does not apply proposals' 'CLOSED PASS' "$WM" close NONE
+grep -q 'ORIGINAL-SKILL' .crucible/skills/loop-design/SKILL.md \
+  && ok || bad 'close must not apply proposals/ onto skills'
+grep -q 'PATCH-SHOULD-NOT-APPLY' .crucible/skills/loop-design/SKILL.md \
+  && bad 'close applied proposals/ patch into skills' || ok
+[ -f proposals/loop-design.patch ] && ok || bad 'proposals/ must remain (debrief writes there only)'
+# wm.sh must not copy proposals/ into skills/ (human / refresh KEEP)
+if grep -E 'proposals/' "$WM" | grep -E -q 'skills/|cp |mv '; then
+  bad 'wm.sh must not auto-apply proposals/ into skills/'
+else
+  ok
+fi
+
+# (27) wm loop with WM_LESSON=ARCH: STOP-ASK, does not start a further maker
+setup_repo t27-loop-arch
+write_loop_maker_pass
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'loop arch workers'
+WM_LESSON='ARCH: add a cache layer'
+export WM_LESSON
+run_wm_loop
+unset WM_LESSON
+assert_loop_foreground 't27-loop-arch'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "ARCH loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ -f LESSONS.md ] && grep -q '^ARCH: add a cache layer$' LESSONS.md \
+  && ok || bad "ARCH loop must append ^ARCH: line, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+if grep -q 'CLOSED PASS' "$OUT" || { [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; }; then
+  ok
+else
+  bad "ARCH loop should still close the brick (out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT))"
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'ARCH loop must not exit 0 (would proceed)'
+install_maker_dump
+"$WM" cast maker alice grok './tools/maker-dump.sh {BRIEF}' >/dev/null
+rm -f .wm/maker-ran
+refuses 'ARCH loop then maker-build STOP-ASK' 'STOP-ASK' "$WM" run maker-build
+if [ -f .wm/maker-ran ]; then
+  bad 'ARCH loop must not allow a next maker'
+else
+  ok
+fi
+
+# (28) honest loop without WM_LESSON appends NONE (valid lesson line)
+setup_repo t28-loop-none
+write_loop_maker_pass
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'loop none workers'
+run_wm_loop
+assert_loop_foreground 't28-loop-none'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "honest loop with implicit NONE exit $LOOP_RC err=$(cat "$ERR")"
+grep -q 'CLOSED PASS' "$OUT" && ok || bad "honest NONE loop wanted CLOSED PASS, got $(cat "$OUT")"
+[ -f LESSONS.md ] && grep -q '^NONE$' LESSONS.md \
+  && ok || bad "honest loop must append NONE, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "honest loop must append exactly one lesson line, got $n"
+
+# (29) close multi-line lesson refuses; no append
+setup_repo t29-multiline
+reach_reviewer_pass
+ml=$(printf 'line one\nline two')
+refuses 'close multi-line lesson refuses' 'refused:' "$WM" close "$ml"
+if [ -f LESSONS.md ] && [ -s LESSONS.md ]; then
+  bad 'multi-line close must not append LESSONS.md'
+else
+  ok
+fi
+if [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  bad 'multi-line close must not write CLOSED PASS'
+else
+  ok
+fi
+
+# Home leak: empty HOME must stay empty (no skills, no LESSONS)
+home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
+if [ -z "$home_leftovers" ]; then
+  ok
+else
+  bad "wrote under HOME: $home_leftovers"
+fi
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
