@@ -24,7 +24,8 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
 
 For release-specific changes and current operator-visible limits, see
-[docs/whats-new.md](docs/whats-new.md).
+[docs/whats-new.md](docs/whats-new.md). Working-mode is opt-in (not the guided
+default); see [docs/working-mode.md](docs/working-mode.md).
 
 `STATUS.md` is the next-action card (`state`, `engine`, `worth`, active item, inflight
 attempt, last evidence, next human gate). FALSE/STALE closes a claim; TRUE is only

@@ -5,6 +5,10 @@ swap-out batteries. Install with `crucible adopt PROGRAM --managed --working-mod
 Runtime is the target repo plus one harness CLI. Skills live in the repo
 (`.crucible/skills/` and harness views). There is no `$HOME` skill runtime.
 
+From the **target repository root**, invoke `.crucible/<program>/wm.sh` (not a
+bare `wm` on `PATH`). After `adopt work --managed --working-mode`, `<program>`
+is `work`.
+
 This is the coordinator travelling card for **map cadence**. Brick CHECKs
 (maker ≠ judge, observed-red, NO-BUILD, live fence) live in `wm.sh` and
 `scripts/verify-working-mode.sh`.
@@ -20,58 +24,63 @@ id	module	owned_paths	depends_on	risk	status
 s1	widget	src/widget/api.py	-	LOW	READY
 ```
 
-Risk is `LOW` or `HIGH`. Status is `PENDING` (after `wm map-ready`), `READY`
-(after `MAP-ACCEPT`), `REVISE`, or `STOP-ASK`.
+Risk is `LOW` or `HIGH`. Status is `PENDING` (after
+`.crucible/<program>/wm.sh map-ready`), `READY` (after `MAP-ACCEPT`), `REVISE`,
+or `STOP-ASK`.
 
 | Step | Who | Command / word |
 | --- | --- | --- |
-| Inventory + slices | architecture battery (mapper) | write `MAP.md`; `wm record-mapper --from MAP.md`; `wm map-ready` |
+| Inventory + slices | architecture battery (mapper) | write `MAP.md`; `.crucible/<program>/wm.sh record-mapper --from MAP.md`; `.crucible/<program>/wm.sh map-ready` |
 | Attack the map | critique battery (map-judge) | invert + adversarial + simple; return `MAP-ACCEPT` \| `MAP-REVISE` \| `MAP-STOP-ASK` |
-| Ingest | kernel | `wm map-verdict RETURNFILE` (calls `wm check-map-word` and, on ACCEPT, `wm check-module-fit`) |
+| Ingest | kernel | `.crucible/<program>/wm.sh map-verdict RETURNFILE` (calls `.crucible/<program>/wm.sh check-map-word` and, on ACCEPT, `.crucible/<program>/wm.sh check-module-fit`) |
 | Human sign | operator | `MAP-HUMAN` when the map is HIGH or live (8c) |
-| First slice | kernel | `wm next` → `NEXT SLICE <id>` for the first READY row |
-| Brick | maker / reviewer | existing small loop (`wm run maker-falsify` … `wm close`) |
+| First slice | kernel | `.crucible/<program>/wm.sh next` → `NEXT SLICE <id>` for the first READY row |
+| Brick | maker / reviewer | existing small loop (`.crucible/<program>/wm.sh run maker-falsify` … `.crucible/<program>/wm.sh close`) |
 
 `MAP-ACCEPT` is not `CLOSED PASS`. Map closer ≠ brick closer. Mapper id cannot
 be the maker. Architecture author id cannot be the critique author.
 
-`wm loop` stays a foreground walker (no `&`, no daemon). Live / destroy /
-push-main remain STOP-ASK (2c).
+`.crucible/<program>/wm.sh loop` stays a foreground walker (no `&`, no daemon).
+Live / destroy / push-main remain STOP-ASK (2c).
 
 ## Human sign (8c)
 
 After `MAP-ACCEPT`, if any slice is `HIGH` or its module `live_write` is `yes`,
 the operator signs the map (`MAP-HUMAN` at repo root) before the first
-`wm run maker-falsify`. LOW local maps do not need it. This is a human gate
-after the map-judge (8c), not a replacement for critique and not a dummy file.
+`.crucible/<program>/wm.sh run maker-falsify`. LOW local maps do not need it.
+This is a human gate after the map-judge (8c), not a replacement for critique
+and not a dummy file.
 
-`wm` parses the same `key: value` shape as return files. `SIGNED:` must be a
-non-empty human id — not mapper, maker, reviewer, parent, coordinator, or
-loop. `MAP:` must name an existing map file (`MAP.md`). A token such as `x`
-is not a sign.
+`.crucible/<program>/wm.sh` parses the same `key: value` shape as return files.
+`SIGNED:` must be a non-empty human id — not mapper, maker, reviewer, parent,
+coordinator, or loop. `MAP:` must name an existing map file (`MAP.md`). A token
+such as `x` is not a sign.
 
 ```
 SIGNED: operator
 MAP: MAP.md
 ```
 
-Without a valid `MAP-HUMAN` on HIGH/live, `wm run maker-falsify` refuses and
-`wm next` is `STOP-ASK MAP-HUMAN`.
+Without a valid `MAP-HUMAN` on HIGH/live,
+`.crucible/<program>/wm.sh run maker-falsify` refuses and
+`.crucible/<program>/wm.sh next` is `STOP-ASK MAP-HUMAN`.
 
 ## Risk-triggered reviewer (3d)
 
 3d is **label + ROUTING**, not a second engine. HIGH slices require the
 reviewer’s panel `kind` to differ from the maker’s `kind` when two harnesses
-are cast. If only one harness is present, `wm next` / `wm run maker-falsify`
+are cast. If only one harness is present,
+`.crucible/<program>/wm.sh next` / `.crucible/<program>/wm.sh run maker-falsify`
 are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
 
 ## Operator commands
 
 ```sh
-wm map-ready                 # fit + slices.tsv PENDING
-wm map-verdict RETURNFILE    # MAP-ACCEPT | MAP-REVISE | MAP-STOP-ASK
-wm next                      # NEXT MAP | NEXT SLICE <id> | STOP-ASK | brick card
-wm run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
+# from the target repository root
+.crucible/<program>/wm.sh map-ready                 # fit + slices.tsv PENDING
+.crucible/<program>/wm.sh map-verdict RETURNFILE    # MAP-ACCEPT | MAP-REVISE | MAP-STOP-ASK
+.crucible/<program>/wm.sh next                      # NEXT MAP | NEXT SLICE <id> | STOP-ASK | brick card
+.crucible/<program>/wm.sh run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
 ```
 
 ## Harness adapters (13b)
@@ -81,7 +90,8 @@ wm run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
 has them. Each file says how to invoke that CLI and how to point ignored
 `agents.tsv` at it. They are not batteries and they carry no credentials.
 
-`wm` does not spawn a harness by name. Cast a worker whose command is the CLI:
+`.crucible/<program>/wm.sh` does not spawn a harness by name. Cast a worker
+whose command is the CLI:
 
 ```text
 name	kind	model	effort	command

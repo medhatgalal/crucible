@@ -1638,6 +1638,61 @@ else
   ok
 fi
 
+# Task 3: START/BOOTSTRAP discoverability — one opt-in pointer; guided default
+# stays adopt work --managed without --working-mode.
+if grep -qi 'working-mode' "$HERE/START.md" \
+  && grep -q 'docs/working-mode.md' "$HERE/START.md"; then
+  ok
+else
+  bad 'START.md must point to docs/working-mode.md (opt-in)'
+fi
+if grep -qi 'working-mode' "$HERE/BOOTSTRAP.md" \
+  && grep -q 'docs/working-mode.md' "$HERE/BOOTSTRAP.md"; then
+  ok
+else
+  bad 'BOOTSTRAP.md must point to docs/working-mode.md (opt-in)'
+fi
+if grep -q 'adopt work --managed' "$HERE/BOOTSTRAP.md"; then
+  ok
+else
+  bad 'BOOTSTRAP.md missing guided adopt work --managed'
+fi
+if grep -E 'adopt work --managed' "$HERE/BOOTSTRAP.md" | grep -q -- '--working-mode'; then
+  bad 'BOOTSTRAP guided adopt must not add --working-mode'
+else
+  ok
+fi
+if grep -E 'adopt (work|NAME|<program>) --managed --working-mode' "$HERE/START.md" >/dev/null; then
+  bad 'START.md must not show guided adopt with --working-mode'
+else
+  ok
+fi
+if grep -q '.crucible/<program>/wm.sh' "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must invoke .crucible/<program>/wm.sh from the target root'
+fi
+if grep -E '^wm[[:space:]]' "$HERE/docs/working-mode.md" >/dev/null; then
+  bad 'docs/working-mode.md must not show bare wm commands'
+else
+  ok
+fi
+
+# Task 3: wm run maker-build whose command is false exits non-zero; no CLOSED PASS
+setup_repo t-run-rc-false
+"$WM" cast maker alice grok false >/dev/null
+rm -f .wm/CLOSED
+set +e
+"$WM" run maker-build >"$OUT" 2>"$ERR"
+run_rc=$?
+set -e
+[ "$run_rc" -ne 0 ] && ok || bad "wm run maker-build of false must exit non-zero (rc=$run_rc out=$(cat "$OUT") err=$(cat "$ERR"))"
+if closed_pass_present; then
+  bad "wm run maker-build of false must not CLOSED PASS (out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT))"
+else
+  ok
+fi
+
 # Home leak: empty HOME must stay empty (no skills, no LESSONS)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
 if [ -z "$home_leftovers" ]; then

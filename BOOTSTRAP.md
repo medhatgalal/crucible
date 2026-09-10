@@ -16,6 +16,8 @@ run its internal commands. You schedule independent agents; you do not pretend t
 
        <crucible-directory>/crucible adopt work --managed
 
+   Working-mode is opt-in (not this default); see [docs/working-mode.md](docs/working-mode.md).
+
 5. **Configure first (required).** Discover available agent mechanisms (CLIs on PATH, ACP, host
    subagents). Ask the operator **one compact configure block** covering **both** halves (not a drip
    interview; not zero questions; do not self-answer material config):

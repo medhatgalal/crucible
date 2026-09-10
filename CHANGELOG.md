@@ -5,6 +5,25 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.7.1] - 2026-09-10
+
+### Unattended multi-slice and live gate
+
+- One foreground `wm loop` walks remaining READY slices whose `depends_on`
+  parents are CLOSED, then resets brick receipts and continues. Work-level
+  `.wm/CLOSED` and exit 0 only when no READY slice remains. Planted CLOSED
+  still refuses (5c). HIGH unsigned next slice is `STOP-ASK MAP-HUMAN`.
+- `scripts/verify-working-mode-live.sh` fails closed with
+  `INDEPENDENCE_UNAVAILABLE` when grok/claude/codex are missing, and walks a
+  throwaway LOW map when they exist.
+- `START.md` and `BOOTSTRAP.md` point at opt-in working-mode
+  (`docs/working-mode.md`). Guided adopt stays `adopt work --managed` without
+  `--working-mode`. Operator commands use `.crucible/<program>/wm.sh` from the
+  target repo root.
+- `wm run` returns the worker exit status after judge/WORD checks. A
+  `false` maker-build is non-zero and does not CLOSED PASS. Maker-falsify/build
+  that `die`, and reviewer missing WORD, still die.
+
 ## [1.7.0] - 2026-09-10
 
 ### Opt-in self-contained working-mode

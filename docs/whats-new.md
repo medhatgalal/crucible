@@ -2,6 +2,15 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## 1.7.1 — unattended multi-slice and live gate
+
+One foreground `wm loop` walks remaining READY slices; HIGH unsigned is
+`STOP-ASK MAP-HUMAN`. Live independence fails closed when grok/claude/codex
+are missing. `START.md` / `BOOTSTRAP.md` point at opt-in working-mode
+([working-mode.md](working-mode.md)); guided adopt stays `--managed` without
+the flag. Commands use `.crucible/<program>/wm.sh` from the target repo root.
+`wm run` returns the worker rc.
+
 ## 1.7.0 — opt-in working-mode
 
 `crucible adopt PROGRAM --managed --working-mode` copies `wm.sh`, four batteries,

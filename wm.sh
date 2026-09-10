@@ -1821,7 +1821,7 @@ cmd_run() {
     grep -q '^WORD:' "$_ru_ret" || die "worker returned no WORD"
     cmd_verdict "$_ru_ret"
   fi
-  return 0
+  return "$_ru_rc"
 }
 
 cmd_loop() {
