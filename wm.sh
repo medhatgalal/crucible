@@ -605,9 +605,39 @@ cmd_cast() {
   say "cast $_ca_role=$_ca_agent kind=$_ca_kind"
 }
 
+check_routing_batteries() {
+  _rt=
+  if [ -f ROUTING.tsv ]; then
+    _rt=ROUTING.tsv
+  elif [ -f .crucible/ROUTING.tsv ]; then
+    _rt=.crucible/ROUTING.tsv
+  else
+    for _cand in .crucible/*/ROUTING.tsv; do
+      [ -f "$_cand" ] || continue
+      _rt=$_cand
+      break
+    done
+  fi
+  [ -n "$_rt" ] || return 0
+  _miss=
+  while IFS="$(printf '\t')" read -r _ph _job _bat _role _stake _req _rest; do
+    [ -n "${_ph:-}" ] || continue
+    case $_ph in
+      phase|\#*) continue ;;
+    esac
+    [ "${_req:-}" = yes ] || continue
+    [ -n "${_bat:-}" ] && [ "$_bat" != - ] || continue
+    if [ ! -f ".crucible/skills/${_bat}/SKILL.md" ]; then
+      _miss="$_miss $_bat"
+    fi
+  done < "$_rt"
+  [ -z "$_miss" ] || die "required battery missing:$_miss"
+}
+
 cmd_ready() {
   [ -f IDEA.md ] || die "IDEA.md missing"
   spec_ok || die "$SPEC_ERR"
+  check_routing_batteries
   say READY
 }
 

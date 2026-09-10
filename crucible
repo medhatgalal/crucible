@@ -2,9 +2,13 @@
 # crucible - a file-only refusal gate for maker/judge work. No dependencies.
 #
 #   crucible adopt [PROGRAM] --managed     install one self-contained cycle in this repo
+#   crucible adopt [PROGRAM] --managed --working-mode
+#                                          opt-in working-mode (wm + skills; no $HOME)
 #   crucible adopt [PROGRAM] --managed --panel-from SRC
 #                                          sibling cycle; copy approved panel from SRC
 #   crucible adopt [PROGRAM] --refresh     additive engine update (keeps local adapters)
+#   crucible adopt [PROGRAM] --refresh --overwrite-batteries
+#                                          refresh also overwrites KEEP batteries
 #   crucible cycle [status]                resume the durable problem-to-done loop
 #   crucible cycle problem FILE            bind the cycle to a problem report
 #   crucible cycle problem FILE --next     same panel, archive closed investigation, new PROBLEM
@@ -51,9 +55,12 @@ usage() {
 Crucible runs one durable problem-to-done cycle for a coordinating agent.
 
   crucible adopt [PROGRAM] --managed   install the cycle in the current repository
+  crucible adopt [PROGRAM] --managed --working-mode
+                                       also copy wm.sh, skills, harness views, ROUTING.tsv, ENGINE-SOURCE
   crucible adopt [PROGRAM] --managed --panel-from SRC
                                        sibling cycle with SRC's approved panel; leftover PROBLEM stays on SRC
   crucible adopt [PROGRAM] --refresh   additive engine update; does not delete local adapters
+                                       refuses src == dst; KEEP batteries unless --overwrite-batteries
   crucible cycle [status]              resume from repository evidence
   crucible cycle problem FILE          bind a problem report to the cycle
   crucible cycle problem FILE --next   same panel; archive this investigation; bind a new PROBLEM
@@ -4758,6 +4765,146 @@ adopt_install_engine() {
   chmod +x "$dst/scripts/"*.sh 2>/dev/null || true
 }
 
+adopt_src_sha256() {
+  _as_src=$1
+  {
+    [ -f "$_as_src/VERSION" ] && cat "$_as_src/VERSION"
+    [ -f "$_as_src/wm.sh" ] && cat "$_as_src/wm.sh"
+    [ -f "$_as_src/ROUTING.tsv" ] && cat "$_as_src/ROUTING.tsv"
+    if [ -d "$_as_src/skills" ]; then
+      find "$_as_src/skills" -type f | sort | while IFS= read -r _as_f; do
+        cat "$_as_f"
+      done
+    fi
+  } | {
+    if command -v sha256sum >/dev/null 2>&1; then
+      sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum -a 256 | awk '{print $1}'
+    else
+      printf 'unknown\n'
+    fi
+  }
+}
+
+adopt_write_engine_source() {
+  _es_src=$1
+  _es_dst=$2
+  _es_ver=unknown
+  [ -s "$_es_src/VERSION" ] && _es_ver=$(sed -n '1p' "$_es_src/VERSION")
+  printf 'version: %s\nsha256: %s\n' "$_es_ver" "$(adopt_src_sha256 "$_es_src")" > "$_es_dst/ENGINE-SOURCE"
+}
+
+adopt_check_required_batteries() {
+  _cb_routing=$1
+  _cb_skills=$2
+  [ -f "$_cb_routing" ] || die 'refused: ROUTING.tsv missing'
+  _cb_missing=
+  while IFS="$(printf '\t')" read -r _cb_ph _cb_job _cb_bat _cb_role _cb_stake _cb_req _cb_rest; do
+    [ -n "${_cb_ph:-}" ] || continue
+    case $_cb_ph in
+      phase|\#*) continue ;;
+    esac
+    [ "${_cb_req:-}" = yes ] || continue
+    [ -n "${_cb_bat:-}" ] && [ "$_cb_bat" != - ] || continue
+    if [ ! -f "$_cb_skills/$_cb_bat/SKILL.md" ]; then
+      _cb_missing="$_cb_missing $_cb_bat"
+    fi
+  done < "$_cb_routing"
+  [ -z "$_cb_missing" ] || die "refused: required battery missing:$_cb_missing"
+}
+
+adopt_battery_kept() {
+  _bk_repo=$1
+  _bk_name=$2
+  [ -e "$_bk_repo/.crucible/skills/$_bk_name/.keep" ] && return 0
+  [ -e "$_bk_repo/.crucible/skills/$_bk_name/KEEP" ] && return 0
+  for _bk_f in "$_bk_repo/.crucible/skills/KEEP" "$_bk_repo/.crucible/KEEP"; do
+    [ -f "$_bk_f" ] || continue
+    awk -v n="$_bk_name" '
+      /^[ \t]*#/ { next }
+      NF && $1 == n { found = 1; exit }
+      END { exit !found }
+    ' "$_bk_f" && return 0
+  done
+  return 1
+}
+
+adopt_install_working_mode() {
+  _wm_src=$1
+  _wm_dst=$2
+  _wm_repo=$3
+  _wm_overwrite=${4:-0}
+
+  [ -n "$_wm_repo" ] && [ "$_wm_repo" != / ] \
+    || die 'refused: bad repository root'
+  [ -f "$_wm_src/wm.sh" ] || die 'refused: working-mode source is missing wm.sh'
+  [ -d "$_wm_src/skills" ] || die 'refused: working-mode source is missing skills/'
+  [ -f "$_wm_src/scripts/project-skills.sh" ] \
+    || die 'refused: working-mode source is missing scripts/project-skills.sh'
+  [ -f "$_wm_src/ROUTING.tsv" ] || die 'refused: ROUTING.tsv missing'
+  adopt_check_required_batteries "$_wm_src/ROUTING.tsv" "$_wm_src/skills"
+
+  cp "$_wm_src/wm.sh" "$_wm_dst/wm.sh"
+  chmod +x "$_wm_dst/wm.sh" 2>/dev/null || true
+  cp "$_wm_src/ROUTING.tsv" "$_wm_dst/ROUTING.tsv"
+  mkdir -p "$_wm_repo/.crucible"
+  cp "$_wm_src/ROUTING.tsv" "$_wm_repo/.crucible/ROUTING.tsv"
+
+  if [ -d "$_wm_src/adapters" ]; then
+    mkdir -p "$_wm_dst/adapters"
+    for _wm_f in "$_wm_src/adapters"/*; do
+      [ -f "$_wm_f" ] && cp "$_wm_f" "$_wm_dst/adapters/"
+    done
+  fi
+
+  _wm_keep=
+  if [ "$_wm_overwrite" -eq 0 ] && [ -d "$_wm_repo/.crucible/skills" ]; then
+    _wm_keep="$_wm_dst/.keep-snapshot.$$"
+    mkdir -p "$_wm_keep"
+    for _wm_canon in "$_wm_repo/.crucible/skills"/*; do
+      [ -d "$_wm_canon" ] || continue
+      _wm_name=${_wm_canon##*/}
+      case $_wm_name in ''|.*|*/*) continue ;; esac
+      if adopt_battery_kept "$_wm_repo" "$_wm_name"; then
+        cp -R "$_wm_canon" "$_wm_keep/$_wm_name"
+      fi
+    done
+  fi
+
+  "$_wm_src/scripts/project-skills.sh" "$_wm_src/skills" "$_wm_repo" \
+    || die 'refused: skill projection failed'
+
+  if [ -n "$_wm_keep" ] && [ -d "$_wm_keep" ]; then
+    for _wm_kept in "$_wm_keep"/*; do
+      [ -d "$_wm_kept" ] || continue
+      _wm_name=${_wm_kept##*/}
+      _wm_dest="$_wm_repo/.crucible/skills/$_wm_name"
+      case $_wm_dest in
+        "$_wm_repo/.crucible/skills"/*) ;;
+        *)
+          rm -rf "$_wm_keep"
+          die "refused: KEEP restore path outside skills: $_wm_dest"
+          ;;
+      esac
+      rm -rf "$_wm_dest"
+      mkdir -p "$_wm_dest"
+      cp -R "$_wm_kept/." "$_wm_dest/"
+    done
+    rm -rf "$_wm_keep"
+  fi
+
+  adopt_check_required_batteries "$_wm_src/ROUTING.tsv" "$_wm_repo/.crucible/skills"
+  adopt_write_engine_source "$_wm_src" "$_wm_dst"
+}
+
+adopt_working_mode_installed() {
+  _wi_dst=$1
+  [ -f "$_wi_dst/wm.sh" ] && return 0
+  [ -f "$_wi_dst/PROGRAM" ] && grep -q '^working-mode: yes$' "$_wi_dst/PROGRAM" && return 0
+  return 1
+}
+
 # Machine-local files that must never reach a commit, one pattern per line with the reason
 # above it. `cycle approve-panel` copies agents.tsv to PANEL.AGENTS.tsv and the generated
 # ignore file did not exclude that copy, so `git add .crucible` — which the install docs now
@@ -4823,19 +4970,21 @@ adopt_copy_panel_from() {
 }
 
 cmd_adopt() {
-  prog=; managed=0; refresh=0; panel_from=
+  prog=; managed=0; refresh=0; panel_from=; working_mode=0; overwrite_batteries=0
   while [ $# -gt 0 ]; do
     case $1 in
       --managed) managed=1 ;;
       --refresh) refresh=1 ;;
+      --working-mode) working_mode=1 ;;
+      --overwrite-batteries) overwrite_batteries=1 ;;
       --panel-from)
         shift
         [ -n "${1:-}" ] || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM'
         panel_from=$1
         ;;
-      -*) die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--panel-from PROGRAM]' ;;
+      -*) die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--working-mode] [--overwrite-batteries] [--panel-from PROGRAM]' ;;
       *)
-        [ -z "$prog" ] || die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--panel-from PROGRAM]'
+        [ -z "$prog" ] || die 'usage: crucible adopt [PROGRAM] [--managed] [--refresh] [--working-mode] [--overwrite-batteries] [--panel-from PROGRAM]'
         prog=$1
         ;;
     esac
@@ -4848,6 +4997,8 @@ cmd_adopt() {
     || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM  (--refresh does not copy a panel)'
   [ -z "$panel_from" ] || [ "$managed" -eq 1 ] \
     || die 'usage: crucible adopt [PROGRAM] --managed --panel-from PROGRAM'
+  [ "$working_mode" -eq 0 ] || [ "$managed" -eq 1 ] || [ "$refresh" -eq 1 ] \
+    || die 'usage: crucible adopt [PROGRAM] --managed --working-mode'
   case $prog in *[!A-Za-z0-9._-]*) die "program name may only contain A-Za-z0-9._-" ;; esac
   repo=$(git rev-parse --show-toplevel 2>/dev/null) || die "not inside a git repository — cd into the repo you want to work on"
   src=$(cd "$(dirname "$0")" && pwd)
@@ -4857,11 +5008,21 @@ cmd_adopt() {
       die "refused: $dst is a husk (no PROGRAM). Keep it, trash it, or adopt a different program name"
     fi
     [ -d "$dst" ] && [ -f "$dst/PROGRAM" ] || die "program does not exist: $dst"
+    src_abs=$(unset CDPATH; cd -- "$src" && pwd -P)
+    dst_abs=$(unset CDPATH; cd -- "$dst" && pwd -P)
+    [ "$src_abs" != "$dst_abs" ] \
+      || die 'refused: refresh source is the destination (src == dst); use a versioned tarball'
     old=unknown
     [ -s "$dst/VERSION" ] && old=$(sed -n '1p' "$dst/VERSION")
     new=unknown
     [ -s "$src/VERSION" ] && new=$(sed -n '1p' "$src/VERSION")
     adopt_install_engine "$src" "$dst"
+    if [ "$working_mode" -eq 1 ] || adopt_working_mode_installed "$dst"; then
+      adopt_install_working_mode "$src" "$dst" "$repo" "$overwrite_batteries"
+      if [ -f "$dst/PROGRAM" ] && ! grep -q '^working-mode: yes$' "$dst/PROGRAM"; then
+        printf 'working-mode: yes\n' >> "$dst/PROGRAM"
+      fi
+    fi
     adopt_sync_gitignore "$repo"
     printf 'refreshed engine %s -> %s\n%s\n' "$old" "$new" "$dst"
     if [ -f "$dst/scripts/acp-brief.py" ]; then
@@ -4880,12 +5041,21 @@ cmd_adopt() {
       || die "refused: --panel-from $panel_from panel is not approved"
   fi
   [ -d "$dst" ] && die "program already exists: $dst"
+  if [ "$working_mode" -eq 1 ]; then
+    [ -f "$src/wm.sh" ] || die 'refused: working-mode source is missing wm.sh'
+    [ -d "$src/skills" ] || die 'refused: working-mode source is missing skills/'
+    [ -f "$src/ROUTING.tsv" ] || die 'refused: ROUTING.tsv missing'
+    adopt_check_required_batteries "$src/ROUTING.tsv" "$src/skills"
+  fi
   mkdir -p "$dst"
   adopt_install_engine "$src" "$dst"
   base=$(git -C "$repo" symbolic-ref --short HEAD 2>/dev/null || echo main)
   printf 'repo: %s\nprogram: %s\nbase: %s\n' "$repo" "$prog" "$base" > "$dst/PROGRAM"
   if [ "$managed" -eq 1 ]; then
     printf 'lifecycle: managed\ncycle: guided\n' >> "$dst/PROGRAM"
+  fi
+  if [ "$working_mode" -eq 1 ]; then
+    printf 'working-mode: yes\n' >> "$dst/PROGRAM"
   fi
   printf -- '- Conversational "keep looping" is not a waiver to implement. Drive ticks one legal orchestrator action; makers stay inside EXECUTE for the admitted item.\n' > "$dst/LESSONS.md"
   printf -- '- [ ] example — replace this line with real items as claims are admitted\n' > "$dst/BACKLOG.md"
@@ -4932,6 +5102,9 @@ STATEEOF
 
 TEMPLATE-PROBLEM-NEEDS-INPUT
 EOF
+  if [ "$working_mode" -eq 1 ]; then
+    adopt_install_working_mode "$src" "$dst" "$repo" 1
+  fi
   adopt_sync_gitignore "$repo"
   printf 'installed cycle "%s" into %s\n\n' "$prog" "$dst"
   printf 'Fresh-agent entrypoint:\n  read .crucible/%s/START.md and execute it\n\n' "$prog"
