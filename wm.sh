@@ -601,6 +601,9 @@ cmd_cast() {
     _ca_other=$(panel_agent maker)
     [ "$_ca_other" != "$_ca_agent" ] || die "maker and reviewer must be distinct agents (both $_ca_agent)"
   fi
+  if [ "$_ca_role" = maker ]; then
+    refuse_if_mapper_is_maker "$_ca_agent"
+  fi
   panel_set "$_ca_role" "$_ca_agent" "$_ca_kind" "$_ca_cmd"
   say "cast $_ca_role=$_ca_agent kind=$_ca_kind"
 }
@@ -632,6 +635,269 @@ check_routing_batteries() {
     fi
   done < "$_rt"
   [ -z "$_miss" ] || die "required battery missing:$_miss"
+}
+
+mapper_id() { kv_get "$WM/mapper" id; }
+
+refuse_if_mapper_is_maker() {
+  _rmm_agent=$1
+  _rmm_mapper=$(mapper_id)
+  [ -n "$_rmm_mapper" ] || return 0
+  [ "$_rmm_agent" != "$_rmm_mapper" ] || die "mapper cannot be maker ($_rmm_agent)"
+}
+
+list_module_roots() {
+  [ -f architecture/modules.md ] || return 1
+  awk '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^#/ { next }
+    /^[[:space:]]*$/ { next }
+    /^root:[[:space:]]*/ {
+      sub(/^root:[[:space:]]*/, "")
+      r = trim($0)
+      if (r != "") print r
+      next
+    }
+    /^\|/ {
+      n = split($0, a, "|")
+      if (!rc) {
+        for (i = 1; i <= n; i++) {
+          c = trim(a[i])
+          if (c == "root_path") rc = i
+        }
+        next
+      }
+      if ($0 ~ /[[:space:]]-[-[:space:]|]*$/) next
+      c = trim(a[rc])
+      if (c != "" && c != "root_path") print c
+      next
+    }
+    {
+      if (index($0, "\t") == 0) next
+      n = split($0, a, "\t")
+      if (n < 2) next
+      if (trim(a[1]) == "module_id") next
+      r = trim(a[2])
+      if (r != "") print r
+    }
+  ' architecture/modules.md
+}
+
+path_under_root() {
+  case $1 in
+    "$2"|"$2"/*) return 0 ;;
+  esac
+  return 1
+}
+
+path_fits_modules() {
+  _pfm_path=$1
+  _pfm_roots=$2
+  case $_pfm_path in
+    ''|*..*|/*) return 1 ;;
+  esac
+  _pfm_r=
+  while IFS= read -r _pfm_r || [ -n "$_pfm_r" ]; do
+    [ -n "$_pfm_r" ] || continue
+    if path_under_root "$_pfm_path" "$_pfm_r"; then
+      return 0
+    fi
+  done <<EOF
+$_pfm_roots
+EOF
+  return 1
+}
+
+emit_spec_owned() {
+  [ -f "$1" ] || return 0
+  section_body '## Owned files' "$1" | awk '
+    /^- / {
+      sub(/^- /, "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
+      if ($0 != "" && $0 != "(none)") print
+    }
+  '
+}
+
+emit_map_owned() {
+  [ -f MAP.md ] || return 0
+  awk -F '\t' '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    {
+      if (index($0, "\t") == 0) next
+      if (!oc) {
+        for (i = 1; i <= NF; i++) {
+          c = trim($i)
+          if (c == "owned_paths" || c == "owned") oc = i
+        }
+        if (oc) next
+        next
+      }
+      if (oc && NF >= oc) {
+        c = trim($oc)
+        if (c != "" && c != "-" && c != "owned_paths") print c
+      }
+    }
+  ' MAP.md
+}
+
+split_csv_paths() {
+  printf '%s\n' "$1" | awk -F ',' '{
+    for (i = 1; i <= NF; i++) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i)
+      if ($i != "") print $i
+    }
+  }'
+}
+
+stop_if_changes_architecture() {
+  _sia_f=
+  for _sia_f in architecture/modules.md MAP.md SPEC.md DESIGN.md "$@"; do
+    [ -n "$_sia_f" ] || continue
+    [ -f "$_sia_f" ] || continue
+    if grep -F -q 'CHANGES-ARCHITECTURE' "$_sia_f"; then
+      die "STOP: CHANGES-ARCHITECTURE (no silent second pattern)"
+    fi
+  done
+}
+
+cmd_record_mapper() {
+  _rm_from=
+  _rm_agent=
+  if [ "${1:-}" = --from ]; then
+    _rm_from=${2:-}
+    [ -n "$_rm_from" ] || die "usage: wm record-mapper --from FILE"
+    [ -f "$_rm_from" ] || die "architecture output missing: $_rm_from"
+    _rm_agent=$(kv_get "$_rm_from" MAPPER)
+    [ -n "$_rm_agent" ] || die "architecture output missing MAPPER"
+  else
+    _rm_agent=${1:-}
+    [ -n "$_rm_agent" ] || die "usage: wm record-mapper AGENT | wm record-mapper --from FILE"
+  fi
+  case $_rm_agent in
+    parent|coordinator|loop|-|'') die "mapper id required" ;;
+  esac
+  ensure_wm
+  _rm_maker=$(panel_agent maker)
+  if [ -n "$_rm_maker" ] && [ "$_rm_maker" != - ] && [ "$_rm_maker" = "$_rm_agent" ]; then
+    die "mapper cannot be maker ($_rm_agent)"
+  fi
+  {
+    printf 'id: %s\n' "$_rm_agent"
+    if [ -n "$_rm_from" ]; then
+      printf 'from: %s\n' "$_rm_from"
+    fi
+    printf 'when: %s\n' "$(iso_now)"
+  } > "$WM/mapper"
+  say "mapper $_rm_agent"
+}
+
+cmd_check_module_fit() {
+  _cm_extra=
+  _cm_spec=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --path)
+        shift
+        [ -n "${1:-}" ] || die "usage: wm check-module-fit [--path PATH] [SPEC.md]"
+        _cm_extra="${_cm_extra}
+$1"
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        die "usage: wm check-module-fit [--path PATH] [SPEC.md]"
+        ;;
+      *)
+        _cm_spec=$1
+        shift
+        ;;
+    esac
+  done
+  stop_if_changes_architecture "$_cm_spec"
+  [ -f architecture/modules.md ] || die "architecture/modules.md missing"
+  _cm_roots=$(list_module_roots) || _cm_roots=
+  [ -n "$_cm_roots" ] || die "architecture/modules.md names no module roots"
+  _cm_r=
+  while IFS= read -r _cm_r || [ -n "$_cm_r" ]; do
+    [ -n "$_cm_r" ] || continue
+    case $_cm_r in
+      *..*|/*) die "invalid module root: $_cm_r" ;;
+    esac
+    [ -d "$_cm_r" ] || die "module root does not exist: $_cm_r"
+  done <<EOF
+$_cm_roots
+EOF
+  ensure_wm
+  _cm_list="$WM/.fit-paths.$$"
+  : > "$_cm_list"
+  if [ -n "$_cm_extra" ]; then
+    printf '%s\n' "$_cm_extra" >> "$_cm_list"
+  fi
+  if [ -n "$_cm_spec" ]; then
+    emit_spec_owned "$_cm_spec" >> "$_cm_list"
+  elif [ -f SPEC.md ]; then
+    emit_spec_owned SPEC.md >> "$_cm_list"
+  fi
+  while IFS= read -r _cm_cell || [ -n "$_cm_cell" ]; do
+    [ -n "$_cm_cell" ] || continue
+    split_csv_paths "$_cm_cell" >> "$_cm_list"
+  done <<EOF
+$(emit_map_owned)
+EOF
+  _cm_p=
+  while IFS= read -r _cm_p || [ -n "$_cm_p" ]; do
+    [ -n "$_cm_p" ] || continue
+    if ! path_fits_modules "$_cm_p" "$_cm_roots"; then
+      rm -f "$_cm_list"
+      die "owned path not under named modules: $_cm_p"
+    fi
+  done < "$_cm_list"
+  rm -f "$_cm_list"
+  say MODULE-FIT
+}
+
+cmd_check_map_word() {
+  _mw_file=${1:-}
+  [ -n "$_mw_file" ] || die "usage: wm check-map-word RETURNFILE"
+  [ -f "$_mw_file" ] || die "return file missing: $_mw_file"
+  _mw_word=$(kv_get "$_mw_file" WORD)
+  [ -n "$_mw_word" ] || die "worker returned no WORD"
+  case $_mw_word in
+    MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK) ;;
+    *) die "map words are MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK (not CLOSED PASS)" ;;
+  esac
+  _mw_who=$(kv_get "$_mw_file" AGENT)
+  if [ -z "$_mw_who" ]; then
+    _mw_who=$(basename "$_mw_file" .md)
+  fi
+  case $_mw_who in
+    parent|coordinator|loop|-|'') die "critique author id required" ;;
+  esac
+  ensure_wm
+  _mw_mapper=$(mapper_id)
+  [ -n "$_mw_mapper" ] || die "mapper id not recorded"
+  _mw_map=$(kv_get "$_mw_file" MAP)
+  [ -n "$_mw_map" ] || _mw_map=MAP.md
+  if [ -f "$_mw_map" ]; then
+    _mw_map_author=$(kv_get "$_mw_map" MAPPER)
+    if [ -n "$_mw_map_author" ] && [ "$_mw_who" = "$_mw_map_author" ]; then
+      die "critique must not write MAP-ACCEPT on a map it authored ($_mw_who)"
+    fi
+  fi
+  if [ "$_mw_who" = "$_mw_mapper" ]; then
+    die "architecture author id must differ from critique author id (both $_mw_who)"
+  fi
+  say "MAP-WORD $_mw_word author=$_mw_who"
 }
 
 cmd_ready() {
@@ -989,6 +1255,9 @@ cmd_run() {
     fi
     [ "$_ru_agent" != "$_ru_other" ] || die "maker and reviewer must be distinct"
   fi
+  if [ "$_ru_prole" = maker ]; then
+    refuse_if_mapper_is_maker "$_ru_agent"
+  fi
   _ru_command=$(panel_cmd "$_ru_prole")
   if [ -z "$_ru_command" ] || [ "$_ru_command" = - ]; then
     die "INDEPENDENCE_UNAVAILABLE: no CLI worker"
@@ -1077,6 +1346,9 @@ shift
 case $cmd in
   init) cmd_init "$@" ;;
   cast) cmd_cast "$@" ;;
+  record-mapper) cmd_record_mapper "$@" ;;
+  check-module-fit) cmd_check_module_fit "$@" ;;
+  check-map-word) cmd_check_map_word "$@" ;;
   ready) cmd_ready "$@" ;;
   workid) cmd_workid "$@" ;;
   record-pre-falsify) cmd_record_pre_falsify "$@" ;;
