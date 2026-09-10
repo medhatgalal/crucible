@@ -461,14 +461,20 @@ sha_of() {
     openssl dgst -sha256 "$1" | awk '{print $NF}'
   fi
 }
+sid=s1
+if [ -f .wm/slice-in-flight ]; then
+  sid=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/slice-in-flight)
+fi
+[ -n "$sid" ] || sid=s1
+marker="WM-SLICE-$sid"
 if [ "$role" = maker-build ]; then
-  printf '\nWM-SLICE\n' >> src/widget/api.py
+  printf '\n%s\n' "$marker" >> src/widget/api.py
   git add src/widget/api.py
   git commit -qm maker-build
   exit 0
 fi
 mkdir -p .wm
-printf 'grep -q WM-SLICE src/widget/api.py\n' > .wm/FALSIFIER
+printf 'grep -q %s src/widget/api.py\n' "$marker" > .wm/FALSIFIER
 h=$(sha_of .wm/FALSIFIER)
 wid=NOCOMMIT
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -481,7 +487,8 @@ EOF
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
 mkdir -p .wm/return
-ev=$(.wm/bin/wm evidence dave -- sh -c 'echo grep -q WM-SLICE src/widget/api.py; grep -q WM-SLICE src/widget/api.py')
+cmd=$(sed -n '1p' .wm/FALSIFIER)
+ev=$(.wm/bin/wm evidence dave -- sh -c "$cmd")
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/dave.md
 EOF
   chmod +x tools/map-loop-maker.sh tools/map-loop-reviewer.sh
@@ -1143,16 +1150,19 @@ else
 fi
 [ -f .wm/reviewer-ran ] && ok || bad 'map loop did not exec the reviewer CLI'
 [ "$LOOP_RC" -eq 0 ] && ok || bad "map loop exit $LOOP_RC err=$(cat "$ERR")"
+closed_rows=$(awk -F '\t' 'NR>1 && $6=="CLOSED" {c++} END{print c+0}' slices.tsv)
+[ "$closed_rows" -eq 2 ] && ok || bad "map loop slices.tsv CLOSED rows wanted 2, got $closed_rows"
+# After s1 close, s2 depends_on is satisfied — one loop must walk s2 (not harness reset)
+grep -q 'NEXT SLICE s2' "$OUT" \
+  && ok || bad 'after s1 CLOSED, loop must emit NEXT SLICE s2 (deps satisfied)'
 if [ -f .wm/slice-in-flight ]; then
-  grep -q 's1' .wm/slice-in-flight \
-    && ok || bad "slice-in-flight must be s1, got $(cat .wm/slice-in-flight)"
+  grep -q 's2' .wm/slice-in-flight \
+    && ok || bad "last slice-in-flight must be s2, got $(cat .wm/slice-in-flight)"
 else
   ok
 fi
-# s2 depends on s1 — walker must not start a second slice after CLOSED
-printf '%s\n' "$(cat "$OUT")" | grep -q 'NEXT SLICE s2' \
-  && bad 'one slice in flight: loop must not emit NEXT SLICE s2' || ok
-grep -q 'WM-SLICE' src/widget/api.py && ok || bad 'map loop maker-build did not land'
+grep -q 'WM-SLICE-s1' src/widget/api.py && ok || bad 'map loop s1 maker-build did not land'
+grep -q 'WM-SLICE-s2' src/widget/api.py && ok || bad 'map loop s2 maker-build did not land'
 
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)

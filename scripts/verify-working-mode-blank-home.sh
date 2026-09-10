@@ -311,8 +311,8 @@ MAPPER: alice
 
 id	module	owned_paths	depends_on	risk
 s1	alpha	pkg/alpha/api.py	-	LOW
-s2	beta	pkg/beta/api.py	-	LOW
-s3	seam	tests/test_seam.py	-	LOW
+s2	beta	pkg/beta/api.py	s1	LOW
+s3	seam	tests/test_seam.py	s2	LOW
 MAP
 .wm/bin/wm record-mapper --from MAP.md
 EOF
@@ -452,10 +452,10 @@ EOF
   fi
   [ -f MAP.md ] && grep -q '^s1	alpha	pkg/alpha/api.py	-	LOW$' MAP.md \
     && ok || bad 'architecture agent did not write 3-slice MAP.md'
-  grep -q '^s2	beta	pkg/beta/api.py	-	LOW$' MAP.md \
-    && ok || bad 'MAP.md missing s2 beta'
-  grep -q '^s3	seam	tests/test_seam.py	-	LOW$' MAP.md \
-    && ok || bad 'MAP.md missing s3 seam'
+  grep -q '^s2	beta	pkg/beta/api.py	s1	LOW$' MAP.md \
+    && ok || bad 'MAP.md missing s2 beta depends_on=s1'
+  grep -q '^s3	seam	tests/test_seam.py	s2	LOW$' MAP.md \
+    && ok || bad 'MAP.md missing s3 seam depends_on=s2'
   [ -f .wm/mapper-ran ] && ok || bad 'mapper process did not run'
 
   if "$WM" map-ready >"$OUT" 2>"$ERR"; then
@@ -509,77 +509,60 @@ EOF
     bad 'fixture commit of map/spec/workers refused'
   fi
 
-  mark_slice_closed() {
-    _ms_id=$1
-    _ms_tmp=".wm/.slices.closed.$$"
-    awk -F '\t' -v id="$_ms_id" 'BEGIN { OFS="\t" }
-      NR==1 { print; next }
-      $1==id { $6="CLOSED"; print; next }
-      { print }
-    ' slices.tsv > "$_ms_tmp"
-    mv "$_ms_tmp" slices.tsv
+  # (A5) walk must not define mark_slice_closed or reset_brick
+  if grep -E -q 'mark_slice_closed\(\)|reset_brick\(\)' \
+    "$HERE/scripts/verify-working-mode-blank-home.sh"; then
+    bad 'A5: blank-home must not define mark_slice_closed or reset_brick'
+  else
+    ok
+  fi
+
+  card=$("$WM" next 2>"$ERR") || {
+    bad "wm next before walk refused: $(cat "$ERR")"
+    card=
   }
+  printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s1$' \
+    && ok || bad "walk next wanted NEXT SLICE s1, got $card"
 
-  reset_brick() {
-    rm -f .wm/CLOSED .wm/FALSIFIER .wm/FALSIFIER.meta .wm/FALSIFIER.sha256 \
-      .wm/red.status .wm/red.out .wm/built.status .wm/built.reason \
-      .wm/green.status .wm/green.out .wm/pre-falsify-wid .wm/pre-build-wid \
-      .wm/last-maker-run .wm/reviewer-ran .wm/slice-in-flight \
-      .wm/dispatch .wm/worker.out .wm/worker.err
-    rm -rf .wm/verdicts .wm/return .wm/invoke .wm/spawn .wm/briefs .wm/evidence
-    mkdir -p .wm/verdicts .wm/return .wm/return/history .wm/invoke .wm/spawn \
-      .wm/briefs .wm/evidence
-  }
-
-  walk_n=0
-  slice_i=1
-  while [ "$slice_i" -le 3 ]; do
-    card=$("$WM" next 2>"$ERR") || {
-      bad "wm next before slice $slice_i refused: $(cat "$ERR")"
-      break
-    }
-    printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s[123]$' \
-      && ok || bad "slice $slice_i next wanted NEXT SLICE sN, got $card"
-    sid=$(printf '%s\n' "$card" | awk '/^NEXT SLICE / { print $3; exit }')
-    [ -n "$sid" ] && ok || bad "slice $slice_i empty id"
-
-    set +e
-    "$WM" loop >"$OUT" 2>"$ERR"
-    LOOP_RC=$?
-    set -e
-    if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
-      bad "slice $sid leftover wm.sh loop process"
-    else
-      ok
-    fi
-    if [ "$LOOP_RC" -eq 0 ] && grep -q 'CLOSED PASS' "$OUT" \
-      && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
-      ok
-    else
-      bad "slice $sid wanted CLOSED PASS rc=0, got rc=$LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
-    fi
-    [ -f .wm/reviewer-ran ] && ok || bad "slice $sid reviewer CLI not exec'd"
-    [ -f .wm/reviewer-reran ] && ok || bad "slice $sid reviewer did not re-run falsifier"
-    [ -f .wm/maker-ran ] && ok || bad "slice $sid maker process did not run"
-    if [ -f .wm/maker-pid ] && [ -f .wm/mapper-pid ]; then
-      mkp=$(awk '{print $2}' .wm/maker-pid)
-      mp=$(awk '{print $2}' .wm/mapper-pid)
-      [ "$mkp" != "$mp" ] && ok || bad "maker pid equals mapper pid ($mkp)"
-    else
-      bad "slice $sid maker/mapper pids missing"
-    fi
-    if [ -f .wm/invoke/reviewer.log ] && grep -q 'writer: wm-run' .wm/invoke/reviewer.log; then
-      ok
-    else
-      bad "slice $sid missing invoke.log writer: wm-run"
-    fi
-    mark_slice_closed "$sid"
-    reset_brick
-    walk_n=$((walk_n + 1))
-    slice_i=$((slice_i + 1))
-  done
-
-  [ "$walk_n" -eq 3 ] && ok || bad "wanted 3 CLOSED PASS walks, got $walk_n"
+  set +e
+  "$WM" loop >"$OUT" 2>"$ERR"
+  LOOP_RC=$?
+  set -e
+  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+    bad "leftover wm.sh loop process"
+  else
+    ok
+  fi
+  if [ "$LOOP_RC" -eq 0 ] && grep -q 'CLOSED PASS' "$OUT" \
+    && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+    ok
+  else
+    bad "one wm loop wanted CLOSED PASS rc=0, got rc=$LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+  fi
+  [ -f .wm/reviewer-ran ] && ok || bad "reviewer CLI not exec'd"
+  [ -f .wm/reviewer-reran ] && ok || bad "reviewer did not re-run falsifier"
+  grep -q 'check_alpha' .wm/reviewer-reran 2>/dev/null \
+    && ok || bad 's1 falsifier not re-run'
+  grep -q 'check_beta' .wm/reviewer-reran 2>/dev/null \
+    && ok || bad 's2 falsifier not re-run'
+  grep -q 'test_seam' .wm/reviewer-reran 2>/dev/null \
+    && ok || bad 's3 falsifier not re-run'
+  [ -f .wm/maker-ran ] && ok || bad "maker process did not run"
+  grep -q ' s1$' .wm/maker-ran 2>/dev/null && ok || bad 's1 maker did not run'
+  grep -q ' s2$' .wm/maker-ran 2>/dev/null && ok || bad 's2 maker did not run'
+  grep -q ' s3$' .wm/maker-ran 2>/dev/null && ok || bad 's3 maker did not run'
+  if [ -f .wm/maker-pid ] && [ -f .wm/mapper-pid ]; then
+    mkp=$(awk '{print $2}' .wm/maker-pid)
+    mp=$(awk '{print $2}' .wm/mapper-pid)
+    [ "$mkp" != "$mp" ] && ok || bad "maker pid equals mapper pid ($mkp)"
+  else
+    bad "maker/mapper pids missing"
+  fi
+  if [ -f .wm/invoke/reviewer.log ] && grep -q 'writer: wm-run' .wm/invoke/reviewer.log; then
+    ok
+  else
+    bad "missing invoke.log writer: wm-run"
+  fi
   grep -q 'return "alpha"' pkg/alpha/api.py && ok || bad 's1 did not land alpha ping'
   grep -q 'return "beta"' pkg/beta/api.py && ok || bad 's2 did not land beta pong'
   [ -f tests/test_seam.py ] && ok || bad 's3 did not land tests/test_seam.py'
@@ -590,6 +573,10 @@ EOF
   fi
   closed_rows=$(awk -F '\t' 'NR>1 && $6=="CLOSED" {c++} END{print c+0}' slices.tsv)
   [ "$closed_rows" -eq 3 ] && ok || bad "slices.tsv CLOSED rows wanted 3, got $closed_rows"
+  grep -q 'NEXT SLICE s2' "$OUT" \
+    && ok || bad 'one wm loop must emit NEXT SLICE s2 after s1'
+  grep -q 'NEXT SLICE s3' "$OUT" \
+    && ok || bad 'one wm loop must emit NEXT SLICE s3 after s2'
   walk_rc=0
   cd "$HERE"
 fi

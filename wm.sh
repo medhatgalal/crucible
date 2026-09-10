@@ -875,7 +875,70 @@ high_kinds_ok() {
   [ "$_hk_mk" != "$_hk_rk" ]
 }
 
+slice_risk() {
+  _sr_id=$1
+  [ -n "$_sr_id" ] && [ -f slices.tsv ] || return 0
+  awk -F '\t' -v id="$_sr_id" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        c = trim($i)
+        if (c == "id") hid = i
+        if (c == "risk") hr = i
+      }
+      next
+    }
+    hid && hr && trim($hid) == id { print trim($hr); exit }
+  ' slices.tsv
+}
+
+slice_module() {
+  _smod_id=$1
+  [ -n "$_smod_id" ] && [ -f slices.tsv ] || return 0
+  awk -F '\t' -v id="$_smod_id" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        c = trim($i)
+        if (c == "id") hid = i
+        if (c == "module") hm = i
+      }
+      next
+    }
+    hid && hm && trim($hid) == id { print trim($hm); exit }
+  ' slices.tsv
+}
+
+slice_needs_human_sign() {
+  _snhs_id=$1
+  [ -n "$_snhs_id" ] || return 1
+  _snhs_risk=$(slice_risk "$_snhs_id")
+  if [ "$_snhs_risk" = HIGH ]; then
+    return 0
+  fi
+  _snhs_mod=$(slice_module "$_snhs_id")
+  _snhs_lw=$(module_live_write "$_snhs_mod")
+  if [ "$_snhs_lw" = yes ]; then
+    return 0
+  fi
+  return 1
+}
+
 map_needs_human_sign() {
+  _nh_sid=$(first_ready_slice)
+  if [ -z "$_nh_sid" ] && [ -f "$WM/slice-in-flight" ]; then
+    _nh_sid=$(kv_get "$WM/slice-in-flight" id)
+  fi
+  if [ -n "$_nh_sid" ]; then
+    slice_needs_human_sign "$_nh_sid"
+    return $?
+  fi
   _nh_rows=
   if [ -f slices.tsv ]; then
     _nh_rows=$(awk -F '\t' '
@@ -921,6 +984,16 @@ first_ready_slice() {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
       return s
     }
+    function deps_ready(dep,    n, a, i, t) {
+      if (dep == "-" || dep == "") return 1
+      n = split(dep, a, ",")
+      for (i = 1; i <= n; i++) {
+        t = trim(a[i])
+        if (t == "" || t == "-") continue
+        if (status[t] != "CLOSED") return 0
+      }
+      return 1
+    }
     NR == 1 {
       for (i = 1; i <= NF; i++) {
         c = trim($i)
@@ -931,20 +1004,31 @@ first_ready_slice() {
       next
     }
     hid && hs {
-      st = trim($hs)
-      dep = hd ? trim($hd) : "-"
-      if (st == "READY" && (dep == "-" || dep == "")) {
-        print trim($hid)
-        exit
+      n++
+      order[n] = trim($hid)
+      status[order[n]] = trim($hs)
+      deps[order[n]] = hd ? trim($hd) : "-"
+    }
+    END {
+      for (i = 1; i <= n; i++) {
+        id = order[i]
+        if (status[id] == "READY" && deps_ready(deps[id])) {
+          print id
+          exit
+        }
       }
     }
   ' slices.tsv
 }
 
-slice_risk() {
-  _sr_id=$1
-  [ -n "$_sr_id" ] && [ -f slices.tsv ] || return 0
-  awk -F '\t' -v id="$_sr_id" '
+mark_slice_status() {
+  _mss_id=$1
+  _mss_st=$2
+  [ -n "$_mss_id" ] && [ -n "$_mss_st" ] || return 0
+  [ -f slices.tsv ] || return 0
+  ensure_wm
+  _mss_tmp="$WM/.slices.tsv.$$"
+  awk -F '\t' -v id="$_mss_id" -v st="$_mss_st" 'BEGIN { OFS="\t" }
     function trim(s) {
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
       return s
@@ -953,12 +1037,29 @@ slice_risk() {
       for (i = 1; i <= NF; i++) {
         c = trim($i)
         if (c == "id") hid = i
-        if (c == "risk") hr = i
+        if (c == "status") hs = i
       }
+      print
       next
     }
-    hid && hr && trim($hid) == id { print trim($hr); exit }
-  ' slices.tsv
+    hid && hs && trim($hid) == id { $hs = st }
+    { print }
+  ' slices.tsv > "$_mss_tmp"
+  mv "$_mss_tmp" slices.tsv
+}
+
+# Clear one brick's receipts so the next READY slice can start. Same set as
+# the 1.7.0 blank-home harness reset; slice-close is not work-close.
+reset_brick() {
+  ensure_wm
+  rm -f "$WM/CLOSED" "$WM/FALSIFIER" "$WM/FALSIFIER.meta" "$WM/FALSIFIER.sha256" \
+    "$WM/red.status" "$WM/red.out" "$WM/built.status" "$WM/built.reason" \
+    "$WM/green.status" "$WM/green.out" "$WM/pre-falsify-wid" "$WM/pre-build-wid" \
+    "$WM/last-maker-run" "$WM/reviewer-ran" "$WM/slice-in-flight" \
+    "$WM/dispatch" "$WM/worker.out" "$WM/worker.err"
+  rm -rf "$WM/verdicts" "$WM/return" "$WM/invoke" "$WM/spawn" "$WM/briefs" "$WM/evidence"
+  mkdir -p "$WM/verdicts" "$WM/return" "$WM/return/history" "$WM/invoke" "$WM/spawn" \
+    "$WM/briefs" "$WM/evidence"
 }
 
 materialize_slices() {
@@ -1553,8 +1654,11 @@ cmd_next() {
     return 0
   fi
   if closed_is_closeable; then
-    say DONE
-    return 0
+    _nx_more=$(first_ready_slice)
+    if [ -z "$_nx_more" ]; then
+      say DONE
+      return 0
+    fi
   fi
   if spec_committed && [ ! -f "$WM/pre-falsify-wid" ]; then
     say "NEXT RECORD PRE-FALSIFY"
@@ -1721,8 +1825,9 @@ cmd_run() {
 }
 
 cmd_loop() {
-  # Foreground walker: consume next until CLOSE / STOP-ASK / ESCALATE.
-  # One slice in flight. Exec PANEL commands as children; wait on exit.
+  # Foreground walker: consume next until work-level CLOSE / STOP-ASK / ESCALATE.
+  # One slice in flight. After a closeable brick, mark that slice CLOSED and
+  # continue remaining READY slices (deps satisfied). Exec PANEL as children.
   [ -x "$PWD/$WM/bin/wm" ] || die "missing .wm/bin/wm (run wm init)"
   WM_BIN="$PWD/$WM/bin/wm"
   PATH="$PWD/$WM/bin:$PATH"
@@ -1741,8 +1846,11 @@ cmd_loop() {
       exit 1
     fi
     if closed_is_closeable; then
-      cat "$WM/CLOSED"
-      exit 0
+      _lp_more=$(first_ready_slice)
+      if [ -z "$_lp_more" ]; then
+        cat "$WM/CLOSED"
+        exit 0
+      fi
     fi
     _lp_card=$("$WM_BIN" next) || exit 1
     _lp_card=$(printf '%s\n' "$_lp_card" | awk 'NF { print; exit }')
@@ -1758,6 +1866,7 @@ cmd_loop() {
           say "STOP-ASK one slice in flight ($_lp_slice)"
           exit 1
         fi
+        say "$_lp_card"
         _lp_slice=$_lp_sid
         ensure_wm
         printf 'id: %s\n' "$_lp_sid" > "$WM/slice-in-flight"
@@ -1824,12 +1933,26 @@ cmd_loop() {
           say "STOP-ASK ARCH"
           exit 1
         fi
+        if [ -n "$_lp_slice" ]; then
+          mark_slice_status "$_lp_slice" CLOSED
+        fi
+        _lp_next=$(first_ready_slice)
+        if [ -n "$_lp_next" ]; then
+          reset_brick
+          _lp_ran_reviewer=0
+          _lp_slice=
+          continue
+        fi
+        cat "$WM/CLOSED"
         exit 0
         ;;
       DONE)
         if closed_is_closeable; then
-          cat "$WM/CLOSED"
-          exit 0
+          _lp_more=$(first_ready_slice)
+          if [ -z "$_lp_more" ]; then
+            cat "$WM/CLOSED"
+            exit 0
+          fi
         fi
         say "STOP-ASK DONE without closeable CLOSED"
         exit 1

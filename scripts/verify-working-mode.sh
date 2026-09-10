@@ -334,6 +334,130 @@ closed_pass_present() {
   return 1
 }
 
+# Task 1 (A1–A4): multi-slice walker fixtures. Script must not rewrite slices.tsv
+# or rm .wm/CLOSED around wm loop.
+write_multi_spec() {
+  cat > SPEC.md <<'EOF'
+## Goal
+tiny throwaway product files a.txt b.txt c.txt
+## Non-goals
+live systems
+## Owned files
+- a.txt
+- b.txt
+- c.txt
+## Test files
+- (none)
+## Acceptance criteria
+- a.txt b.txt c.txt exist
+## Focused falsifier
+MAKER-WRITES
+## Stop conditions
+stop-ask on live write
+## Risk
+LOW
+SPEC-AUTHOR: operator
+EOF
+}
+
+plant_map_accept_slices() {
+  mkdir -p .wm
+  printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\nwhen: 0\n' > .wm/map-verdict
+  printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > slices.tsv
+  cat >> slices.tsv
+}
+
+write_multi_maker() {
+  mkdir -p tools
+  cat > tools/multi-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+role=
+if [ -f .wm/dispatch ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' .wm/dispatch)
+fi
+if [ -z "$role" ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' "$BRIEF")
+fi
+sid=
+if [ -f .wm/slice-in-flight ]; then
+  sid=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/slice-in-flight)
+fi
+printf 'ran %s %s\n' "$role" "$sid" >> .wm/maker-ran
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  fi
+}
+if [ "$role" = maker-build ]; then
+  case $sid in
+    s1)
+      printf 'alpha\n' > a.txt
+      git add a.txt
+      git commit -qm maker-build-s1
+      ;;
+    s2)
+      printf 'beta\n' > b.txt
+      git add b.txt
+      git commit -qm maker-build-s2
+      ;;
+    s3)
+      printf 'seam\n' > c.txt
+      git add c.txt
+      git commit -qm maker-build-s3
+      ;;
+    *)
+      printf 'unknown slice %s\n' "$sid" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+mkdir -p .wm
+case $sid in
+  s1) printf 'test -f a.txt\n' > .wm/FALSIFIER ;;
+  s2) printf 'test -f b.txt\n' > .wm/FALSIFIER ;;
+  s3) printf 'test -f c.txt\n' > .wm/FALSIFIER ;;
+  *)
+    printf 'unknown slice %s\n' "$sid" >&2
+    exit 1
+    ;;
+esac
+h=$(sha_of .wm/FALSIFIER)
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+  chmod +x tools/multi-maker.sh
+}
+
+write_multi_reviewer() {
+  mkdir -p tools
+  cat > tools/multi-reviewer.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+cmd=$(sed -n '1p' .wm/FALSIFIER)
+ev=$(.wm/bin/wm evidence bob -- sh -c "$cmd")
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/multi-reviewer.sh
+}
+
+cast_multi_panel() {
+  write_multi_maker
+  write_multi_reviewer
+  "$WM" cast maker alice grok './tools/multi-maker.sh {BRIEF}' >/dev/null
+  "$WM" cast reviewer bob grok './tools/multi-reviewer.sh {BRIEF}' >/dev/null
+}
+
 # ---------------------------------------------------------------------------
 # (1) SPEC ## Focused falsifier must be exactly MAKER-WRITES
 # ---------------------------------------------------------------------------
@@ -1300,6 +1424,216 @@ else
 fi
 if [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
   bad 'multi-line close must not write CLOSED PASS'
+else
+  ok
+fi
+
+# ---------------------------------------------------------------------------
+# Task 1: multi-slice walker (A1–A5). One wm loop; no harness slices.tsv rewrite.
+# ---------------------------------------------------------------------------
+
+# first_ready_slice: depends_on tokens split on comma; parent status must be CLOSED
+setup_repo t-a1-deps-comma
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	CLOSED
+s2	beta	b.txt	-	LOW	CLOSED
+s3	seam	c.txt	s1,s2	LOW	READY
+EOF
+commit_msg 'A1 comma deps'
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s3$' \
+    && ok || bad "A1 comma deps: next wanted NEXT SLICE s3, got $card"
+else
+  bad "A1 comma deps: next refused $(cat "$ERR")"
+fi
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	CLOSED
+s2	beta	b.txt	-	LOW	READY
+s3	seam	c.txt	s1,s2	LOW	READY
+EOF
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s2$' \
+    && ok || bad "A1 comma deps blocked: next wanted NEXT SLICE s2, got $card"
+  printf '%s\n' "$card" | grep -q 'NEXT SLICE s3' \
+    && bad "A1 comma deps: s3 must wait for s2 CLOSED (got $card)" || ok
+else
+  bad "A1 comma deps blocked: next refused $(cat "$ERR")"
+fi
+
+setup_repo t-a1-deps-chain
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	CLOSED
+s2	beta	b.txt	s1	LOW	READY
+s3	seam	c.txt	s2	LOW	READY
+EOF
+commit_msg 'A1 chain deps'
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s2$' \
+    && ok || bad "A1 chain: next wanted NEXT SLICE s2 after s1 CLOSED, got $card"
+else
+  bad "A1 chain: next refused $(cat "$ERR")"
+fi
+
+# (A1) three LOW slices, s2 depends_on=s1, s3 depends_on=s2; ONE wm loop
+setup_repo t-a1-walk
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	READY
+s2	beta	b.txt	s1	LOW	READY
+s3	seam	c.txt	s2	LOW	READY
+EOF
+cast_multi_panel
+commit_msg 'A1 three-slice workers'
+slices_before=$(cat slices.tsv)
+run_wm_loop
+assert_loop_foreground 't-a1-walk'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "A1 walk exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "A1 walk wanted work-level CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+closed_rows=$(awk -F '\t' 'NR>1 && $6=="CLOSED" {c++} END{print c+0}' slices.tsv)
+[ "$closed_rows" -eq 3 ] && ok || bad "A1 walk slices.tsv CLOSED rows wanted 3, got $closed_rows ($(cat slices.tsv))"
+grep -q '^alpha$' a.txt && ok || bad 'A1 walk s1 did not land a.txt'
+grep -q '^beta$' b.txt && ok || bad 'A1 walk s2 did not land b.txt'
+grep -q '^seam$' c.txt && ok || bad 'A1 walk s3 did not land c.txt'
+# harness must not have rewritten slices.tsv except via the kernel
+if printf '%s\n' "$slices_before" | grep -q 'READY' && [ "$closed_rows" -eq 3 ]; then
+  ok
+else
+  bad 'A1 walk: slices.tsv was not closed by the kernel'
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'A1 walk missing reviewer exec on last brick'
+
+# (A2) planted CLOSED before loop must not CLOSED PASS / exit 0 without reviewer
+setup_repo t-a2-planted
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	READY
+s2	beta	b.txt	s1	LOW	READY
+s3	seam	c.txt	s2	LOW	READY
+EOF
+commit_msg 'A2 planted CLOSED'
+printf 'CLOSED PASS\n' > .wm/CLOSED
+run_wm_loop
+assert_loop_foreground 't-a2-planted'
+if grep -q 'CLOSED PASS' "$OUT"; then
+  bad "A2 planted .wm/CLOSED must not make loop print CLOSED PASS (out=$(cat "$OUT") rc=$LOOP_RC)"
+else
+  ok
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'A2 planted CLOSED loop must not exit 0'
+[ -f .wm/reviewer-ran ] && bad 'A2 planted CLOSED must not count as reviewer exec' || ok
+
+# (A3) after honest s1, plant CLOSED during s2 brick — s2 must not CLOSED PASS without reviewer
+setup_repo t-a3-plant-s2
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	READY
+s2	beta	b.txt	s1	LOW	READY
+EOF
+mkdir -p tools
+cat > tools/a3-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+role=
+if [ -f .wm/dispatch ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' .wm/dispatch)
+fi
+if [ -z "$role" ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' "$BRIEF")
+fi
+sid=
+if [ -f .wm/slice-in-flight ]; then
+  sid=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/slice-in-flight)
+fi
+printf 'ran %s %s\n' "$role" "$sid" >> .wm/maker-ran
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  fi
+}
+if [ "$role" = maker-build ]; then
+  printf 'alpha\n' > a.txt
+  git add a.txt
+  git commit -qm maker-build-s1
+  exit 0
+fi
+mkdir -p .wm
+if [ "$sid" = s2 ]; then
+  printf 'test -f b.txt\n' > .wm/FALSIFIER
+  h=$(sha_of .wm/FALSIFIER)
+  wid=$(git rev-parse --short=12 HEAD)
+  printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+  printf 'CLOSED PASS\n' > .wm/CLOSED
+  exit 0
+fi
+printf 'test -f a.txt\n' > .wm/FALSIFIER
+h=$(sha_of .wm/FALSIFIER)
+wid=$(git rev-parse --short=12 HEAD)
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+write_multi_reviewer
+chmod +x tools/a3-maker.sh
+"$WM" cast maker alice grok './tools/a3-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/multi-reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'A3 plant CLOSED on s2'
+run_wm_loop
+assert_loop_foreground 't-a3-plant-s2'
+s2st=$(awk -F '\t' '$1=="s2"{print $6; exit}' slices.tsv)
+[ "$s2st" != CLOSED ] && ok || bad "A3 s2 must not be CLOSED without reviewer exec (status=$s2st)"
+[ "$LOOP_RC" -ne 0 ] && ok || bad "A3 planted CLOSED during s2 must not exit 0 (out=$(cat "$OUT"))"
+if grep -q ' s2$' .wm/maker-ran 2>/dev/null && [ "$s2st" = CLOSED ] && [ ! -f .wm/reviewer-ran ]; then
+  bad 'A3 s2 CLOSED PASS skipped reviewer'
+else
+  ok
+fi
+
+# (A4) s1 LOW then s2 HIGH unsigned: STOP-ASK after s1; s2 maker not exec'd
+setup_repo t-a4-high-unsigned
+write_multi_spec
+plant_map_accept_slices <<'EOF'
+s1	alpha	a.txt	-	LOW	READY
+s2	beta	b.txt	s1	HIGH	READY
+EOF
+cast_multi_panel
+rm -f MAP-HUMAN
+commit_msg 'A4 LOW then HIGH unsigned'
+run_wm_loop
+assert_loop_foreground 't-a4-high-unsigned'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -E -q 'STOP-ASK( MAP-HUMAN)?' \
+  && ok || bad "A4 wanted STOP-ASK after s1, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'A4 HIGH unsigned loop must not exit 0'
+s1st=$(awk -F '\t' '$1=="s1"{print $6; exit}' slices.tsv)
+[ "$s1st" = CLOSED ] && ok || bad "A4 s1 should CLOSED before HIGH stop, got $s1st"
+grep -q '^alpha$' a.txt && ok || bad 'A4 s1 did not land a.txt'
+if grep -q ' s2$' .wm/maker-ran 2>/dev/null; then
+  bad 'A4 s2 maker must not be execd'
+else
+  ok
+fi
+if [ -f .wm/FALSIFIER ] && grep -q 'b.txt' .wm/FALSIFIER; then
+  bad 'A4 s2 FALSIFIER must be absent'
+else
+  ok
+fi
+if [ -f MAP-HUMAN ]; then
+  bad 'A4 must not auto-write MAP-HUMAN'
+else
+  ok
+fi
+
+# (A5) blank-home walk must not define mark_slice_closed or reset_brick
+if grep -E -q 'mark_slice_closed\(\)|reset_brick\(\)' \
+  "$HERE/scripts/verify-working-mode-blank-home.sh"; then
+  bad 'A5: blank-home must not define mark_slice_closed or reset_brick'
 else
   ok
 fi
