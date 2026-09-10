@@ -1614,8 +1614,124 @@ cmd_run() {
 }
 
 cmd_loop() {
-  # Foreground stub. Task 6 owns the walker. Must not fork or daemonize.
-  say "LOOP STUB foreground"
+  # Foreground walker: consume next until CLOSE / STOP-ASK / ESCALATE.
+  # One slice in flight. Exec PANEL commands as children; wait on exit.
+  [ -x "$PWD/$WM/bin/wm" ] || die "missing .wm/bin/wm (run wm init)"
+  WM_BIN="$PWD/$WM/bin/wm"
+  PATH="$PWD/$WM/bin:$PATH"
+  export PATH
+  _lp_i=0
+  _lp_ran_reviewer=0
+  _lp_slice=
+  if [ -f "$WM/slice-in-flight" ]; then
+    _lp_slice=$(kv_get "$WM/slice-in-flight" id)
+  fi
+  while :; do
+    _lp_i=$((_lp_i + 1))
+    if [ "$_lp_i" -gt 40 ]; then
+      say "ESCALATE LOOP_BOUND"
+      exit 1
+    fi
+    if [ -f "$WM/CLOSED" ]; then
+      cat "$WM/CLOSED"
+      exit 0
+    fi
+    _lp_card=$("$WM_BIN" next) || exit 1
+    _lp_card=$(printf '%s\n' "$_lp_card" | awk 'NF { print; exit }')
+    case $_lp_card in
+      "NEXT INTAKE"|"NEXT CAST"|"NEXT SPEC"|"NEXT MAP")
+        say "STOP-ASK $_lp_card"
+        exit 1
+        ;;
+      "NEXT SLICE "*)
+        _lp_sid=${_lp_card#NEXT SLICE }
+        [ -n "$_lp_sid" ] || { say "STOP-ASK NEXT SLICE"; exit 1; }
+        if [ -n "$_lp_slice" ] && [ "$_lp_slice" != "$_lp_sid" ]; then
+          say "STOP-ASK one slice in flight ($_lp_slice)"
+          exit 1
+        fi
+        _lp_slice=$_lp_sid
+        ensure_wm
+        printf 'id: %s\n' "$_lp_sid" > "$WM/slice-in-flight"
+        if [ ! -f SPEC.md ]; then
+          say "STOP-ASK SPEC incomplete"
+          exit 1
+        fi
+        "$WM_BIN" record-pre-falsify || exit 1
+        ;;
+      STOP-ASK|STOP-ASK*)
+        say "$_lp_card"
+        exit 1
+        ;;
+      ESCALATE*)
+        say "$_lp_card"
+        exit 1
+        ;;
+      "NEXT RECORD PRE-FALSIFY")
+        "$WM_BIN" record-pre-falsify || exit 1
+        ;;
+      "NEXT RUN maker-falsify")
+        "$WM_BIN" run maker-falsify || exit 1
+        ;;
+      "NEXT RED")
+        set +e
+        "$WM_BIN" red
+        _lp_rc=$?
+        set -e
+        if [ "$_lp_rc" -ne 0 ]; then
+          _lp_n2=$("$WM_BIN" next) || true
+          _lp_n2=$(printf '%s\n' "$_lp_n2" | awk 'NF { print; exit }')
+          case $_lp_n2 in
+            ESCALATE*) say "$_lp_n2"; exit 1 ;;
+            STOP-ASK*) say "$_lp_n2"; exit 1 ;;
+            *) say "STOP-ASK red refused"; exit 1 ;;
+          esac
+        fi
+        ;;
+      "NEXT RUN scout")
+        "$WM_BIN" run scout || exit 1
+        ;;
+      "NEXT RUN maker-build")
+        "$WM_BIN" run maker-build || exit 1
+        ;;
+      "NEXT BUILT")
+        "$WM_BIN" built || exit 1
+        ;;
+      "NEXT GREEN")
+        set +e
+        "$WM_BIN" green
+        set -e
+        ;;
+      "NEXT RUN reviewer")
+        "$WM_BIN" run reviewer || exit 1
+        _lp_ran_reviewer=1
+        ;;
+      "NEXT CLOSE")
+        if [ "$_lp_ran_reviewer" -eq 0 ]; then
+          "$WM_BIN" run reviewer || exit 1
+          _lp_ran_reviewer=1
+        fi
+        "$WM_BIN" close || exit 1
+        exit 0
+        ;;
+      DONE)
+        if [ -f "$WM/CLOSED" ]; then
+          cat "$WM/CLOSED"
+          exit 0
+        fi
+        say "STOP-ASK DONE without CLOSED"
+        exit 1
+        ;;
+      INDEPENDENCE_UNAVAILABLE*)
+        say "$_lp_card"
+        exit 1
+        ;;
+      *)
+        say "STOP-ASK unknown next card: $_lp_card"
+        exit 1
+        ;;
+    esac
+  done
 }
 
 cmd=${1:-}

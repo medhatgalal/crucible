@@ -164,6 +164,132 @@ reach_green() {
   fi
 }
 
+# Fixture maker: falsify then implement. Dispatch role chooses the step.
+write_loop_maker_pass() {
+  mkdir -p tools
+  cat > tools/loop-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+role=
+if [ -f .wm/dispatch ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' .wm/dispatch)
+fi
+if [ -z "$role" ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' "$BRIEF")
+fi
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  fi
+}
+if [ "$role" = maker-build ]; then
+  printf 'built\n' > product.txt
+  git add product.txt
+  git commit -qm maker-build
+  exit 0
+fi
+mkdir -p .wm
+printf 'test -f product.txt\n' > .wm/FALSIFIER
+h=$(sha_of .wm/FALSIFIER)
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+  chmod +x tools/loop-maker.sh
+}
+
+# Fixture reviewer: return WORD only after this CLI is exec'd.
+write_loop_reviewer_pass() {
+  mkdir -p tools
+  cat > tools/loop-reviewer.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/loop-reviewer.sh
+}
+
+write_loop_maker_nobuild() {
+  mkdir -p tools
+  cat > tools/loop-maker-nobuild.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf 'true\n' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+else
+  h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+fi
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+  chmod +x tools/loop-maker-nobuild.sh
+}
+
+write_loop_reviewer_nobuild() {
+  mkdir -p tools
+  cat > tools/loop-reviewer-nobuild.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- true)
+printf 'WORD: NO-BUILD\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/loop-reviewer-nobuild.sh
+}
+
+run_wm_loop() {
+  set +e
+  "$WM" loop >"$OUT" 2>"$ERR"
+  LOOP_RC=$?
+  set -e
+}
+
+assert_loop_foreground() {
+  _alf_label=$1
+  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+    bad "$_alf_label: leftover wm.sh loop process"
+  else
+    ok
+  fi
+  if [ -f .wm/pid ]; then
+    _alf_pid=$(cat .wm/pid)
+    if [ -n "$_alf_pid" ] && kill -0 "$_alf_pid" 2>/dev/null; then
+      bad "$_alf_label: leftover pid $_alf_pid still live"
+    else
+      ok
+    fi
+  else
+    ok
+  fi
+}
+
+closed_pass_present() {
+  if grep -q 'CLOSED PASS' "$OUT" 2>/dev/null; then
+    return 0
+  fi
+  if [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+    return 0
+  fi
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # (1) SPEC ## Focused falsifier must be exactly MAKER-WRITES
 # ---------------------------------------------------------------------------
@@ -510,6 +636,234 @@ else
   ok
 fi
 [ "$loop_rc" -eq 0 ] || [ "$loop_rc" -eq 1 ] && ok || bad "wm loop unexpected exit $loop_rc"
+
+# ---------------------------------------------------------------------------
+# Task 6: terminal walker. Fixture reviewer writes WORD after exec (5c).
+# Stub (LOOP STUB) must fail the honest walk — RED before cmd_loop exists.
+# ---------------------------------------------------------------------------
+
+sh -n "$WM" && ok || bad 'wm.sh is not valid POSIX sh'
+
+# (11) Honest walk: fixture maker + reviewer → CLOSED PASS and reviewer exec
+setup_repo t11-loop-pass
+write_loop_maker_pass
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'loop pass workers'
+run_wm_loop
+assert_loop_foreground 't11-loop-pass'
+if [ "$LOOP_RC" -eq 0 ]; then
+  ok
+else
+  bad "honest wm loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "honest wm loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'honest wm loop did not exec the reviewer CLI'
+[ -f .wm/invoke/reviewer.log ] && grep -q 'writer: wm-run' .wm/invoke/reviewer.log \
+  && ok || bad 'honest wm loop missing invoke.log writer: wm-run'
+if [ -f .wm/last-maker-run ] && [ -f .wm/invoke/reviewer.log ]; then
+  need=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/last-maker-run)
+  got=$(awk -F ': ' '$1=="after-maker"{print $2; exit}' .wm/invoke/reviewer.log)
+  [ -n "$need" ] && [ "$got" = "$need" ] \
+    && ok || bad "honest loop after-maker='$got' != last-maker-run id='$need'"
+else
+  bad 'honest loop missing last-maker-run or invoke/reviewer.log'
+fi
+[ -f .wm/return/bob.md ] && grep -q '^WORD: PASS$' .wm/return/bob.md \
+  && ok || bad 'fixture reviewer did not write WORD: PASS after exec'
+
+# (12) Leftover reviewer receipts after maker-build: still exec reviewer (CHECK 7 via loop)
+setup_repo t12-loop-leftover
+reach_green
+write_loop_reviewer_pass
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+mkdir -p .wm/verdicts .wm/return .wm/invoke .wm/spawn .wm/briefs
+printf 'WORD: PASS\nEVIDENCE: planted\n' > .wm/return/bob.md
+printf 'VERDICT: PASS\nAGENT: bob\nWORK-ID: %s\nEVIDENCE: planted\nINGEST: return\nISOLATION: SUBAGENT-ISOLATED\nMODEL-SWITCH: UNVERIFIED\n' "$("$WM" workid)" > .wm/verdicts/bob.md
+printf 't: 1\nabsent_return: yes\npath: .wm/return/bob.md\nrole: reviewer\nrun-id: leftover.old\n' > .wm/spawn/bob.stamp
+printf 'Read this file and follow it exactly.\nrole: reviewer\nagent: bob\n' > .wm/briefs/reviewer.leftover.md
+printf 'role: reviewer\nagent: bob\nwriter: wm-run\nafter-maker: leftover-old\nISOLATION: SUBAGENT-ISOLATED\n' > .wm/invoke/reviewer.log
+rm -f .wm/reviewer-ran
+run_wm_loop
+assert_loop_foreground 't12-loop-leftover'
+[ -f .wm/reviewer-ran ] && ok || bad 'leftover receipts must not skip reviewer exec'
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/reviewer-ran ]; then
+  ok
+else
+  bad "leftover-receipts loop wanted CLOSED PASS after reviewer exec, got out=$(cat "$OUT") ran=$(test -f .wm/reviewer-ran && echo yes || echo no)"
+fi
+
+# (13) Named cheat: planted matching receipts after maker-build must not CLOSED PASS
+# without exec'ing the reviewer (echo CLI writes no WORD). Evidence is recorded
+# under a planted reviewer dispatch so next is NEXT CLOSE (same-uid residual shape).
+setup_repo t13-loop-planted
+reach_green
+"$WM" cast reviewer bob grok 'sh -c "echo reviewer {BRIEF}"' >/dev/null
+mkdir -p .wm/verdicts .wm/return .wm/invoke .wm/spawn .wm/briefs
+printf 'role: reviewer\nagent: bob\n' > .wm/dispatch
+ev=$("$WM" evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+rm -f .wm/dispatch
+need=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/last-maker-run)
+t=$(date +%s)
+runid="${t}.planted"
+printf 't: %s\nabsent_return: yes\npath: .wm/return/bob.md\nrole: reviewer\nrun-id: %s\n' "$t" "$runid" > .wm/spawn/bob.stamp
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+wid=$("$WM" workid)
+printf 'Read this file and follow it exactly.\nrole: reviewer\nagent: bob\n' > ".wm/briefs/reviewer.${wid}.md"
+{
+  printf 'VERDICT: PASS\n'
+  printf 'AGENT: bob\n'
+  printf 'WORK-ID: %s\n' "$wid"
+  printf 'EVIDENCE: %s\n' "$ev"
+  printf 'INGEST: return\n'
+  printf 'RUN-ID: %s\n' "$runid"
+  printf 'ISOLATION: SUBAGENT-ISOLATED\n'
+  printf 'MODEL-SWITCH: UNVERIFIED\n'
+} > .wm/verdicts/bob.md
+printf 'role: reviewer\nagent: bob\nwriter: wm-run\nafter-maker: %s\nISOLATION: SUBAGENT-ISOLATED\n' "$need" > .wm/invoke/reviewer.log
+card=$("$WM" next)
+printf '%s\n' "$card" | grep -q 'NEXT CLOSE' \
+  && ok || bad "planted matching receipts should look closeable to next (got $card)"
+run_wm_loop
+assert_loop_foreground 't13-loop-planted'
+if closed_pass_present; then
+  bad "planted receipts after maker-build must not CLOSED PASS (out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT))"
+else
+  ok
+fi
+[ -f .wm/reviewer-ran ] && bad 'echo reviewer must not have been a PASS exec' || ok
+
+# (14) Loopfull via wm loop: maker-build forges judge artifacts; no CLOSED PASS
+setup_repo t14-loopfull-loop
+mkdir -p tools
+cat > tools/loopfull-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+if [ ! -f .wm/FALSIFIER ]; then
+  printf 'test -f product.txt\n' > .wm/FALSIFIER
+  if command -v sha256sum >/dev/null 2>&1; then
+    h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+  else
+    h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+  fi
+  printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$(git rev-parse --short=12 HEAD)" "$h" > .wm/FALSIFIER.meta
+  exit 0
+fi
+printf 'built\n' > product.txt
+git add product.txt
+git commit -qm maker-build
+mkdir -p .wm/spawn .wm/return .wm/briefs .wm/verdicts .wm/invoke
+printf 'role: reviewer\nagent: bob\n' > .wm/dispatch
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+t=$(date +%s)
+runid="${t}.forged"
+printf 't: %s\nabsent_return: yes\npath: .wm/return/bob.md\nrole: reviewer\nrun-id: %s\n' "$t" "$runid" > .wm/spawn/bob.stamp
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+wid=$(git rev-parse --short=12 HEAD)
+printf 'Read this file and follow it exactly.\nrole: reviewer\nagent: bob\n' > ".wm/briefs/reviewer.${wid}.md"
+printf 'VERDICT: PASS\nAGENT: bob\nWORK-ID: %s\nEVIDENCE: %s\nINGEST: return\nRUN-ID: %s\nISOLATION: SUBAGENT-ISOLATED\nMODEL-SWITCH: UNVERIFIED\n' "$wid" "$ev" "$runid" > .wm/verdicts/bob.md
+printf 'role: reviewer\nagent: bob\nwriter: wm-run\nafter-maker: forged\n' > .wm/invoke/reviewer.log
+EOF
+cat > tools/rev-should-not.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+chmod +x tools/loopfull-maker.sh tools/rev-should-not.sh
+"$WM" cast maker alice grok './tools/loopfull-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/rev-should-not.sh {BRIEF}' >/dev/null
+commit_msg 'loopfull workers'
+run_wm_loop
+assert_loop_foreground 't14-loopfull-loop'
+if closed_pass_present; then
+  bad 'loopfull via wm loop must not CLOSED PASS'
+else
+  ok
+fi
+if [ -f .wm/reviewer-ran ]; then
+  bad 'loopfull via wm loop must not exec reviewer (REVIEWER_RAN present)'
+else
+  ok
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'loopfull via wm loop must not exit 0'
+grep -q 'maker wrote judge artifacts' "$ERR" || grep -q '^refused:' "$ERR" \
+  && ok || bad "loopfull via wm loop expected refused: (err=$(cat "$ERR"))"
+
+# (15) 2c: loop must not bypass live/push-main/rm -rf guards
+setup_repo t15-loop-push
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'git push origin main' alice
+commit_msg 'loop push falsifier'
+run_wm_loop
+assert_loop_foreground 't15-loop-push'
+if closed_pass_present; then
+  bad 'loop must not CLOSED PASS on push-main falsifier'
+else
+  ok
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'loop push-main must not exit 0'
+grep -E -q 'refused:|STOP-ASK|push-main' "$ERR" "$OUT" \
+  && ok || bad "loop push-main expected refuse/STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+
+setup_repo t15-loop-rm
+sentinel="$BASE/t15-loop-sentinel"
+mkdir -p "$sentinel/keep"
+printf 'keep\n' > "$sentinel/keep/file"
+"$WM" record-pre-falsify >/dev/null
+write_falsifier "rm -rf $sentinel" alice
+commit_msg 'loop rm falsifier'
+run_wm_loop
+assert_loop_foreground 't15-loop-rm'
+[ -f "$sentinel/keep/file" ] && ok || bad 'loop execd rm -rf (sentinel gone)'
+if closed_pass_present; then
+  bad 'loop must not CLOSED PASS on rm -rf falsifier'
+else
+  ok
+fi
+
+# (16) ESCALATE EARLY_IMPLEMENT is terminal (no wait)
+setup_repo t16-loop-escalate
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'true' alice
+printf 'early product\n' > product.txt
+commit_msg 'loop early product'
+run_wm_loop
+assert_loop_foreground 't16-loop-escalate'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'ESCALATE' \
+  && ok || bad "loop early-implement wanted ESCALATE, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'loop ESCALATE must not exit 0'
+if closed_pass_present; then
+  bad 'loop ESCALATE must not CLOSED PASS'
+else
+  ok
+fi
+
+# (17) CLOSED NO-BUILD still requires reviewer exec
+setup_repo t17-loop-nobuild
+write_loop_maker_nobuild
+write_loop_reviewer_nobuild
+"$WM" cast maker alice grok './tools/loop-maker-nobuild.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer-nobuild.sh {BRIEF}' >/dev/null
+commit_msg 'loop nobuild workers'
+run_wm_loop
+assert_loop_foreground 't17-loop-nobuild'
+if grep -q 'CLOSED NO-BUILD' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED NO-BUILD' .wm/CLOSED; then
+  ok
+else
+  bad "nobuild loop wanted CLOSED NO-BUILD, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'nobuild loop did not exec the reviewer CLI'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "nobuild loop exit $LOOP_RC err=$(cat "$ERR")"
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

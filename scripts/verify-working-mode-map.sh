@@ -439,6 +439,70 @@ cast_brick_panel() {
   "$WM" cast reviewer "$_cbp_rev" "$_cbp_rkind" 'sh -c "echo reviewer {BRIEF}"' >"$OUT" 2>"$ERR"
 }
 
+# Fixture brick workers for a map-accepted slice walk (Task 6).
+write_map_loop_brick() {
+  mkdir -p tools
+  cat > tools/map-loop-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+role=
+if [ -f .wm/dispatch ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' .wm/dispatch)
+fi
+if [ -z "$role" ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  role=$(awk -F ': ' '$1=="role"{print $2; exit}' "$BRIEF")
+fi
+sha_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  fi
+}
+if [ "$role" = maker-build ]; then
+  printf '\nWM-SLICE\n' >> src/widget/api.py
+  git add src/widget/api.py
+  git commit -qm maker-build
+  exit 0
+fi
+mkdir -p .wm
+printf 'grep -q WM-SLICE src/widget/api.py\n' > .wm/FALSIFIER
+h=$(sha_of .wm/FALSIFIER)
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: carol\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+  cat > tools/map-loop-reviewer.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence dave -- sh -c 'echo grep -q WM-SLICE src/widget/api.py; grep -q WM-SLICE src/widget/api.py')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/dave.md
+EOF
+  chmod +x tools/map-loop-maker.sh tools/map-loop-reviewer.sh
+}
+
+run_map_loop() {
+  set +e
+  "$WM" loop >"$OUT" 2>"$ERR"
+  LOOP_RC=$?
+  set -e
+}
+
+assert_map_loop_foreground() {
+  _mlf=$1
+  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+    bad "$_mlf: leftover wm.sh loop process"
+  else
+    ok
+  fi
+}
+
 plant_map_accept() {
   mkdir -p .wm
   printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/map-verdict
@@ -966,13 +1030,129 @@ printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
 impl_ok 'live + MAP-HUMAN + same kind can start maker (3d is HIGH-only)' \
   "$WM" run maker-falsify || true
 
-# Task 6 owns the walker; cadence must not turn loop into a daemon.
-if out=$("$WM" loop 2>"$ERR"); then
-  printf '%s\n' "$out" | grep -q 'LOOP STUB' \
-    && ok || bad "wm loop must stay a foreground stub, got $out"
+# Task 6 walker: STOP-ASK / ESCALATE / CLOSE are terminal; no leftover processes.
+# t-live-signed already ran maker-falsify (true); walker may stop at echo reviewer.
+set +e
+"$WM" loop >"$OUT" 2>"$ERR"
+loop_rc=$?
+set -e
+if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+  bad 'wm loop left a leftover wm.sh loop process'
 else
-  bad "wm loop stub refused: $(cat "$ERR")"
+  ok
 fi
+if [ "$loop_rc" -eq 0 ] || [ "$loop_rc" -eq 1 ]; then
+  ok
+else
+  bad "wm loop unexpected exit $loop_rc"
+fi
+printf '%s\n' "$(cat "$OUT")" | grep -q 'LOOP STUB' \
+  && bad 'wm loop is still LOOP STUB (Task 6 walker missing)' || ok
+
+# STOP-ASK MAP-HUMAN is terminal — do not background-wait for a human.
+setup_map_repo t-loop-map-human
+write_architecture_fixture alice HIGH no
+impl_ok 'record-mapper loop MAP-HUMAN' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop MAP-HUMAN' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict loop MAP-HUMAN' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok claude
+rm -f MAP-HUMAN .wm/FALSIFIER
+write_spec_fit
+git add -A
+git commit -qm 'spec for HIGH unsigned loop' >/dev/null
+run_map_loop
+assert_map_loop_foreground 't-loop-map-human'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK MAP-HUMAN' \
+  && ok || bad "HIGH unsigned loop wanted STOP-ASK MAP-HUMAN, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'STOP-ASK MAP-HUMAN loop must not exit 0'
+if [ -f .wm/FALSIFIER ]; then
+  bad 'STOP-ASK MAP-HUMAN loop must not start maker'
+else
+  ok
+fi
+if [ -f .wm/CLOSED ]; then
+  bad 'STOP-ASK MAP-HUMAN loop must not write CLOSED'
+else
+  ok
+fi
+
+# NEXT MAP is terminal (do not invent a map).
+setup_map_repo t-loop-next-map
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper loop NEXT MAP' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop NEXT MAP' "$WM" map-ready || true
+write_map_return bob MAP-REVISE
+impl_ok 'map-verdict loop REVISE' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+run_map_loop
+assert_map_loop_foreground 't-loop-next-map'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "MAP-REVISE loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'NEXT MAP loop must not exit 0'
+
+# HIGH + one kind: STOP-ASK (3d), terminal.
+setup_map_repo t-loop-high-one-kind
+write_architecture_fixture alice HIGH no
+impl_ok 'record-mapper loop HIGH one-kind' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop HIGH one-kind' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict loop HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+run_map_loop
+assert_map_loop_foreground 't-loop-high-one-kind'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
+  && ok || bad "HIGH one-kind loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'CROSS-FAMILY' \
+  && bad 'HIGH one-kind loop must not fake CROSS-FAMILY' || ok
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'HIGH one-kind loop must not exit 0'
+
+# Honest LOW map: NEXT SLICE then brick walk to CLOSED PASS (one slice in flight).
+setup_map_repo t-loop-slice-pass
+write_architecture_fixture alice LOW no
+cat > MAP.md <<'EOF'
+MAPPER: alice
+
+id	module	owned_paths	depends_on	risk
+s1	widget	src/widget/api.py	-	LOW
+s2	widget	src/widget/api.py	s1	LOW
+EOF
+impl_ok 'record-mapper loop slice' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop slice' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict loop slice' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+write_map_loop_brick
+"$WM" cast maker carol grok './tools/map-loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/map-loop-reviewer.sh {BRIEF}' >/dev/null
+git add -A
+git commit -qm 'spec map loop workers' >/dev/null
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
+    && ok || bad "map loop next must emit NEXT SLICE s1, got $card"
+else
+  bad "map loop next refused: $(cat "$ERR")"
+fi
+run_map_loop
+assert_map_loop_foreground 't-loop-slice-pass'
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "map loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'map loop did not exec the reviewer CLI'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "map loop exit $LOOP_RC err=$(cat "$ERR")"
+if [ -f .wm/slice-in-flight ]; then
+  grep -q 's1' .wm/slice-in-flight \
+    && ok || bad "slice-in-flight must be s1, got $(cat .wm/slice-in-flight)"
+else
+  ok
+fi
+# s2 depends on s1 — walker must not start a second slice after CLOSED
+printf '%s\n' "$(cat "$OUT")" | grep -q 'NEXT SLICE s2' \
+  && bad 'one slice in flight: loop must not emit NEXT SLICE s2' || ok
+grep -q 'WM-SLICE' src/widget/api.py && ok || bad 'map loop maker-build did not land'
 
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
