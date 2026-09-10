@@ -775,7 +775,30 @@ module_live_write() {
 map_word_recorded() { kv_get "$WM/map-verdict" WORD; }
 
 human_sign_present() {
-  [ -f MAP-HUMAN ] && [ -s MAP-HUMAN ]
+  [ -f MAP-HUMAN ] || return 1
+  _hs_who=$(kv_get MAP-HUMAN SIGNED)
+  _hs_who=$(printf '%s\n' "$_hs_who" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }')
+  [ -n "$_hs_who" ] || return 1
+  case $_hs_who in
+    parent|coordinator|loop|mapper|maker|reviewer|-|'') return 1 ;;
+  esac
+  _hs_mapper=$(mapper_id)
+  if [ -n "$_hs_mapper" ] && [ "$_hs_who" = "$_hs_mapper" ]; then
+    return 1
+  fi
+  _hs_maker=$(panel_agent maker)
+  if [ -n "$_hs_maker" ] && [ "$_hs_maker" != - ] && [ "$_hs_who" = "$_hs_maker" ]; then
+    return 1
+  fi
+  _hs_rev=$(panel_agent reviewer)
+  if [ -n "$_hs_rev" ] && [ "$_hs_rev" != - ] && [ "$_hs_who" = "$_hs_rev" ]; then
+    return 1
+  fi
+  _hs_map=$(kv_get MAP-HUMAN MAP)
+  _hs_map=$(printf '%s\n' "$_hs_map" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }')
+  [ -n "$_hs_map" ] || return 1
+  [ -f "$_hs_map" ] || return 1
+  return 0
 }
 
 high_kinds_ok() {

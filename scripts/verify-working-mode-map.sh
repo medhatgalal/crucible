@@ -697,6 +697,10 @@ kernel_fn_calls cmd_map_verdict cmd_check_module_fit \
 require_file "$HERE/docs/working-mode.md" 'docs/working-mode.md missing'
 require_fgrep "$HERE/docs/working-mode.md" 'MAP-HUMAN' \
   'docs/working-mode.md must name MAP-HUMAN (8c)'
+require_fgrep "$HERE/docs/working-mode.md" 'SIGNED:' \
+  'docs/working-mode.md must name SIGNED: as the human sign key'
+require_fgrep "$HERE/docs/working-mode.md" 'not mapper' \
+  'docs/working-mode.md must refuse mapper/maker/reviewer as SIGNED'
 require_fgrep "$HERE/docs/working-mode.md" 'slices.tsv' \
   'docs/working-mode.md must name slices.tsv (6b)'
 require_fgrep "$HERE/docs/working-mode.md" 'map-ready' \
@@ -750,6 +754,71 @@ rm -f MAP-HUMAN .wm/FALSIFIER
 impl_ok 'LOW local MAP-ACCEPT can start maker without MAP-HUMAN' \
   "$WM" run maker-falsify || true
 [ -f .wm/FALSIFIER ] && ok || bad 'LOW local maker-falsify must write FALSIFIER'
+
+# 8c is a sign (SIGNED + MAP keys), not a non-empty token. HIGH + two kinds so 3d
+# does not mask a dummy file. Mapper=alice maker=carol reviewer=dave.
+setup_high_twokind_accept() {
+  setup_map_repo "$1"
+  write_architecture_fixture alice HIGH no
+  impl_ok "record-mapper $1" "$WM" record-mapper --from MAP.md || true
+  cast_brick_panel carol dave grok claude
+  plant_map_accept HIGH
+  rm -f .wm/FALSIFIER
+}
+
+refuse_high_sign_no_exec() {
+  _rhs_label=$1
+  refuses "$_rhs_label" 'MAP-HUMAN' "$WM" run maker-falsify
+  if [ -f .wm/FALSIFIER ]; then
+    bad "$_rhs_label must not exec maker (FALSIFIER written)"
+  else
+    ok
+  fi
+}
+
+setup_high_twokind_accept t-human-x
+printf 'x' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN printf x is not a sign'
+
+setup_high_twokind_accept t-human-space
+printf ' \n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN whitespace is not a sign'
+
+setup_high_twokind_accept t-human-nosigned
+printf 'MAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN without SIGNED is not a sign'
+
+setup_high_twokind_accept t-human-nomap
+printf 'SIGNED: operator\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN without MAP is not a sign'
+
+setup_high_twokind_accept t-human-badmap
+printf 'SIGNED: operator\nMAP: nosuch-map.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN MAP must name an existing map file'
+
+setup_high_twokind_accept t-human-signed-maker
+printf 'SIGNED: carol\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED maker refused'
+
+setup_high_twokind_accept t-human-signed-mapper
+printf 'SIGNED: alice\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED mapper refused'
+
+setup_high_twokind_accept t-human-signed-reviewer
+printf 'SIGNED: dave\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED reviewer refused'
+
+setup_high_twokind_accept t-human-signed-parent
+printf 'SIGNED: parent\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED parent refused'
+
+setup_high_twokind_accept t-human-signed-coordinator
+printf 'SIGNED: coordinator\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED coordinator refused'
+
+setup_high_twokind_accept t-human-signed-loop
+printf 'SIGNED: loop\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH SIGNED loop refused'
 
 # Full cadence: map-ready / map-verdict (unknown command is RED until implemented).
 setup_map_repo t-cadence-low

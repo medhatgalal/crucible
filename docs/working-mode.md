@@ -41,17 +41,22 @@ push-main remain STOP-ASK (2c).
 ## Human sign (8c)
 
 After `MAP-ACCEPT`, if any slice is `HIGH` or its module `live_write` is `yes`,
-the operator writes a non-empty `MAP-HUMAN` file (repo root) before the first
-`wm run maker-falsify`. LOW local maps do not need it. The file is a human gate
-after the map-judge, not a replacement for critique.
+the operator signs the map (`MAP-HUMAN` at repo root) before the first
+`wm run maker-falsify`. LOW local maps do not need it. This is a human gate
+after the map-judge (8c), not a replacement for critique and not a dummy file.
+
+`wm` parses the same `key: value` shape as return files. `SIGNED:` must be a
+non-empty human id — not mapper, maker, reviewer, parent, coordinator, or
+loop. `MAP:` must name an existing map file (`MAP.md`). A token such as `x`
+is not a sign.
 
 ```
 SIGNED: operator
 MAP: MAP.md
 ```
 
-Without `MAP-HUMAN` on HIGH/live, `wm run maker-falsify` refuses and `wm next`
-is `STOP-ASK MAP-HUMAN`.
+Without a valid `MAP-HUMAN` on HIGH/live, `wm run maker-falsify` refuses and
+`wm next` is `STOP-ASK MAP-HUMAN`.
 
 ## Risk-triggered reviewer (3d)
 
