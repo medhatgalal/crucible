@@ -716,6 +716,215 @@ emit_map_owned() {
   ' MAP.md
 }
 
+# MAP.md TSV rows: id, module, owned_paths, depends_on, risk (no status).
+emit_map_rows() {
+  [ -f MAP.md ] || return 0
+  awk -F '\t' '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    {
+      if (index($0, "\t") == 0) next
+      if (!hid) {
+        for (i = 1; i <= NF; i++) {
+          c = trim($i)
+          if (c == "id") hid = i
+          if (c == "module") hmod = i
+          if (c == "owned_paths" || c == "owned") hown = i
+          if (c == "depends_on" || c == "depends-on") hdep = i
+          if (c == "risk") hrisk = i
+        }
+        if (hid && hmod && hown && hrisk) next
+        hid = hmod = hown = hdep = hrisk = 0
+        next
+      }
+      id = (hid <= NF) ? trim($hid) : ""
+      mod = (hmod <= NF) ? trim($hmod) : ""
+      own = (hown <= NF) ? trim($hown) : ""
+      dep = (hdep && hdep <= NF) ? trim($hdep) : "-"
+      risk = (hrisk <= NF) ? trim($hrisk) : ""
+      if (id == "" || id == "id") next
+      if (dep == "") dep = "-"
+      printf "%s\t%s\t%s\t%s\t%s\n", id, mod, own, dep, risk
+    }
+  ' MAP.md
+}
+
+module_live_write() {
+  _mlw_mod=$1
+  [ -n "$_mlw_mod" ] || { printf 'no\n'; return 0; }
+  [ -f architecture/modules.md ] || { printf 'no\n'; return 0; }
+  awk -F '\t' -v m="$_mlw_mod" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^#/ { next }
+    /^[[:space:]]*$/ { next }
+    NF < 2 { next }
+    trim($1) == "module_id" { next }
+    trim($1) == m {
+      if (NF >= 6) print trim($6)
+      else print "no"
+      exit
+    }
+  ' architecture/modules.md
+}
+
+map_word_recorded() { kv_get "$WM/map-verdict" WORD; }
+
+human_sign_present() {
+  [ -f MAP-HUMAN ] && [ -s MAP-HUMAN ]
+}
+
+high_kinds_ok() {
+  _hk_mk=$(panel_kind maker)
+  _hk_rk=$(panel_kind reviewer)
+  [ -n "$_hk_mk" ] && [ "$_hk_mk" != - ] || return 1
+  [ -n "$_hk_rk" ] && [ "$_hk_rk" != - ] || return 1
+  [ "$_hk_mk" != "$_hk_rk" ]
+}
+
+map_needs_human_sign() {
+  _nh_rows=
+  if [ -f slices.tsv ]; then
+    _nh_rows=$(awk -F '\t' '
+      function trim(s) {
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+        return s
+      }
+      NR == 1 {
+        for (i = 1; i <= NF; i++) {
+          c = trim($i)
+          if (c == "module") hm = i
+          if (c == "risk") hr = i
+        }
+        next
+      }
+      hm && hr { printf "%s\t%s\n", trim($hm), trim($hr) }
+    ' slices.tsv)
+  elif [ -f MAP.md ]; then
+    _nh_rows=$(emit_map_rows | awk -F '\t' '{ printf "%s\t%s\n", $2, $5 }')
+  else
+    return 1
+  fi
+  [ -n "$_nh_rows" ] || return 1
+  while IFS="$(printf '\t')" read -r _nh_mod _nh_risk || [ -n "${_nh_mod:-}" ]; do
+    [ -n "${_nh_mod:-}${_nh_risk:-}" ] || continue
+    if [ "$_nh_risk" = HIGH ]; then
+      return 0
+    fi
+    _nh_lw=$(module_live_write "$_nh_mod")
+    if [ "$_nh_lw" = yes ]; then
+      return 0
+    fi
+  done <<EOF
+$_nh_rows
+EOF
+  return 1
+}
+
+first_ready_slice() {
+  [ -f slices.tsv ] || return 0
+  awk -F '\t' '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        c = trim($i)
+        if (c == "id") hid = i
+        if (c == "status") hs = i
+        if (c == "depends_on" || c == "depends-on") hd = i
+      }
+      next
+    }
+    hid && hs {
+      st = trim($hs)
+      dep = hd ? trim($hd) : "-"
+      if (st == "READY" && (dep == "-" || dep == "")) {
+        print trim($hid)
+        exit
+      }
+    }
+  ' slices.tsv
+}
+
+slice_risk() {
+  _sr_id=$1
+  [ -n "$_sr_id" ] && [ -f slices.tsv ] || return 0
+  awk -F '\t' -v id="$_sr_id" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        c = trim($i)
+        if (c == "id") hid = i
+        if (c == "risk") hr = i
+      }
+      next
+    }
+    hid && hr && trim($hid) == id { print trim($hr); exit }
+  ' slices.tsv
+}
+
+materialize_slices() {
+  _ms_status=$1
+  [ -n "$_ms_status" ] || die "slice status required"
+  [ -f MAP.md ] || die "MAP.md missing"
+  ensure_wm
+  _ms_tmp="$WM/.slices.tsv.$$"
+  printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > "$_ms_tmp"
+  _ms_n=0
+  _ms_rows=$(emit_map_rows)
+  while IFS="$(printf '\t')" read -r _ms_id _ms_mod _ms_own _ms_dep _ms_risk || [ -n "${_ms_id:-}" ]; do
+    [ -n "${_ms_id:-}" ] || continue
+    [ -n "$_ms_mod" ] || { rm -f "$_ms_tmp"; die "slice missing module: $_ms_id"; }
+    [ -n "$_ms_own" ] && [ "$_ms_own" != - ] || { rm -f "$_ms_tmp"; die "slice missing owned_paths: $_ms_id"; }
+    [ -n "$_ms_dep" ] || _ms_dep=-
+    case $_ms_risk in
+      LOW|HIGH) ;;
+      *) rm -f "$_ms_tmp"; die "slice risk must be LOW or HIGH: $_ms_id" ;;
+    esac
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$_ms_id" "$_ms_mod" "$_ms_own" "$_ms_dep" "$_ms_risk" "$_ms_status" >> "$_ms_tmp"
+    _ms_n=$((_ms_n + 1))
+  done <<EOF
+$_ms_rows
+EOF
+  if [ "$_ms_n" -eq 0 ]; then
+    rm -f "$_ms_tmp"
+    die "MAP.md names no slices"
+  fi
+  mv "$_ms_tmp" slices.tsv
+}
+
+guard_map_before_maker() {
+  if [ ! -f MAP.md ] && [ ! -f slices.tsv ]; then
+    return 0
+  fi
+  _gm_word=$(map_word_recorded)
+  [ "$_gm_word" = MAP-ACCEPT ] || die "map-verdict MAP-ACCEPT required before maker"
+  if map_needs_human_sign; then
+    human_sign_present || die "MAP-HUMAN required for HIGH/live"
+  fi
+  _gm_sid=$(first_ready_slice)
+  _gm_risk=
+  if [ -n "$_gm_sid" ]; then
+    _gm_risk=$(slice_risk "$_gm_sid")
+  fi
+  if [ -z "$_gm_risk" ] && [ -f MAP.md ]; then
+    _gm_risk=$(emit_map_rows | awk -F '\t' 'NF >= 5 { print $5; exit }')
+  fi
+  if [ "$_gm_risk" = HIGH ]; then
+    high_kinds_ok || die "STOP-ASK: HIGH requires distinct maker and reviewer kinds"
+  fi
+}
+
 split_csv_paths() {
   printf '%s\n' "$1" | awk -F ',' '{
     for (i = 1; i <= NF; i++) {
@@ -867,6 +1076,46 @@ cmd_check_map_word() {
     die "architecture author id must differ from critique author id (both $_mw_who)"
   fi
   say "MAP-WORD $_mw_word author=$_mw_who"
+}
+
+cmd_map_ready() {
+  [ -f MAP.md ] || die "MAP.md missing"
+  _mr_mapper=$(mapper_id)
+  [ -n "$_mr_mapper" ] || die "mapper id not recorded"
+  cmd_check_module_fit
+  materialize_slices PENDING
+  say MAP-READY
+}
+
+cmd_map_verdict() {
+  _mv_file=${1:-}
+  [ -n "$_mv_file" ] || die "usage: wm map-verdict RETURNFILE"
+  cmd_check_map_word "$_mv_file"
+  _mv_word=$(kv_get "$_mv_file" WORD)
+  _mv_who=$(kv_get "$_mv_file" AGENT)
+  if [ -z "$_mv_who" ]; then
+    _mv_who=$(basename "$_mv_file" .md)
+  fi
+  _mv_map=$(kv_get "$_mv_file" MAP)
+  [ -n "$_mv_map" ] || _mv_map=MAP.md
+  _mv_status=PENDING
+  case $_mv_word in
+    MAP-ACCEPT)
+      cmd_check_module_fit
+      _mv_status=READY
+      ;;
+    MAP-REVISE) _mv_status=REVISE ;;
+    MAP-STOP-ASK) _mv_status=STOP-ASK ;;
+  esac
+  materialize_slices "$_mv_status"
+  ensure_wm
+  {
+    printf 'WORD: %s\n' "$_mv_word"
+    printf 'AGENT: %s\n' "$_mv_who"
+    printf 'MAP: %s\n' "$_mv_map"
+    printf 'when: %s\n' "$(iso_now)"
+  } > "$WM/map-verdict"
+  say "$_mv_word"
 }
 
 cmd_ready() {
@@ -1136,6 +1385,42 @@ cmd_next() {
     say "NEXT CAST"
     return 0
   fi
+  if [ -f MAP.md ] || [ -f slices.tsv ]; then
+    _nx_mw=$(map_word_recorded)
+    if [ -z "$_nx_mw" ]; then
+      say "NEXT MAP"
+      return 0
+    fi
+    if [ "$_nx_mw" = MAP-REVISE ]; then
+      say "NEXT MAP"
+      return 0
+    fi
+    if [ "$_nx_mw" = MAP-STOP-ASK ]; then
+      say "STOP-ASK"
+      return 0
+    fi
+    if [ "$_nx_mw" = MAP-ACCEPT ]; then
+      if [ ! -f "$WM/FALSIFIER" ] && [ ! -f "$WM/pre-falsify-wid" ]; then
+        if map_needs_human_sign && ! human_sign_present; then
+          say "STOP-ASK MAP-HUMAN"
+          return 0
+        fi
+        _nx_sid=$(first_ready_slice)
+        _nx_risk=
+        if [ -n "$_nx_sid" ]; then
+          _nx_risk=$(slice_risk "$_nx_sid")
+        fi
+        if [ "$_nx_risk" = HIGH ] && ! high_kinds_ok; then
+          say "STOP-ASK"
+          return 0
+        fi
+        if [ -n "$_nx_sid" ]; then
+          say "NEXT SLICE $_nx_sid"
+          return 0
+        fi
+      fi
+    fi
+  fi
   if [ ! -f SPEC.md ] || ! spec_ok; then
     say "NEXT SPEC"
     return 0
@@ -1226,6 +1511,7 @@ cmd_run() {
   fi
   if [ "$_ru_prole" = maker ]; then
     refuse_if_mapper_is_maker "$_ru_agent"
+    guard_map_before_maker
   fi
   _ru_command=$(panel_cmd "$_ru_prole")
   if [ -z "$_ru_command" ] || [ "$_ru_command" = - ]; then
@@ -1318,6 +1604,8 @@ case $cmd in
   record-mapper) cmd_record_mapper "$@" ;;
   check-module-fit) cmd_check_module_fit "$@" ;;
   check-map-word) cmd_check_map_word "$@" ;;
+  map-ready) cmd_map_ready "$@" ;;
+  map-verdict) cmd_map_verdict "$@" ;;
   ready) cmd_ready "$@" ;;
   workid) cmd_workid "$@" ;;
   record-pre-falsify) cmd_record_pre_falsify "$@" ;;

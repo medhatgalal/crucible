@@ -307,19 +307,15 @@ setup_map_repo() {
 
 write_architecture_fixture() {
   agent=${1:-alice}
+  risk=${2:-LOW}
+  live=${3:-no}
   mkdir -p src/widget tests/widget architecture tools
   printf '# widget api\nprint("widget")\n' > src/widget/api.py
   printf '# test widget\n' > tests/widget/test_api.py
-  cat > architecture/modules.md <<'EOF'
-module_id	root_path	public_contracts	test_entrypoint	pattern_instance	live_write
-widget	src/widget	src/widget/api.py	tests/widget	src/widget/api.py	no
-EOF
-  cat > MAP.md <<EOF
-MAPPER: $agent
-
-id	module	owned_paths	depends_on	risk
-s1	widget	src/widget/api.py	-	LOW
-EOF
+  printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' > architecture/modules.md
+  printf 'widget\tsrc/widget\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\t%s\n' "$live" >> architecture/modules.md
+  printf 'MAPPER: %s\n\nid\tmodule\towned_paths\tdepends_on\trisk\ns1\twidget\tsrc/widget/api.py\t-\t%s\n' \
+    "$agent" "$risk" > MAP.md
 }
 
 write_spec_fit() {
@@ -403,6 +399,70 @@ write_loop_note() {
     '## Debrief' \
     'proposals only; do not apply; do not run product; not the delivery walker' \
     > loop-design/NOTE.md
+}
+
+# Fixture maker: writes FALSIFIER in the foreground. No harness CLI.
+write_maker_falsify_stub() {
+  mkdir -p tools
+  cat > tools/maker-falsify.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf 'true\n' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+else
+  h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+fi
+who=${MAKER_AGENT:-carol}
+printf 'agent: %s\nwork-id: fixture\nsha256: %s\n' "$who" "$h" > .wm/FALSIFIER.meta
+EOF
+  chmod +x tools/maker-falsify.sh
+}
+
+write_map_return() {
+  _wmr_agent=${1:-bob}
+  _wmr_word=${2:-MAP-ACCEPT}
+  mkdir -p .wm/return
+  printf 'WORD: %s\nAGENT: %s\nMAP: MAP.md\n' "$_wmr_word" "$_wmr_agent" > ".wm/return/${_wmr_agent}.md"
+}
+
+cast_brick_panel() {
+  _cbp_maker=${1:-carol}
+  _cbp_rev=${2:-dave}
+  _cbp_mkind=${3:-grok}
+  _cbp_rkind=${4:-grok}
+  write_maker_falsify_stub
+  "$WM" cast maker "$_cbp_maker" "$_cbp_mkind" './tools/maker-falsify.sh' >"$OUT" 2>"$ERR"
+  "$WM" cast reviewer "$_cbp_rev" "$_cbp_rkind" 'sh -c "echo reviewer {BRIEF}"' >"$OUT" 2>"$ERR"
+}
+
+plant_map_accept() {
+  mkdir -p .wm
+  printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/map-verdict
+  printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > slices.tsv
+  printf 's1\twidget\tsrc/widget/api.py\t-\t%s\tREADY\n' "${1:-LOW}" >> slices.tsv
+}
+
+extract_fn() {
+  awk -v n="$1" '
+    $0 ~ "^" n "\\(\\)" { p=1; next }
+    p && /^[a-z_][a-z0-9_]*\\(\\)/ { exit }
+    p { print }
+  ' "$WM"
+}
+
+kernel_fn_calls() {
+  _kfc_fn=$1
+  _kfc_need=$2
+  _kfc_label=$3
+  if extract_fn "$_kfc_fn" | grep -q "$_kfc_need"; then
+    ok
+  else
+    bad "$_kfc_label"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -621,6 +681,229 @@ refuses 'record-mapper --from MAP.md without MAPPER' 'refused:' \
 setup_map_repo t-no-modules
 refuses 'check-module-fit without architecture/modules.md' 'refused:' \
   "$WM" check-module-fit --path src/widget/api.py
+
+# ---------------------------------------------------------------------------
+# Task 5: map cadence + human sign (6b, 8c, 3d). Identity CHECKs above stay GREEN.
+# Falsifier-first: HIGH/live without MAP-HUMAN must not start maker; LOW local may.
+# ---------------------------------------------------------------------------
+
+kernel_fn_calls cmd_map_verdict cmd_check_map_word \
+  'map-verdict must call check-map-word (not reimplement identity)'
+kernel_fn_calls cmd_map_ready cmd_check_module_fit \
+  'map-ready must call check-module-fit (not reimplement fit)'
+kernel_fn_calls cmd_map_verdict cmd_check_module_fit \
+  'map-verdict must call check-module-fit (not reimplement fit)'
+
+require_file "$HERE/docs/working-mode.md" 'docs/working-mode.md missing'
+require_fgrep "$HERE/docs/working-mode.md" 'MAP-HUMAN' \
+  'docs/working-mode.md must name MAP-HUMAN (8c)'
+require_fgrep "$HERE/docs/working-mode.md" 'slices.tsv' \
+  'docs/working-mode.md must name slices.tsv (6b)'
+require_fgrep "$HERE/docs/working-mode.md" 'map-ready' \
+  'docs/working-mode.md must name wm map-ready'
+require_fgrep "$HERE/docs/working-mode.md" 'map-verdict' \
+  'docs/working-mode.md must name wm map-verdict'
+require_fgrep "$HERE/docs/working-mode.md" 'STOP-ASK' \
+  'docs/working-mode.md must name STOP-ASK for HIGH + one kind (3d)'
+if [ -f "$HERE/docs/working-mode.md" ] && grep -q 'fake CROSS-FAMILY' "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must refuse fake CROSS-FAMILY (3d is label+ROUTING)'
+fi
+
+# Load-bearing 8c: planted MAP-ACCEPT HIGH/live must not exec maker without MAP-HUMAN.
+# (Full cadence also uses map-verdict; this path is RED if run currently accepts.)
+setup_map_repo t-human-high
+write_architecture_fixture alice HIGH no
+impl_ok 'record-mapper HIGH fixture' "$WM" record-mapper --from MAP.md || true
+cast_brick_panel carol dave grok grok
+plant_map_accept HIGH
+rm -f MAP-HUMAN .wm/FALSIFIER
+refuses 'HIGH MAP-ACCEPT without MAP-HUMAN cannot start maker' 'MAP-HUMAN' \
+  "$WM" run maker-falsify
+if [ -f .wm/FALSIFIER ]; then
+  bad 'HIGH without MAP-HUMAN must not exec maker (FALSIFIER written)'
+else
+  ok
+fi
+
+setup_map_repo t-human-live
+write_architecture_fixture alice LOW yes
+impl_ok 'record-mapper live fixture' "$WM" record-mapper --from MAP.md || true
+cast_brick_panel carol dave grok grok
+plant_map_accept LOW
+rm -f MAP-HUMAN .wm/FALSIFIER
+refuses 'live fence MAP-ACCEPT without MAP-HUMAN cannot start maker' 'MAP-HUMAN' \
+  "$WM" run maker-falsify
+if [ -f .wm/FALSIFIER ]; then
+  bad 'live without MAP-HUMAN must not exec maker (FALSIFIER written)'
+else
+  ok
+fi
+
+setup_map_repo t-human-low
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper LOW fixture' "$WM" record-mapper --from MAP.md || true
+cast_brick_panel carol dave grok grok
+plant_map_accept LOW
+rm -f MAP-HUMAN .wm/FALSIFIER
+impl_ok 'LOW local MAP-ACCEPT can start maker without MAP-HUMAN' \
+  "$WM" run maker-falsify || true
+[ -f .wm/FALSIFIER ] && ok || bad 'LOW local maker-falsify must write FALSIFIER'
+
+# Full cadence: map-ready / map-verdict (unknown command is RED until implemented).
+setup_map_repo t-cadence-low
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper cadence LOW' "$WM" record-mapper --from MAP.md || true
+if impl_ok 'map-ready LOW local' "$WM" map-ready; then
+  [ -f slices.tsv ] && ok || bad 'map-ready did not write slices.tsv'
+  grep -q '^id	module	owned_paths	depends_on	risk	status$' slices.tsv \
+    && ok || bad 'slices.tsv missing required header'
+  grep -q '^s1	widget	src/widget/api.py	-	LOW	' slices.tsv \
+    && ok || bad 'slices.tsv missing LOW slice s1'
+fi
+write_map_return alice MAP-ACCEPT
+refuses 'map-verdict self-ACCEPT refused' 'refused:' \
+  "$WM" map-verdict .wm/return/alice.md
+write_map_return bob 'CLOSED PASS'
+refuses 'map-verdict CLOSED PASS refused via check-map-word' \
+  'map words are MAP-ACCEPT\|MAP-REVISE\|MAP-STOP-ASK' \
+  "$WM" map-verdict .wm/return/bob.md
+write_map_return bob MAP-ACCEPT
+if impl_ok 'map-verdict MAP-ACCEPT from distinct critique' \
+  "$WM" map-verdict .wm/return/bob.md; then
+  grep -q '^WORD: MAP-ACCEPT$' .wm/map-verdict \
+    && ok || bad 'map-verdict did not record MAP-ACCEPT'
+  grep -q 'READY' slices.tsv && ok || bad 'MAP-ACCEPT did not mark slices READY'
+fi
+cast_brick_panel carol dave grok grok
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
+    && ok || bad "after MAP-ACCEPT next must emit first READY slice, got $card"
+  printf '%s\n' "$card" | grep -q 'CROSS-FAMILY' \
+    && bad "LOW next must not print CROSS-FAMILY (got $card)" || ok
+else
+  bad "after MAP-ACCEPT next refused: $(cat "$ERR")"
+fi
+rm -f MAP-HUMAN .wm/FALSIFIER
+impl_ok 'LOW local after map-verdict can start maker' "$WM" run maker-falsify || true
+
+setup_map_repo t-cadence-revise
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper REVISE' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready before REVISE' "$WM" map-ready || true
+write_map_return bob MAP-REVISE
+impl_ok 'map-verdict MAP-REVISE' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -q 'NEXT MAP' \
+    && ok || bad "MAP-REVISE next must be NEXT MAP, got $card"
+else
+  bad "MAP-REVISE next refused: $(cat "$ERR")"
+fi
+refuses 'MAP-REVISE cannot start maker' 'MAP-ACCEPT' "$WM" run maker-falsify
+
+setup_map_repo t-cadence-stop
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper STOP-ASK map word' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready before STOP-ASK' "$WM" map-ready || true
+write_map_return bob MAP-STOP-ASK
+impl_ok 'map-verdict MAP-STOP-ASK' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -q 'STOP-ASK' \
+    && ok || bad "MAP-STOP-ASK next must be STOP-ASK, got $card"
+else
+  bad "MAP-STOP-ASK next refused: $(cat "$ERR")"
+fi
+
+setup_map_repo t-fit-on-map-ready
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper for map-ready fit' "$WM" record-mapper --from MAP.md || true
+cat > MAP.md <<'EOF'
+MAPPER: alice
+
+id	module	owned_paths	depends_on	risk
+s1	dungeon	rooms/throne.md	-	LOW
+EOF
+refuses 'map-ready owned path outside modules' 'refused:' "$WM" map-ready
+
+setup_map_repo t-map-ready-changes
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper for map-ready CHANGES-ARCHITECTURE' "$WM" record-mapper --from MAP.md || true
+printf '\nCHANGES-ARCHITECTURE\n' >> MAP.md
+refuses 'map-ready CHANGES-ARCHITECTURE is STOP' 'STOP|CHANGES-ARCHITECTURE' "$WM" map-ready
+
+# 3d: HIGH + one kind → STOP-ASK, not fake CROSS-FAMILY; two kinds allowed after MAP-HUMAN.
+setup_map_repo t-high-one-kind
+write_architecture_fixture alice HIGH no
+impl_ok 'record-mapper HIGH one-kind' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready HIGH one-kind' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -q 'STOP-ASK' \
+    && ok || bad "HIGH + one kind next must STOP-ASK, got $card"
+  printf '%s\n' "$card" | grep -q 'CROSS-FAMILY' \
+    && bad "HIGH + one kind must not fake CROSS-FAMILY (got $card)" || ok
+else
+  bad "HIGH + one kind next refused: $(cat "$ERR")"
+fi
+rm -f .wm/FALSIFIER
+refuses 'HIGH + one kind cannot start maker' 'STOP-ASK' "$WM" run maker-falsify
+if [ -f .wm/FALSIFIER ]; then
+  bad 'HIGH + one kind must not exec maker'
+else
+  ok
+fi
+if err=$(cat "$ERR" 2>/dev/null || true); printf '%s\n' "$err" | grep -q 'CROSS-FAMILY'; then
+  bad "HIGH + one kind refuse must not say CROSS-FAMILY: $err"
+else
+  ok
+fi
+
+setup_map_repo t-high-two-kind
+write_architecture_fixture alice HIGH no
+impl_ok 'record-mapper HIGH two-kind' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready HIGH two-kind' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict HIGH two-kind' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok claude
+rm -f MAP-HUMAN .wm/FALSIFIER
+refuses 'HIGH two-kind without MAP-HUMAN cannot start maker' 'MAP-HUMAN' \
+  "$WM" run maker-falsify
+printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
+    && ok || bad "HIGH two-kind with MAP-HUMAN next must emit READY slice, got $card"
+  printf '%s\n' "$card" | grep -q 'CROSS-FAMILY' \
+    && bad "3d must not print CROSS-FAMILY as a second engine (got $card)" || ok
+else
+  bad "HIGH two-kind next refused: $(cat "$ERR")"
+fi
+impl_ok 'HIGH two-kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
+[ -f .wm/FALSIFIER ] && ok || bad 'HIGH two-kind maker-falsify must write FALSIFIER'
+
+setup_map_repo t-live-signed
+write_architecture_fixture alice LOW yes
+impl_ok 'record-mapper live signed' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready live signed' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict live signed' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+impl_ok 'live + MAP-HUMAN + same kind can start maker (3d is HIGH-only)' \
+  "$WM" run maker-falsify || true
+
+# Task 6 owns the walker; cadence must not turn loop into a daemon.
+if out=$("$WM" loop 2>"$ERR"); then
+  printf '%s\n' "$out" | grep -q 'LOOP STUB' \
+    && ok || bad "wm loop must stay a foreground stub, got $out"
+else
+  bad "wm loop stub refused: $(cat "$ERR")"
+fi
 
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
