@@ -4830,6 +4830,30 @@ adopt_battery_kept() {
   return 1
 }
 
+adopt_restore_kept_batteries() {
+  _rk_keep=$1
+  _rk_repo=$2
+  [ -n "$_rk_keep" ] && [ -d "$_rk_keep" ] || return 0
+  [ -n "$_rk_repo" ] && [ "$_rk_repo" != / ] \
+    || { rm -rf "$_rk_keep"; die 'refused: bad repository root'; }
+  for _rk_kept in "$_rk_keep"/*; do
+    [ -d "$_rk_kept" ] || continue
+    _rk_name=${_rk_kept##*/}
+    _rk_dest="$_rk_repo/.crucible/skills/$_rk_name"
+    case $_rk_dest in
+      "$_rk_repo/.crucible/skills"/*) ;;
+      *)
+        rm -rf "$_rk_keep"
+        die "refused: KEEP restore path outside skills: $_rk_dest"
+        ;;
+    esac
+    rm -rf "$_rk_dest"
+    mkdir -p "$_rk_dest"
+    cp -R "$_rk_kept/." "$_rk_dest/"
+  done
+  rm -rf "$_rk_keep"
+}
+
 adopt_install_working_mode() {
   _wm_src=$1
   _wm_dst=$2
@@ -4872,27 +4896,11 @@ adopt_install_working_mode() {
     done
   fi
 
-  "$_wm_src/scripts/project-skills.sh" "$_wm_src/skills" "$_wm_repo" \
-    || die 'refused: skill projection failed'
-
-  if [ -n "$_wm_keep" ] && [ -d "$_wm_keep" ]; then
-    for _wm_kept in "$_wm_keep"/*; do
-      [ -d "$_wm_kept" ] || continue
-      _wm_name=${_wm_kept##*/}
-      _wm_dest="$_wm_repo/.crucible/skills/$_wm_name"
-      case $_wm_dest in
-        "$_wm_repo/.crucible/skills"/*) ;;
-        *)
-          rm -rf "$_wm_keep"
-          die "refused: KEEP restore path outside skills: $_wm_dest"
-          ;;
-      esac
-      rm -rf "$_wm_dest"
-      mkdir -p "$_wm_dest"
-      cp -R "$_wm_kept/." "$_wm_dest/"
-    done
-    rm -rf "$_wm_keep"
-  fi
+  _wm_proj_rc=0
+  "$_wm_src/scripts/project-skills.sh" "$_wm_src/skills" "$_wm_repo" || _wm_proj_rc=$?
+  # Restore KEEP even when projection dies after wiping canonical dirs (11c).
+  adopt_restore_kept_batteries "$_wm_keep" "$_wm_repo"
+  [ "$_wm_proj_rc" -eq 0 ] || die 'refused: skill projection failed'
 
   adopt_check_required_batteries "$_wm_src/ROUTING.tsv" "$_wm_repo/.crucible/skills"
   adopt_write_engine_source "$_wm_src" "$_wm_dst"

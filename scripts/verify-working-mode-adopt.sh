@@ -343,6 +343,84 @@ grep -q 'PATCHED-ARCH' "$AD/.crucible/skills/architecture/SKILL.md" \
 cmp -s "$HERE/skills/architecture/SKILL.md" "$AD/.crucible/skills/architecture/SKILL.md" \
   && ok || bad '--overwrite-batteries did not restore package architecture'
 
+# install.md commit recipe must name repo-root harness views (Grok does not scan
+# .crucible/.grok/skills). Nested views under .crucible/ are not enough.
+if awk '
+  /```sh/ { insh=1; block=""; next }
+  insh && /```/ {
+    if (block ~ /git add/ && block ~ /\.crucible/) rec=block
+    insh=0
+    next
+  }
+  insh { block = block $0 "\n" }
+  END {
+    if (rec ~ /\.grok\/skills/ && rec ~ /\.claude\/skills/ && rec ~ /\.agents\/skills/) exit 0
+    exit 1
+  }
+' "$HERE/docs/install.md"; then
+  ok
+else
+  bad 'docs/install.md commit recipe omits repo-root .{grok,claude,agents}/skills'
+fi
+
+# KEEP snapshot must be restored if project-skills.sh fails after wiping canonical dirs.
+KEEPFAIL_SRC="$BASE/keepfail-src"
+mkdir -p "$KEEPFAIL_SRC/scripts" "$KEEPFAIL_SRC/skills"
+cp "$CRUCIBLE" "$KEEPFAIL_SRC/crucible"
+cp "$HERE/VERSION" "$KEEPFAIL_SRC/VERSION"
+cp "$WM" "$KEEPFAIL_SRC/wm.sh"
+cp "$HERE/ROUTING.tsv" "$KEEPFAIL_SRC/ROUTING.tsv"
+cp -R "$HERE/skills/." "$KEEPFAIL_SRC/skills/"
+cat > "$KEEPFAIL_SRC/scripts/project-skills.sh" <<'EOF'
+#!/bin/sh
+# Fixture: wipe canonical batteries then fail (projector crash after rm).
+set -eu
+DST=$2
+[ -n "$DST" ] && [ "$DST" != / ] || exit 1
+skills="$DST/.crucible/skills"
+if [ -d "$skills" ]; then
+  for d in "$skills"/*; do
+    [ -d "$d" ] || continue
+    case $d in
+      "$skills"/*) rm -rf "$d" ;;
+    esac
+  done
+fi
+printf 'project-skills: fixture fail after wipe\n' >&2
+exit 1
+EOF
+chmod +x "$KEEPFAIL_SRC/crucible" "$KEEPFAIL_SRC/wm.sh" "$KEEPFAIL_SRC/scripts/project-skills.sh"
+init_git_repo "$BASE/keep-fail"
+if run_adopt "$BASE/keep-fail" "$CRUCIBLE" adopt work --managed --working-mode; then
+  ok
+else
+  bad "keep-fail initial adopt refused: $(cat "$OUT") $(cat "$ERR")"
+fi
+printf 'PATCHED-KEEP-FAIL\n' > "$BASE/keep-fail/.crucible/skills/architecture/SKILL.md"
+touch "$BASE/keep-fail/.crucible/skills/architecture/.keep"
+printf 'UNKEPT-CRITIQUE\n' > "$BASE/keep-fail/.crucible/skills/critique/SKILL.md"
+if run_adopt "$BASE/keep-fail" "$KEEPFAIL_SRC/crucible" adopt work --refresh; then
+  bad 'refresh with failing projector was allowed'
+else
+  grep -E -q 'refused' "$ERR" "$OUT" 2>/dev/null && ok \
+    || bad "failing projector wanted refused, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+grep -q 'PATCHED-KEEP-FAIL' "$BASE/keep-fail/.crucible/skills/architecture/SKILL.md" \
+  && ok || bad 'KEEP architecture not restored after projector wipe+fail'
+[ -e "$BASE/keep-fail/.crucible/skills/architecture/.keep" ] \
+  && ok || bad '.keep marker missing after projector wipe+fail'
+if grep -q 'UNKEPT-CRITIQUE' "$BASE/keep-fail/.crucible/skills/critique/SKILL.md" 2>/dev/null; then
+  bad 'failing projector did not wipe un-KEPT critique (fixture did not exercise wipe)'
+else
+  ok
+fi
+keep_left=$(find "$BASE/keep-fail/.crucible/work" -name '.keep-snapshot.*' -print 2>/dev/null || true)
+if [ -z "$keep_left" ]; then
+  ok
+else
+  bad "leftover KEEP snapshot after failed projection: $keep_left"
+fi
+
 # Missing required battery in ROUTING → adopt prints refused (no generalist-fallback).
 FAKE="$BASE/fake-src"
 mkdir -p "$FAKE/scripts" "$FAKE/skills"

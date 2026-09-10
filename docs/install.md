@@ -96,16 +96,23 @@ unless you pass `--overwrite-batteries`.
 ## Commit the program directory
 
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
-produced it if it is in Git, so commit `.crucible/` in the target repository:
+produced it if it is in Git, so commit `.crucible/` in the target repository.
+After `--working-mode`, also commit the repo-root harness views — Grok discovers
+`./.grok/skills` (then `$HOME`) and does **not** scan `.crucible/.grok/skills`:
 
 ```sh
-git add .crucible && git commit -m "chore: record program state"
+git add .crucible
+[ -d .grok/skills ] && git add .grok/skills
+[ -d .claude/skills ] && git add .claude/skills
+[ -d .agents/skills ] && git add .agents/skills
+git commit -m "chore: record program state"
 ```
 
 `adopt` generates `.crucible/.gitignore` with `*/agents.tsv` and `*/worktrees/`, so
 machine-local agent invocations and isolated worktrees stay out of the commit. Everything
 else under `.crucible/<program>/` — `PROBLEM.md`, `CLAIMS.md`, `PROPOSAL.md`, `APPROVAL`,
-`PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record. Commit
+`PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record, plus
+working-mode's repo-root `.{grok,claude,agents}/skills` views. Commit
 again after each human gate; `cycle clean` preserves these files but nothing restores them
 if they were never committed.
 
