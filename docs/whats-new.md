@@ -2,6 +2,15 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## 1.7.0 — opt-in working-mode
+
+`crucible adopt PROGRAM --managed --working-mode` copies `wm.sh`, four batteries,
+harness views, and `adapters/{grok,claude,codex}.md`. Guided 1.6.6 remains the
+default: adopt without `--working-mode` still has no wm or skills. Operator
+card: [working-mode.md](working-mode.md). Adapters: `adapters/grok.md`,
+`adapters/claude.md`, `adapters/codex.md` — point ignored `agents.tsv` at the
+CLI; do not put credentials in those files.
+
 ## Known limits
 
 - `brief` is dispatched by the CLI but is absent from `help`.
@@ -13,3 +22,6 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 - `adopt` does not copy `CHANGELOG.md`, so it does not travel into adopted trees.
 - Rollback after a bad `--refresh`: the refreshed old engine is gone. Recovery is refreshing the same program from an older known-good tag; its evidence and approved panel remain untouched.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
+- Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
+- Working-mode skills live in the target tree. `$HOME` skill trees are not a runtime. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation.
+- Live grok/claude/codex independence is unavailable when those CLIs are missing from `PATH`. Fixture workers can still close. Adapters do not ship credentials.

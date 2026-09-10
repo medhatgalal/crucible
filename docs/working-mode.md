@@ -73,3 +73,25 @@ wm map-verdict RETURNFILE    # MAP-ACCEPT | MAP-REVISE | MAP-STOP-ASK
 wm next                      # NEXT MAP | NEXT SLICE <id> | STOP-ASK | brick card
 wm run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
 ```
+
+## Harness adapters (13b)
+
+`adopt --working-mode` copies `adapters/grok.md`, `adapters/claude.md`, and
+`adapters/codex.md` into `.crucible/<program>/adapters/` when the source tree
+has them. Each file says how to invoke that CLI and how to point ignored
+`agents.tsv` at it. They are not batteries and they carry no credentials.
+
+`wm` does not spawn a harness by name. Cast a worker whose command is the CLI:
+
+```text
+name	kind	model	effort	command
+alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
+bob	claude	sonnet	high	claude -p --output-format text "read {BRIEF} and follow it exactly"
+carol	codex	gpt	high	codex exec -- "read {BRIEF} and follow it exactly"
+dave	grok	grok-4	high	grok -p --prompt-file {BRIEF}
+```
+
+`{BRIEF}` is the absolute brief path. Skills resolve from repo-root
+`.grok/skills/`, `.claude/skills/`, `.agents/skills/` — not `$HOME`. Mapper,
+critique, and maker must be distinct agents. Reviewer re-runs the named
+falsifier.

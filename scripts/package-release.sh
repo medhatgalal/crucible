@@ -38,7 +38,8 @@ git -C "$ROOT" archive --format=tar --prefix="crucible-$VERSION_ARG/" "$REF" | g
 
 # Working-mode payload (9c): if the ref tracks these paths, they must land in the tarball.
 CONTENTS=$(tar -tzf "$TMP")
-for rel in wm.sh skills/architecture/SKILL.md ROUTING.tsv; do
+for rel in wm.sh skills/architecture/SKILL.md ROUTING.tsv \
+  adapters/grok.md adapters/claude.md adapters/codex.md; do
   if git -C "$ROOT" cat-file -e "$REF:$rel" 2>/dev/null; then
     printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION_ARG/$rel\$" \
       || { echo "package-release: $REF has $rel but archive does not" >&2; exit 2; }

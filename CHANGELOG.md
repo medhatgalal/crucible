@@ -5,6 +5,30 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.7.0] - 2026-09-10
+
+### Opt-in self-contained working-mode
+
+- `crucible adopt PROGRAM --managed --working-mode` copies `wm.sh`, four swap-out
+  batteries (`architecture`, `critique`, `review`, `loop-design`), harness views
+  under `.crucible/.{grok,claude,agents}/skills/` and repo-root
+  `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, `ENGINE-SOURCE`, and
+  `adapters/{grok,claude,codex}.md`. Default adopt (no `--working-mode`) still
+  matches 1.6.6: no wm, no skills, no projections.
+- Working-mode runtime is the target repo plus one harness CLI. Skills resolve
+  from the target tree. `$HOME` skill trees are not a runtime dependency.
+  Refresh refuses `src == dst`; KEEP batteries survive `--refresh` unless
+  `--overwrite-batteries`.
+- `wm.sh` enforces maker ≠ judge, observed-red, NO-BUILD, live/push-main/rm -rf
+  STOP-ASK, reviewer exec before `CLOSED PASS`, foreground `wm loop`, map
+  cadence (`map-ready` / `map-verdict` / `MAP-HUMAN` on HIGH/live), LESSONS.md
+  (one line or `NONE`) and an `ARCH:` fence.
+- Adapters document how to point ignored `agents.tsv` at grok / claude / codex.
+  They carry no credentials. `scripts/verify-working-mode-blank-home.sh` proves
+  tarball adopt on an empty HOME, grok/claude/codex views in the target, and a
+  three-slice fixture walk (two modules + seam falsifier).
+- Guided `scripts/verify-agent-cycle.sh` is unchanged.
+
 ## [1.6.6] - 2026-08-24
 
 ### Guided investigation and travelling operator limits
