@@ -1,0 +1,5 @@
+phase	job	battery	role	stake	required
+MAP	decompose	architecture	planner	spec	yes
+ATTACK-MAP	critique	critique	map-judge	review	yes
+BRICK	review	review	reviewer	review	yes
+META	audit-loop	loop-design	operator	spec	yes
