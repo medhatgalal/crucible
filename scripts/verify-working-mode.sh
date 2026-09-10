@@ -676,6 +676,11 @@ else
 fi
 [ -f .wm/return/bob.md ] && grep -q '^WORD: PASS$' .wm/return/bob.md \
   && ok || bad 'fixture reviewer did not write WORD: PASS after exec'
+# Honest re-entry: close() already enforced 5c; a second loop may reprint CLOSED PASS.
+run_wm_loop
+assert_loop_foreground 't11-loop-pass-reentry'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "honest reentry loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+grep -q 'CLOSED PASS' "$OUT" && ok || bad "honest reentry wanted CLOSED PASS, got $(cat "$OUT")"
 
 # (12) Leftover reviewer receipts after maker-build: still exec reviewer (CHECK 7 via loop)
 setup_repo t12-loop-leftover
@@ -864,6 +869,75 @@ else
 fi
 [ -f .wm/reviewer-ran ] && ok || bad 'nobuild loop did not exec the reviewer CLI'
 [ "$LOOP_RC" -eq 0 ] && ok || bad "nobuild loop exit $LOOP_RC err=$(cat "$ERR")"
+
+# (18) Planted .wm/CLOSED without reviewer exec must not make wm loop CLOSED PASS
+setup_repo t18-planted-closed
+printf 'CLOSED PASS\n' > .wm/CLOSED
+run_wm_loop
+assert_loop_foreground 't18-planted-closed'
+if grep -q 'CLOSED PASS' "$OUT"; then
+  bad "planted .wm/CLOSED must not make loop print CLOSED PASS (out=$(cat "$OUT") rc=$LOOP_RC)"
+else
+  ok
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'planted .wm/CLOSED loop must not exit 0'
+[ -f .wm/reviewer-ran ] && bad 'planted CLOSED must not count as reviewer exec' || ok
+if [ -f .wm/invoke/reviewer.log ]; then
+  bad 'planted CLOSED loop must not skip to a reviewer invoke.log'
+else
+  ok
+fi
+
+# (19) Maker-build that writes only .wm/CLOSED is a judge artifact / not CLOSED PASS
+setup_repo t19-maker-closed
+mkdir -p tools
+cat > tools/maker-closed.sh <<'EOF'
+#!/bin/sh
+set -eu
+if [ ! -f .wm/FALSIFIER ]; then
+  printf 'test -f product.txt\n' > .wm/FALSIFIER
+  if command -v sha256sum >/dev/null 2>&1; then
+    h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+  elif command -v shasum >/dev/null 2>&1; then
+    h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+  else
+    h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+  fi
+  printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$(git rev-parse --short=12 HEAD)" "$h" > .wm/FALSIFIER.meta
+  exit 0
+fi
+printf 'built\n' > product.txt
+git add product.txt
+git commit -qm maker-build
+printf 'CLOSED PASS\n' > .wm/CLOSED
+EOF
+cat > tools/rev-should-not-closed.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+chmod +x tools/maker-closed.sh tools/rev-should-not-closed.sh
+"$WM" cast maker alice grok './tools/maker-closed.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/rev-should-not-closed.sh {BRIEF}' >/dev/null
+commit_msg 'maker-closed workers'
+run_wm_loop
+assert_loop_foreground 't19-maker-closed'
+if grep -q 'CLOSED PASS' "$OUT"; then
+  bad "maker-written CLOSED must not make loop print CLOSED PASS (out=$(cat "$OUT"))"
+else
+  ok
+fi
+if [ -f .wm/reviewer-ran ]; then
+  bad 'maker-written CLOSED must not exec reviewer (REVIEWER_RAN present)'
+else
+  ok
+fi
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'maker-written CLOSED loop must not exit 0'
+grep -q 'maker wrote judge artifacts' "$ERR" || grep -q '^refused:' "$ERR" \
+  && ok || bad "maker-written CLOSED expected refused: (err=$(cat "$ERR"))"
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

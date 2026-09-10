@@ -313,7 +313,8 @@ snapshot_judge_artifacts() {
   for _sj_p in \
     "$WM/spawn/${_sj_rev}.stamp" "$WM/return/${_sj_rev}.md" "$WM/verdicts/${_sj_rev}.md" \
     "$WM/spawn/${_sj_scout}.stamp" "$WM/return/${_sj_scout}.md" "$WM/verdicts/${_sj_scout}.md" \
-    "$WM/invoke/reviewer.log" "$WM/invoke/scout.log" "$WM/invoke.log"
+    "$WM/invoke/reviewer.log" "$WM/invoke/scout.log" "$WM/invoke.log" \
+    "$WM/CLOSED"
   do
     [ -n "$_sj_p" ] || continue
     [ -f "$_sj_p" ] || continue
@@ -453,6 +454,13 @@ live_is_pass_or_nobuild() {
     fi
   done
   return 1
+}
+
+# CLOSED file is not success by itself. Honor only after close() / 5c.
+closed_is_closeable() {
+  [ -f "$WM/CLOSED" ] || return 1
+  live_is_pass_or_nobuild || return 1
+  return 0
 }
 
 panel_valid() {
@@ -1448,7 +1456,7 @@ cmd_next() {
     say "NEXT SPEC"
     return 0
   fi
-  if [ -f "$WM/CLOSED" ]; then
+  if closed_is_closeable; then
     say DONE
     return 0
   fi
@@ -1632,7 +1640,7 @@ cmd_loop() {
       say "ESCALATE LOOP_BOUND"
       exit 1
     fi
-    if [ -f "$WM/CLOSED" ]; then
+    if closed_is_closeable; then
       cat "$WM/CLOSED"
       exit 0
     fi
@@ -1715,11 +1723,11 @@ cmd_loop() {
         exit 0
         ;;
       DONE)
-        if [ -f "$WM/CLOSED" ]; then
+        if closed_is_closeable; then
           cat "$WM/CLOSED"
           exit 0
         fi
-        say "STOP-ASK DONE without CLOSED"
+        say "STOP-ASK DONE without closeable CLOSED"
         exit 1
         ;;
       INDEPENDENCE_UNAVAILABLE*)
