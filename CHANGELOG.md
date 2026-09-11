@@ -35,6 +35,12 @@ All notable changes to this project are documented here. This project follows
   `.crucible/work/wm.sh` after `adopt work --managed --working-mode`).
 - Live independence probes grok/claude/codex auth under empty HOME and
   fails closed (`cannot auth`) instead of a grok-only fixture PASS.
+  Probes copy host grok `auth.json` and `config.toml` (yolo / always-approve
+  overlay, other keys kept), `~/.claude.json` and `settings.json`, and
+  codex `auth.json` + `config.toml`. Harness skill trees are not copied.
+- `wm close` refuses when `.wm/CLOSED` is already closeable (`already
+  closed`) and does not append another LESSONS.md line. After slice
+  `reset_brick`, a new close is allowed.
 
 ## [1.7.0] - 2026-09-10
 

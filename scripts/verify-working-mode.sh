@@ -1156,6 +1156,46 @@ else
   ok
 fi
 
+# Double-close: honest CLOSED PASS, second close nonzero, LESSONS stays one
+# line (NONE once). After kernel reset_brick (next slice) a new close is allowed.
+setup_repo t21-double-close
+reach_reviewer_pass
+expect 'first close NONE is CLOSED PASS' 'CLOSED PASS' "$WM" close NONE
+[ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED \
+  && ok || bad 'honest close must write CLOSED PASS'
+n=0
+[ -f LESSONS.md ] && n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "honest close LESSONS wanted 1 line, got $n"
+grep -q '^NONE$' LESSONS.md \
+  && ok || bad "honest close wanted ^NONE$ once, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
+refuses 'second close already closed' 'already closed' "$WM" close 'another lesson'
+n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 1 ] && ok || bad "second close must not append LESSONS.md, got $n lines"
+none_n=$(grep -c '^NONE$' LESSONS.md | tr -d ' ')
+[ "$none_n" = 1 ] && ok || bad "second close must keep NONE once, got $none_n"
+if [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad 'second close must leave honest CLOSED PASS in place'
+fi
+# Same receipt set as wm.sh reset_brick (kernel owns that function).
+rm -f .wm/CLOSED .wm/FALSIFIER .wm/FALSIFIER.meta .wm/FALSIFIER.sha256 \
+  .wm/red.status .wm/red.out .wm/built.status .wm/built.reason \
+  .wm/green.status .wm/green.out .wm/pre-falsify-wid .wm/pre-build-wid \
+  .wm/last-maker-run .wm/reviewer-ran .wm/slice-in-flight \
+  .wm/dispatch .wm/worker.out .wm/worker.err
+rm -rf .wm/verdicts .wm/return .wm/invoke .wm/spawn .wm/briefs .wm/evidence
+mkdir -p .wm/verdicts .wm/return .wm/return/history .wm/invoke .wm/spawn \
+  .wm/briefs .wm/evidence
+rm -f product.txt
+commit_msg 'next-slice product clear after reset_brick'
+reach_reviewer_pass
+expect 'close after reset_brick is CLOSED PASS' 'CLOSED PASS' "$WM" close NONE
+n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 2 ] && ok || bad "close after reset_brick wanted 2 LESSONS lines, got $n"
+none_n=$(grep -c '^NONE$' LESSONS.md | tr -d ' ')
+[ "$none_n" = 2 ] && ok || bad "close after reset_brick wanted NONE twice, got $none_n"
+
 # (22) adopted program dir: append .crucible/<prog>/LESSONS.md, not repo-root
 setup_repo t22-close-program
 reach_reviewer_pass
@@ -1507,6 +1547,12 @@ else
   bad 'A1 walk: slices.tsv was not closed by the kernel'
 fi
 [ -f .wm/reviewer-ran ] && ok || bad 'A1 walk missing reviewer exec on last brick'
+n=0
+[ -f LESSONS.md ] && n=$(wc -l < LESSONS.md | tr -d ' ')
+[ "$n" = 3 ] && ok || bad "A1 walk LESSONS wanted 3 lines (one per slice-close), got $n"
+none_n=0
+[ -f LESSONS.md ] && none_n=$(grep -c '^NONE$' LESSONS.md | tr -d ' ')
+[ "$none_n" = 3 ] && ok || bad "A1 walk wanted NONE once per slice-close, got $none_n"
 
 # (A2) planted CLOSED before loop must not CLOSED PASS / exit 0 without reviewer
 setup_repo t-a2-planted

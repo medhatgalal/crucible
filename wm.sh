@@ -1527,6 +1527,9 @@ cmd_close() {
   _cl_nl=$(printf '%s' "$_cl_lesson" | wc -l | tr -d ' ')
   [ "$_cl_nl" = 0 ] || die "lesson must be one line"
   ensure_wm
+  if closed_is_closeable; then
+    die "already closed"
+  fi
   [ -d "$WM/verdicts" ] || die "no verdicts"
   _cl_pass=0
   _cl_nobuild=0

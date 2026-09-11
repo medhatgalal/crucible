@@ -5,7 +5,8 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 ## 1.7.1 — unattended multi-slice and live gate
 
 One foreground `wm loop` walks remaining READY slices; HIGH unsigned is
-`STOP-ASK MAP-HUMAN`. Live independence fails closed when grok/claude/codex
+`STOP-ASK MAP-HUMAN`. A second `wm close` on a closeable `.wm/CLOSED` refuses
+and does not append another LESSONS line. Live independence fails closed when grok/claude/codex
 are missing or cannot auth. `START.md` / `BOOTSTRAP.md` point at opt-in working-mode
 ([working-mode.md](working-mode.md)); guided adopt stays `--managed` without
 the flag. Commands use `.crucible/<program>/wm.sh` from the target repo root.

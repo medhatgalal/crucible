@@ -3,6 +3,8 @@
 # Fail closed: missing grok/claude/codex → INDEPENDENCE_UNAVAILABLE exit 1.
 # Fail closed: grok/claude/codex cannot auth under empty HOME →
 # INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
+# Host auth/config is copied (grok auth.json+config.toml, claude.json+settings.json,
+# codex auth.json+config.toml). Skills/bundled/sessions are not copied.
 # All three auth: four live CLI processes (not architecture-agent.sh /
 # critique-agent.sh), distinct PIDs, LOW map, one wm loop.
 # PATH-stripped arm still exit 1 INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
@@ -84,7 +86,10 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 129' 1
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 130' 2
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
-# Auth files only (no harness skill trees). Do not invent secrets; do not print them.
+# Auth/config only (no harness skill trees). Do not invent secrets; do not print them.
+# Copy host grok auth.json + config.toml; overlay yolo/always-approve without
+# dropping other keys. Copy claude.json + settings.json; codex auth + config.
+# Never copy skills/, bundled/, or sessions/.
 copy_if_file() {
   src=$1
   dst=$2
@@ -93,6 +98,37 @@ copy_if_file() {
     cp "$src" "$dst"
     chmod 600 "$dst"
   fi
+}
+
+# Rewrite yolo / permission_mode in place. Do not replace the rest of the file.
+overlay_grok_ui() {
+  cfg=$1
+  [ -f "$cfg" ] || return 0
+  tmp=$cfg.overlay.$$
+  awk '
+    BEGIN { saw_yolo = 0; saw_perm = 0 }
+    /^[[:space:]]*yolo[[:space:]]*=/ {
+      print "yolo = true"
+      saw_yolo = 1
+      next
+    }
+    /^[[:space:]]*permission_mode[[:space:]]*=/ {
+      print "permission_mode = \"always-approve\""
+      saw_perm = 1
+      next
+    }
+    { print }
+    END {
+      if (!saw_yolo || !saw_perm) {
+        print ""
+        print "[ui]"
+        if (!saw_perm) print "permission_mode = \"always-approve\""
+        if (!saw_yolo) print "yolo = true"
+      }
+    }
+  ' "$cfg" > "$tmp"
+  mv "$tmp" "$cfg"
+  chmod 600 "$cfg"
 }
 
 run_timeout() {
@@ -119,7 +155,11 @@ except FileNotFoundError:
 }
 
 copy_if_file "$HOST_HOME/.grok/auth.json" "$HOME/.grok/auth.json"
-if [ -f "$HOME/.grok/auth.json" ]; then
+if [ -f "$HOST_HOME/.grok/config.toml" ]; then
+  copy_if_file "$HOST_HOME/.grok/config.toml" "$HOME/.grok/config.toml"
+  overlay_grok_ui "$HOME/.grok/config.toml"
+elif [ -f "$HOME/.grok/auth.json" ]; then
+  mkdir -p "$HOME/.grok"
   cat > "$HOME/.grok/config.toml" <<'EOF'
 [ui]
 permission_mode = "always-approve"
@@ -130,8 +170,10 @@ enabled = false
 official_marketplace_auto_installed = true
 default_skills_installs_purged = true
 EOF
+  chmod 600 "$HOME/.grok/config.toml"
 fi
 copy_if_file "$HOST_HOME/.claude.json" "$HOME/.claude.json"
+copy_if_file "$HOST_HOME/.claude/settings.json" "$HOME/.claude/settings.json"
 copy_if_file "$HOST_HOME/.codex/auth.json" "$HOME/.codex/auth.json"
 copy_if_file "$HOST_HOME/.codex/config.toml" "$HOME/.codex/config.toml"
 
