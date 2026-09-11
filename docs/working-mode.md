@@ -19,7 +19,8 @@ From the **target repository root**:
    `crucible adopt work --managed --working-mode`
 2. Cast: mapper ≠ maker ≠ reviewer; HIGH needs two harness kinds
 3. Map: architecture writes `architecture/modules.md` + `MAP.md`;
-   `.crucible/work/wm.sh record-mapper`; `.crucible/work/wm.sh map-ready`
+   `.crucible/work/wm.sh record-mapper --from MAP.md`;
+   `.crucible/work/wm.sh map-ready`
 4. Critique: map-judge returns MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK;
    `.crucible/work/wm.sh map-verdict RETURNFILE`
 5. If next slice HIGH/live: write `MAP-HUMAN` (`SIGNED`, `MAP`, `SHA256` of
