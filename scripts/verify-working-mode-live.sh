@@ -1,9 +1,11 @@
 #!/bin/sh
 # 13b live arm: throwaway tarball adopt + real harness CLIs.
 # Fail closed: missing grok/claude/codex → INDEPENDENCE_UNAVAILABLE exit 1.
-# Present CLIs: fixture mapper/critique (PID files) + live maker + live reviewer,
-# four distinct PIDs, reviewer re-runs the named falsifier, one wm loop.
-# Fail closed on missing CLIs. Do not copy harness slice-close into this script.
+# Fail closed: grok/claude/codex cannot auth under empty HOME →
+# INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
+# All three auth: four live CLI processes (not architecture-agent.sh /
+# critique-agent.sh), distinct PIDs, LOW map, one wm loop.
+# PATH-stripped arm still exit 1 INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
 # Run from the worktree against an extracted tarball (prefer not as a tarball payload).
 set -eu
 
@@ -35,6 +37,12 @@ if grep -E -q 'mark_slice_closed\(\)|reset_brick\(\)' \
 else
   ok
 fi
+if grep -E -q '\./tools/(architecture|critique)-agent\.sh' \
+  "$HERE/scripts/verify-working-mode-live.sh"; then
+  bad 'live walk must not use architecture-agent.sh / critique-agent.sh as workers'
+else
+  ok
+fi
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 command -v tar >/dev/null 2>&1 && ok || bad 'tar required'
 
@@ -50,7 +58,9 @@ if [ "$LIVE_GROK" -ne 1 ] || [ "$LIVE_CLAUDE" -ne 1 ] || [ "$LIVE_CODEX" -ne 1 ]
 fi
 
 GROK_BIN=$(command -v grok)
-export GROK_BIN
+CLAUDE_BIN=$(command -v claude)
+CODEX_BIN=$(command -v codex)
+export GROK_BIN CLAUDE_BIN CODEX_BIN
 GROK_AGENT_DASHBOARD=0
 export GROK_AGENT_DASHBOARD
 
@@ -74,12 +84,42 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 129' 1
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 130' 2
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
-# Auth only (no harness skill trees). Vendor bundled skills grok may unpack
-# under $HOME/.grok/bundled/ are not .grok/skills / .claude/skills / .agents/skills.
-if [ -n "$HOST_HOME" ] && [ -f "$HOST_HOME/.grok/auth.json" ]; then
-  mkdir -p "$HOME/.grok"
-  cp "$HOST_HOME/.grok/auth.json" "$HOME/.grok/auth.json"
-  chmod 600 "$HOME/.grok/auth.json"
+# Auth files only (no harness skill trees). Do not invent secrets; do not print them.
+copy_if_file() {
+  src=$1
+  dst=$2
+  if [ -n "$HOST_HOME" ] && [ -f "$src" ]; then
+    mkdir -p "$(dirname "$dst")"
+    cp "$src" "$dst"
+    chmod 600 "$dst"
+  fi
+}
+
+run_timeout() {
+  secs=$1
+  shift
+  _rt_rc=0
+  if command -v timeout >/dev/null 2>&1; then
+    timeout -s TERM "$secs" "$@" >/dev/null 2>/dev/null || _rt_rc=$?
+    return "$_rt_rc"
+  fi
+  python3 -c '
+import subprocess, sys
+t=int(sys.argv[1])
+cmd=sys.argv[2:]
+try:
+    r=subprocess.run(cmd, timeout=t, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sys.exit(r.returncode)
+except subprocess.TimeoutExpired:
+    sys.exit(124)
+except FileNotFoundError:
+    sys.exit(127)
+' "$secs" "$@" || _rt_rc=$?
+  return "$_rt_rc"
+}
+
+copy_if_file "$HOST_HOME/.grok/auth.json" "$HOME/.grok/auth.json"
+if [ -f "$HOME/.grok/auth.json" ]; then
   cat > "$HOME/.grok/config.toml" <<'EOF'
 [ui]
 permission_mode = "always-approve"
@@ -90,9 +130,45 @@ enabled = false
 official_marketplace_auto_installed = true
 default_skills_installs_purged = true
 EOF
+fi
+copy_if_file "$HOST_HOME/.claude.json" "$HOME/.claude.json"
+copy_if_file "$HOST_HOME/.codex/auth.json" "$HOME/.codex/auth.json"
+copy_if_file "$HOST_HOME/.codex/config.toml" "$HOME/.codex/config.toml"
+
+PROBE_DIR="$BASE/probe"
+mkdir -p "$PROBE_DIR"
+printf 'probe\n' > "$PROBE_DIR/README"
+(
+  CDPATH=
+  cd "$PROBE_DIR"
+  git init -q
+  git config user.email 'wm@local'
+  git config user.name 'working-mode'
+  git add README
+  git -c user.email=wm@local -c user.name=working-mode commit -qm probe
+) >/dev/null 2>"$ERR" || true
+
+# One-shot ping under empty HOME. Discard output (do not print secrets).
+printf 'reply with pong only\n' > "$PROBE_DIR/ping.txt"
+if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+  "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
+  --output-format plain --max-turns 1 --prompt-file "$PROBE_DIR/ping.txt" ); then
   ok
 else
-  bad 'host grok auth.json missing; live maker/reviewer cannot authenticate under empty HOME'
+  die_unavail "grok cannot auth"
+fi
+if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+  "$CLAUDE_BIN" -p --output-format text --permission-mode dontAsk \
+  --dangerously-skip-permissions pong ); then
+  ok
+else
+  die_unavail "claude cannot auth"
+fi
+if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+  "$CODEX_BIN" exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox pong ); then
+  ok
+else
+  die_unavail "codex cannot auth"
 fi
 
 assert_no_home_skill_trees() {
@@ -222,6 +298,26 @@ the maker.
 
 Agent ids: mapper=alice critique=bob maker=carol reviewer=dave.
 
+## mapper (agent alice)
+Write MAP.md with exactly these bytes (tabs between columns):
+
+MAPPER: alice
+
+id	module	owned_paths	depends_on	risk
+s1	product	product/hello.txt	-	LOW
+
+Then run: .wm/bin/wm record-mapper --from MAP.md
+Do not implement the product. Do not be the maker.
+
+## critique (agent bob)
+Write reviews/critique.md with Invert, Adversarial, and Simple sections.
+Write .wm/return/bob.md with:
+WORD: MAP-ACCEPT
+AGENT: bob
+MAP: MAP.md
+Then run: .wm/bin/wm check-map-word .wm/return/bob.md
+Do not be the mapper or maker.
+
 ## maker-falsify (agent carol)
 Do not create or edit product/hello.txt.
 Write exactly one line to .wm/FALSIFIER:
@@ -251,38 +347,36 @@ Append one line to .wm/reviewer-reran: reran <cmd>
 Do not edit product files. Do not be the maker.
 EOF
 
-  cat > tools/architecture-agent.sh <<'EOF'
+  cat > tools/live-mapper.sh <<'EOF'
 #!/bin/sh
 set -eu
-printf 'ran\n' > .wm/mapper-ran
+mkdir -p .wm
 printf 'pid %s\n' "$$" > .wm/mapper-pid
-cat > MAP.md <<'MAP'
-MAPPER: alice
-
-id	module	owned_paths	depends_on	risk
-s1	product	product/hello.txt	-	LOW
-MAP
-.wm/bin/wm record-mapper --from MAP.md
+printf 'ran\n' > .wm/mapper-ran
+[ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
+prompt=.wm/live-mapper.prompt
+{
+  printf 'role: mapper\nagent: alice\n'
+  cat tools/WORKER.md
+} > "$prompt"
+exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
+  --output-format plain --max-turns 30 --prompt-file "$prompt"
 EOF
 
-  cat > tools/critique-agent.sh <<'EOF'
+  cat > tools/live-critique.sh <<'EOF'
 #!/bin/sh
 set -eu
-printf 'ran\n' > .wm/critique-ran
+mkdir -p .wm
 printf 'pid %s\n' "$$" > .wm/critique-pid
-mkdir -p reviews .wm/return
-cat > reviews/critique.md <<'REV'
-## Invert
-One file, one module. Failure-first: hello.txt missing or not exactly hello.
-
-## Adversarial
-Attack: mapper later acting as maker; a falsifier that never reads the file.
-
-## Simple
-Complected: treating MAP-ACCEPT as CLOSED PASS. Keep map words distinct from brick close.
-REV
-printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
-.wm/bin/wm check-map-word .wm/return/bob.md
+printf 'ran\n' > .wm/critique-ran
+[ -n "${CLAUDE_BIN:-}" ] || CLAUDE_BIN=$(command -v claude)
+prompt=.wm/live-critique.prompt
+{
+  printf 'role: critique\nagent: bob\n'
+  cat tools/WORKER.md
+} > "$prompt"
+exec "$CLAUDE_BIN" -p --output-format text --permission-mode dontAsk \
+  --dangerously-skip-permissions "$(cat "$prompt")"
 EOF
 
   cat > tools/live-maker.sh <<'EOF'
@@ -310,18 +404,17 @@ printf 'pid %s\n' "$$" > .wm/reviewer-pid
 printf 'ran\n' > .wm/reviewer-ran
 brief=${1:-${BRIEF:-}}
 [ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-reviewer: brief missing\n' >&2; exit 1; }
-[ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
+[ -n "${CODEX_BIN:-}" ] || CODEX_BIN=$(command -v codex)
 prompt=.wm/live-reviewer.prompt
 {
   cat "$brief"
   printf '\n'
   cat tools/WORKER.md
 } > "$prompt"
-exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 30 --prompt-file "$prompt"
+exec "$CODEX_BIN" exec --dangerously-bypass-approvals-and-sandbox - < "$prompt"
 EOF
 
-  chmod +x tools/architecture-agent.sh tools/critique-agent.sh \
+  chmod +x tools/live-mapper.sh tools/live-critique.sh \
     tools/live-maker.sh tools/live-reviewer.sh
 
   if ! "$WM" init >"$OUT" 2>"$ERR"; then
@@ -331,13 +424,13 @@ EOF
   fi
   "$WM" cast coordinator parent grok - >/dev/null 2>"$ERR" || true
 
-  if ./tools/architecture-agent.sh >"$OUT" 2>"$ERR"; then
+  if ./tools/live-mapper.sh >"$OUT" 2>"$ERR"; then
     ok
   else
-    bad "architecture agent refused: $(cat "$OUT") $(cat "$ERR")"
+    bad "live mapper refused: $(cat "$OUT") $(cat "$ERR")"
   fi
   [ -f MAP.md ] && grep -q '^s1	product	product/hello.txt	-	LOW$' MAP.md \
-    && ok || bad 'architecture agent did not write LOW one-slice MAP.md'
+    && ok || bad 'live mapper did not write LOW one-slice MAP.md'
   [ -f .wm/mapper-ran ] && ok || bad 'mapper process did not run'
 
   if "$WM" map-ready >"$OUT" 2>"$ERR"; then
@@ -347,10 +440,10 @@ EOF
   fi
   [ -f slices.tsv ] && ok || bad 'map-ready did not write slices.tsv'
 
-  if ./tools/critique-agent.sh >"$OUT" 2>"$ERR"; then
+  if ./tools/live-critique.sh >"$OUT" 2>"$ERR"; then
     ok
   else
-    bad "critique agent refused: $(cat "$OUT") $(cat "$ERR")"
+    bad "live critique refused: $(cat "$OUT") $(cat "$ERR")"
   fi
   [ -f .wm/critique-ran ] && ok || bad 'critique process did not run'
   if "$WM" map-verdict .wm/return/bob.md >"$OUT" 2>"$ERR"; then
@@ -364,7 +457,7 @@ EOF
   else
     bad "cast maker refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  if "$WM" cast reviewer dave grok './tools/live-reviewer.sh {BRIEF}' >"$OUT" 2>"$ERR"; then
+  if "$WM" cast reviewer dave codex './tools/live-reviewer.sh {BRIEF}' >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast reviewer refused: $(cat "$OUT") $(cat "$ERR")"

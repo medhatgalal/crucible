@@ -59,12 +59,15 @@ and not a dummy file.
 
 `.crucible/<program>/wm.sh` parses the same `key: value` shape as return files.
 `SIGNED:` must be a non-empty human id — not mapper, maker, reviewer, parent,
-coordinator, or loop. `MAP:` must name an existing map file (`MAP.md`). A token
-such as `x` is not a sign.
+coordinator, or loop. `MAP:` must name an existing map file (`MAP.md`).
+`SHA256:` (or `MAP-SHA256:`) must equal the current `file_sha256` of that
+file. A rewrite of `MAP.md` after sign is not a sign. A token such as `x`
+is not a sign.
 
 ```
 SIGNED: operator
 MAP: MAP.md
+SHA256: <sha256 of MAP.md>
 ```
 
 Without a valid `MAP-HUMAN` on HIGH/live,
@@ -103,12 +106,13 @@ whose command is the CLI:
 ```text
 name	kind	model	effort	command
 alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
-bob	claude	sonnet	high	claude -p --output-format text "read {BRIEF} and follow it exactly"
-carol	codex	gpt	high	codex exec -- "read {BRIEF} and follow it exactly"
+bob	claude	sonnet	high	claude -p --output-format text 'read {BRIEF} and follow it exactly'
+carol	codex	gpt	high	codex exec -- 'read {BRIEF} and follow it exactly'
 dave	grok	grok-4	high	grok -p --prompt-file {BRIEF}
 ```
 
-`{BRIEF}` is the absolute brief path. Skills resolve from repo-root
+`{BRIEF}` is the absolute brief path; the engine quotes the replacement.
+Do not wrap `{BRIEF}` in quotes in the command. Skills resolve from repo-root
 `.grok/skills/`, `.claude/skills/`, `.agents/skills/` — not `$HOME`. Mapper,
 critique, and maker must be distinct agents. Reviewer re-runs the named
 falsifier.

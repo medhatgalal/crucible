@@ -517,6 +517,25 @@ plant_map_accept() {
   printf 's1\twidget\tsrc/widget/api.py\t-\t%s\tREADY\n' "${1:-LOW}" >> slices.tsv
 }
 
+sha256_file() {
+  f=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$f" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$f" | awk '{print $NF}'
+  fi
+}
+
+write_map_human() {
+  _wmh_who=${1:-operator}
+  _wmh_map=${2:-MAP.md}
+  _wmh_key=${3:-SHA256}
+  _wmh_h=$(sha256_file "$_wmh_map")
+  printf 'SIGNED: %s\nMAP: %s\n%s: %s\n' "$_wmh_who" "$_wmh_map" "$_wmh_key" "$_wmh_h" > MAP-HUMAN
+}
+
 extract_fn() {
   awk -v n="$1" '
     $0 ~ "^" n "\\(\\)" { p=1; next }
@@ -770,6 +789,10 @@ require_fgrep "$HERE/docs/working-mode.md" 'MAP-HUMAN' \
   'docs/working-mode.md must name MAP-HUMAN (8c)'
 require_fgrep "$HERE/docs/working-mode.md" 'SIGNED:' \
   'docs/working-mode.md must name SIGNED: as the human sign key'
+require_fgrep "$HERE/docs/working-mode.md" 'SHA256:' \
+  'docs/working-mode.md must name SHA256: as the MAP-HUMAN hash-bind key'
+require_fgrep "$HERE/docs/working-mode.md" 'MAP-SHA256:' \
+  'docs/working-mode.md must name MAP-SHA256: as the SHA256 alias'
 require_fgrep "$HERE/docs/working-mode.md" 'not mapper' \
   'docs/working-mode.md must refuse mapper/maker/reviewer as SIGNED'
 require_fgrep "$HERE/docs/working-mode.md" 'slices.tsv' \
@@ -867,28 +890,47 @@ setup_high_twokind_accept t-human-badmap
 printf 'SIGNED: operator\nMAP: nosuch-map.md\n' > MAP-HUMAN
 refuse_high_sign_no_exec 'HIGH MAP-HUMAN MAP must name an existing map file'
 
+setup_high_twokind_accept t-human-nosha
+printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN without SHA256 is not a sign'
+
+setup_high_twokind_accept t-human-wrong-sha
+printf 'SIGNED: operator\nMAP: MAP.md\nSHA256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n' > MAP-HUMAN
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN wrong SHA256 is not a sign'
+
+setup_high_twokind_accept t-human-stale-hash
+write_map_human operator MAP.md
+printf 'x' >> MAP.md
+refuse_high_sign_no_exec 'HIGH MAP-HUMAN stale after MAP.md rewrite'
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -q 'STOP-ASK MAP-HUMAN' \
+    && ok || bad "stale MAP-HUMAN next must STOP-ASK MAP-HUMAN, got $card"
+else
+  bad "stale MAP-HUMAN next refused: $(cat "$ERR")"
+fi
+
 setup_high_twokind_accept t-human-signed-maker
-printf 'SIGNED: carol\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human carol MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED maker refused'
 
 setup_high_twokind_accept t-human-signed-mapper
-printf 'SIGNED: alice\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human alice MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED mapper refused'
 
 setup_high_twokind_accept t-human-signed-reviewer
-printf 'SIGNED: dave\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human dave MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED reviewer refused'
 
 setup_high_twokind_accept t-human-signed-parent
-printf 'SIGNED: parent\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human parent MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED parent refused'
 
 setup_high_twokind_accept t-human-signed-coordinator
-printf 'SIGNED: coordinator\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human coordinator MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED coordinator refused'
 
 setup_high_twokind_accept t-human-signed-loop
-printf 'SIGNED: loop\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human loop MAP.md
 refuse_high_sign_no_exec 'HIGH SIGNED loop refused'
 
 # Full cadence: map-ready / map-verdict (unknown command is RED until implemented).
@@ -982,7 +1024,7 @@ impl_ok 'map-ready HIGH one-kind' "$WM" map-ready || true
 write_map_return bob MAP-ACCEPT
 impl_ok 'map-verdict HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
-printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human operator MAP.md
 if card=$("$WM" next 2>"$ERR"); then
   printf '%s\n' "$card" | grep -q 'STOP-ASK' \
     && ok || bad "HIGH + one kind next must STOP-ASK, got $card"
@@ -1014,7 +1056,7 @@ cast_brick_panel carol dave grok claude
 rm -f MAP-HUMAN .wm/FALSIFIER
 refuses 'HIGH two-kind without MAP-HUMAN cannot start maker' 'MAP-HUMAN' \
   "$WM" run maker-falsify
-printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human operator MAP.md
 if card=$("$WM" next 2>"$ERR"); then
   printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
     && ok || bad "HIGH two-kind with MAP-HUMAN next must emit READY slice, got $card"
@@ -1026,6 +1068,11 @@ fi
 impl_ok 'HIGH two-kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
 [ -f .wm/FALSIFIER ] && ok || bad 'HIGH two-kind maker-falsify must write FALSIFIER'
 
+setup_high_twokind_accept t-human-map-sha256
+write_map_human operator MAP.md MAP-SHA256
+impl_ok 'HIGH MAP-SHA256 alias can start maker' "$WM" run maker-falsify || true
+[ -f .wm/FALSIFIER ] && ok || bad 'HIGH MAP-SHA256 maker-falsify must write FALSIFIER'
+
 setup_map_repo t-live-signed
 write_architecture_fixture alice LOW yes
 impl_ok 'record-mapper live signed' "$WM" record-mapper --from MAP.md || true
@@ -1033,7 +1080,7 @@ impl_ok 'map-ready live signed' "$WM" map-ready || true
 write_map_return bob MAP-ACCEPT
 impl_ok 'map-verdict live signed' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
-printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human operator MAP.md
 impl_ok 'live + MAP-HUMAN + same kind can start maker (3d is HIGH-only)' \
   "$WM" run maker-falsify || true
 
@@ -1106,7 +1153,7 @@ impl_ok 'map-ready loop HIGH one-kind' "$WM" map-ready || true
 write_map_return bob MAP-ACCEPT
 impl_ok 'map-verdict loop HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
-printf 'SIGNED: operator\nMAP: MAP.md\n' > MAP-HUMAN
+write_map_human operator MAP.md
 run_map_loop
 assert_map_loop_foreground 't-loop-high-one-kind'
 printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \

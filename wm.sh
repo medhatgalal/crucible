@@ -27,6 +27,15 @@ file_sha256() {
   fi
 }
 
+# POSIX double-quote a string for sh -c (escape \ and ").
+quote_dq() {
+  printf '%s\n' "$1" | awk '{
+    gsub(/\\/, "\\\\")
+    gsub(/"/, "\\\"")
+    printf "\"%s\"\n", $0
+  }'
+}
+
 file_mtime() {
   if [ ! -e "$1" ]; then
     printf '0\n'
@@ -853,6 +862,15 @@ human_sign_present() {
   _hs_map=$(printf '%s\n' "$_hs_map" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }')
   [ -n "$_hs_map" ] || return 1
   [ -f "$_hs_map" ] || return 1
+  _hs_want=$(kv_get MAP-HUMAN SHA256)
+  if [ -z "$_hs_want" ]; then
+    _hs_want=$(kv_get MAP-HUMAN MAP-SHA256)
+  fi
+  _hs_want=$(printf '%s\n' "$_hs_want" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print tolower($0) }')
+  [ -n "$_hs_want" ] || return 1
+  _hs_got=$(file_sha256 "$_hs_map")
+  _hs_got=$(printf '%s\n' "$_hs_got" | awk '{ print tolower($0) }')
+  [ "$_hs_want" = "$_hs_got" ] || return 1
   return 0
 }
 
@@ -1772,7 +1790,16 @@ cmd_run() {
   case $_ru_brief in
     /*) _ru_absbrief=$_ru_brief ;;
   esac
-  _ru_expanded=$(printf '%s\n' "$_ru_command" | awk -v b="$_ru_absbrief" '{ gsub(/\{BRIEF\}/, b); print }')
+  _ru_qbrief=$(quote_dq "$_ru_absbrief")
+  _ru_expanded=$(printf '%s\n' "$_ru_command" | awk -v b="$_ru_qbrief" '{
+    s = $0
+    out = ""
+    while ((i = index(s, "{BRIEF}")) > 0) {
+      out = out substr(s, 1, i - 1) b
+      s = substr(s, i + 7)
+    }
+    print out s
+  }')
   BRIEF=$_ru_absbrief
   export BRIEF
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then

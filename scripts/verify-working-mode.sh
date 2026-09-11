@@ -1678,6 +1678,32 @@ else
   ok
 fi
 
+# Quote {BRIEF}: engine wraps the absolute path so a space is one argv.
+setup_repo 'path with space/t-brief-quote'
+"$WM" cast maker alice grok 'sh -c '\''printf %s "$1" > .wm/brief-arg.txt'\'' _ {BRIEF}' >/dev/null
+rm -f .wm/brief-arg.txt
+set +e
+"$WM" run maker-build >"$OUT" 2>"$ERR"
+brief_rc=$?
+set -e
+[ "$brief_rc" -eq 0 ] && ok || bad "quoted BRIEF maker-build refused rc=$brief_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -f .wm/brief-arg.txt ]; then
+  got=$(cat .wm/brief-arg.txt)
+  case $got in
+    *' '*) ok ;;
+    *) bad "brief-arg path has no space (split?): $got" ;;
+  esac
+  [ -f "$got" ] && ok || bad "brief-arg.txt is not one existing brief path: $got"
+else
+  bad 'brief-arg.txt missing after wm run'
+fi
+if grep -F -q '{BRIEF}' "$HERE/adapters/grok.md" \
+  && grep -E -q 'engine quotes|quotes the replacement|quoted by the engine' "$HERE/adapters/grok.md"; then
+  ok
+else
+  bad 'adapters/grok.md must keep {BRIEF} and say the engine quotes the replacement'
+fi
+
 # Task 3: wm run maker-build whose command is false exits non-zero; no CLOSED PASS
 setup_repo t-run-rc-false
 "$WM" cast maker alice grok false >/dev/null

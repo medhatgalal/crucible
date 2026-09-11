@@ -6,7 +6,7 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 One foreground `wm loop` walks remaining READY slices; HIGH unsigned is
 `STOP-ASK MAP-HUMAN`. Live independence fails closed when grok/claude/codex
-are missing. `START.md` / `BOOTSTRAP.md` point at opt-in working-mode
+are missing or cannot auth. `START.md` / `BOOTSTRAP.md` point at opt-in working-mode
 ([working-mode.md](working-mode.md)); guided adopt stays `--managed` without
 the flag. Commands use `.crucible/<program>/wm.sh` from the target repo root.
 `wm run` returns the worker rc.
@@ -33,4 +33,4 @@ CLI; do not put credentials in those files.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
 - Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
 - Working-mode skills live in the target tree. `$HOME` skill trees are not a runtime. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation.
-- Live grok/claude/codex independence is unavailable when those CLIs are missing from `PATH`. Fixture workers can still close. Adapters do not ship credentials.
+- Live grok/claude/codex independence is unavailable when those CLIs are missing from `PATH` or cannot auth under empty HOME. Fixture workers can still close. Adapters do not ship credentials.

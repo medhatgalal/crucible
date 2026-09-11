@@ -13,7 +13,9 @@ you point `--agent` at a file there.
 `.crucible/<program>/wm.sh` does not spawn `grok` by name. Put the CLI on a
 machine-local `agents.tsv` row (gitignored) and
 `.crucible/<program>/wm.sh cast` that agent. `{BRIEF}` is replaced with the
-absolute brief path.
+absolute brief path. The engine quotes the replacement (POSIX double quotes;
+any `"` in the path is escaped). Do not wrap `{BRIEF}` in quotes in the
+command — that would double-quote.
 
 ```text
 name	kind	model	effort	command
@@ -23,8 +25,8 @@ alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
 Guided-cycle `agents.tsv` uses the same columns. Auth stays in the operator
 environment (never in this file, never in skills, never committed).
 
-Non-interactive one-shot: `grok -p --prompt-file {BRIEF}`. Interactive:
-`grok --cwd .` then open `{BRIEF}`.
+Non-interactive one-shot: `grok -p --prompt-file {BRIEF}` (engine quotes the
+path). Interactive: `grok --cwd .` then open `{BRIEF}`.
 
 ## Skills
 

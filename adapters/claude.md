@@ -16,13 +16,13 @@ absolute brief path.
 
 ```text
 name	kind	model	effort	command
-bob	claude	sonnet	high	claude -p --output-format text "read {BRIEF} and follow it exactly"
+bob	claude	sonnet	high	claude -p --output-format text 'read {BRIEF} and follow it exactly'
 ```
 
 Guided-cycle `agents.tsv` uses the same columns. Auth stays in the operator
 environment (never in this file, never in skills, never committed).
 
-Non-interactive: `claude -p --output-format text "read {BRIEF} and follow it exactly"`.
+Non-interactive: `claude -p --output-format text 'read {BRIEF} and follow it exactly'`.
 Do not pass API keys on the command line.
 
 ## Skills

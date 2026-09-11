@@ -16,13 +16,13 @@ absolute brief path.
 
 ```text
 name	kind	model	effort	command
-carol	codex	gpt	high	codex exec -- "read {BRIEF} and follow it exactly"
+carol	codex	gpt	high	codex exec -- 'read {BRIEF} and follow it exactly'
 ```
 
 Guided-cycle `agents.tsv` uses the same columns. Auth stays in the operator
 environment (never in this file, never in skills, never committed).
 
-Non-interactive: `codex exec -- "read {BRIEF} and follow it exactly"`.
+Non-interactive: `codex exec -- 'read {BRIEF} and follow it exactly'`.
 Do not pass tokens on the command line.
 
 ## Skills

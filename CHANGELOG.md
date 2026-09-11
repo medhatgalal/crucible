@@ -23,6 +23,11 @@ All notable changes to this project are documented here. This project follows
 - `wm run` returns the worker exit status after judge/WORD checks. A
   `false` maker-build is non-zero and does not CLOSED PASS. Maker-falsify/build
   that `die`, and reviewer missing WORD, still die.
+- MAP-HUMAN binds `SHA256:` (or `MAP-SHA256:`) to the named MAP file bytes;
+  a rewrite after sign is not a sign (8c).
+- `wm run` substitutes `{BRIEF}` as a POSIX-quoted absolute path.
+- Live independence probes grok/claude/codex auth under empty HOME and
+  fails closed (`cannot auth`) instead of a grok-only fixture PASS.
 
 ## [1.7.0] - 2026-09-10
 
