@@ -10,8 +10,9 @@ you point `--agent` at a file there.
 
 ## Invoke
 
-`wm` does not spawn `grok` by name. Put the CLI on a machine-local `agents.tsv`
-row (gitignored) and `wm cast` that agent. `{BRIEF}` is replaced with the
+`.crucible/<program>/wm.sh` does not spawn `grok` by name. Put the CLI on a
+machine-local `agents.tsv` row (gitignored) and
+`.crucible/<program>/wm.sh cast` that agent. `{BRIEF}` is replaced with the
 absolute brief path.
 
 ```text

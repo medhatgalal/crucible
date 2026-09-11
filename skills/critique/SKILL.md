@@ -3,6 +3,8 @@ name: critique
 description: Attack a named map with invert, adversarial, and simple lenses only.
 ---
 
+Kernel: `.crucible/<program>/wm.sh` from the target repository root. `wm` in examples below means that script.
+
 Job: independently attack `MAP.md`. You are the map-judge, not the mapper and not a brick reviewer. Mapper ≠ map-judge ≠ later maker.
 
 ## Lenses (only these three)

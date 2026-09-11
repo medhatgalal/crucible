@@ -86,7 +86,6 @@ LIVE_CODEX=0
 command -v grok >/dev/null 2>&1 && LIVE_GROK=1
 command -v claude >/dev/null 2>&1 && LIVE_CLAUDE=1
 command -v codex >/dev/null 2>&1 && LIVE_CODEX=1
-INDEPENDENCE=fixture
 if [ "$LIVE_GROK" -eq 1 ] && [ "$LIVE_CLAUDE" -eq 1 ] && [ "$LIVE_CODEX" -eq 1 ]; then
   INDEPENDENCE=live-clis-present
   printf 'LIVE_CLIS_PRESENT grok claude codex (fixture 3-slice; live agents not invoked)\n'

@@ -20,6 +20,10 @@ docs/history/
 # inside the engine is absurd. Its lessons are hand-lifted into LESSONS or the changelog.
 .crucible/
 
+# local SDD ledger and isolated worktrees (not source)
+.superpowers/
+.worktrees/
+
 # session research artifacts live outside the repo
 RETROSPECTIVE.md
 reviews/

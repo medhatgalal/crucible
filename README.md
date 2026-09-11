@@ -57,6 +57,7 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | Start real work while leftover DONE occupies another cycle | `adopt NAME --managed --panel-from SRC` — copies the approved panel; does not `--next` |
 | Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
+| Run working-mode (opt-in) | If adopted with `--working-mode`: `.crucible/work/wm.sh` — [docs/working-mode.md](docs/working-mode.md) |
 
 Conversational “keep looping” is not a waiver to implement.
 
@@ -171,6 +172,7 @@ then see [SECURITY.md](SECURITY.md) and [RULES.md](RULES.md) for operating guida
 - [docs/install.md](docs/install.md) — first install vs upgrade; confirm `engine:`; `--next`; `drive`
 - [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
 - [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement
+- [docs/working-mode.md](docs/working-mode.md) — opt-in `wm.sh` map/brick runner (not the guided default)
 - [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria
 - [CONFIGURE.md](CONFIGURE.md) — agents, models, personas, and risk posture
 - [RULES.md](RULES.md) — enforced checks versus instructional rules
@@ -199,7 +201,14 @@ names the broken invariant:
 ./scripts/verify-quickstart.sh
 ./scripts/verify-agent-cycle.sh
 ./scripts/verify-drive.sh
+./scripts/verify-working-mode.sh
 ```
+
+`./scripts/verify-working-mode-adopt.sh`, `./scripts/verify-working-mode-map.sh`,
+and `./scripts/verify-working-mode-blank-home.sh` exist as additional
+working-mode proofs. `./scripts/verify-working-mode-live.sh` is fail-closed
+(`INDEPENDENCE_UNAVAILABLE` when grok/claude/codex are missing) and is **not**
+a required CI gate.
 
 `./scripts/selftest.sh --fast` is the bounded gate to use between full runs.
 

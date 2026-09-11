@@ -22,6 +22,7 @@ Cwd is the **target repository root**, not the program directory. First install 
 | Human only | `cycle problem FILE --next` | After this investigation should end: same panel, archive under `history/`, bind a new PROBLEM. Drive never invents the next problem. |
 | Human only | `cycle problem --abandon REASON` | Archive junk INVESTIGATE with no PASS and no new PROBLEM. Same panel. |
 | Human only | act on `ESCALATE` / cleanup | Independence stop, overdue, or `cycle clean --dry-run` after you are finished with the program |
+| Operator (working-mode) | `.crucible/<program>/wm.sh` | If `PROGRAM` contains `working-mode: yes`. Map/brick runner — [docs/working-mode.md](docs/working-mode.md) |
 
 For release-specific changes and current operator-visible limits, see
 [docs/whats-new.md](docs/whats-new.md). Working-mode is opt-in (not the guided

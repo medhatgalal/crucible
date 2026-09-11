@@ -24,7 +24,7 @@ jobs:
 
       - name: every shell file parses under /bin/sh
         run: |
-          for f in crucible scripts/*.sh; do
+          for f in crucible wm.sh scripts/*.sh; do
             /bin/sh -n "$f" || exit 1
             echo "ok  $f"
           done
@@ -60,6 +60,9 @@ jobs:
 
       - name: release package is reproducible and cold-start capable
         run: ./scripts/verify-package.sh
+
+      - name: working-mode kernel CHECKs
+        run: ./scripts/verify-working-mode.sh
 
       # Each verifier gets its own step so a red run names the broken invariant without
       # anyone opening the log. Cheapest-first, so a trivial failure is not reported from
@@ -111,7 +114,7 @@ jobs:
       - name: demand pairing holds under BSD grep
         run: ./scripts/verify-demand.sh
       - name: every shell file parses under /bin/sh
-        run: for f in crucible scripts/*.sh; do /bin/sh -n "$f" || exit 1; done
+        run: for f in crucible wm.sh scripts/*.sh; do /bin/sh -n "$f" || exit 1; done
       - name: the gate refuses what it claims
         run: ./scripts/selftest.sh
       - name: release package is reproducible and cold-start capable

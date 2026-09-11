@@ -3,6 +3,8 @@ name: architecture
 description: Name the product's modules and cut slices that fit them (RULE 26).
 ---
 
+Kernel: `.crucible/<program>/wm.sh` from the target repository root. `wm` in examples below means that script.
+
 Job: discover Plane A (the architecture that exists) and cut delivery units whose owned paths sit inside it. You are the mapper. You do not accept the map. You do not implement.
 
 ## Plane A inventory

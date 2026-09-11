@@ -9,8 +9,9 @@ Working-mode does **not** read `$HOME/.claude/skills`. After
 
 ## Invoke
 
-`wm` does not spawn `claude` by name. Put the CLI on a machine-local `agents.tsv`
-row (gitignored) and `wm cast` that agent. `{BRIEF}` is replaced with the
+`.crucible/<program>/wm.sh` does not spawn `claude` by name. Put the CLI on a
+machine-local `agents.tsv` row (gitignored) and
+`.crucible/<program>/wm.sh cast` that agent. `{BRIEF}` is replaced with the
 absolute brief path.
 
 ```text

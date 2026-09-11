@@ -3,6 +3,8 @@ name: review
 description: Judge a delivery unit through code and testing lenses; re-run the named falsifier.
 ---
 
+Kernel: `.crucible/<program>/wm.sh` from the target repository root. `wm` in examples below means that script.
+
 Job: independently judge one frozen unit. You verify; you do not improve. Maker ≠ reviewer.
 
 ## Lenses

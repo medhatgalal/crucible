@@ -3,6 +3,8 @@ name: loop-design
 description: Craft, audit, and debrief the small loop. Not the delivery walker.
 ---
 
+Kernel: `.crucible/<program>/wm.sh` from the target repository root. `wm` in examples below means that script.
+
 Job: design or doctor the **small loop** (observe → choose → act → verify → record → stop). You do not run product slices. `wm loop` is the kernel walker; this battery is not that walker.
 
 ## Craft

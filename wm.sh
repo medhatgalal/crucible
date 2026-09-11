@@ -133,17 +133,6 @@ owned_paths() {
   '
 }
 
-test_paths() {
-  [ -f SPEC.md ] || return 0
-  section_body '## Test files' SPEC.md | awk '
-    /^- / {
-      sub(/^- /, "")
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "")
-      if ($0 != "" && $0 != "(none)") print
-    }
-  '
-}
-
 path_in_list() {
   _pil_path=$1
   _pil_list=$2

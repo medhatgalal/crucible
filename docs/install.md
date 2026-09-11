@@ -68,7 +68,8 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 ## Opt-in working-mode
 
-Guided 1.6.6 stays the default. To also install the working-mode runner and the four
+On **1.7.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. To also install the working-mode runner and the four
 batteries into the **target** (no `$HOME` skill trees):
 
 ```sh
@@ -82,11 +83,14 @@ of the installing tree). Adapters are copied when the source tree has `adapters/
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
-Refresh working-mode from a **versioned tarball** (or another checkout), never from the
-installed binary:
+`--refresh` refreshes working-mode if it is already installed (`wm.sh` present or
+`PROGRAM` has `working-mode: yes`). `adopt PROGRAM --refresh --working-mode` can
+add working-mode onto a guided install. Refresh from a **versioned tarball** (or
+another checkout), never from the installed binary:
 
 ```sh
 <path-to-newer-crucible>/crucible adopt work --refresh
+<path-to-newer-crucible>/crucible adopt work --refresh --working-mode
 ```
 
 `--refresh` refuses when resolved `src` equals `dst` (`src == dst`). Operator-patched
@@ -158,7 +162,9 @@ wrote until the next `cycle` rewrites it. What proves the refresh landed is `ado
 
 **Overwrites:** `crucible`, `VERSION`, `START.md`, `BOOTSTRAP.md`, `RULES.md`,
 `LOOP.md`, `CONFIGURE.md`, `roles/*.md`, `scripts/*.sh` (except release packagers),
-top-level `docs/*.md`.
+top-level `docs/*.md`. On a working-mode install (already installed, or
+`--refresh --working-mode`): `wm.sh`, `ROUTING.tsv`, `adapters/`, and skill
+views (KEEP batteries already documented below).
 
 **Keeps:** `PROGRAM`, `PANEL*`, `agents.tsv`, `PROBLEM.md`, `CLAIMS.md`,
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
@@ -242,6 +248,7 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 | Coordinator | `cycle`, dispatch, transport, `contract-audit` — never start ACP after seal |
 | Drive parent | Sealed worker `agents.tsv` command, `attempt start` / finish. One worker per `drive tick`. Does not invoke the coordinator while a sealed worker exists. |
 | Maker / reviewer / auditor | only their contract |
+| Working-mode (if `PROGRAM` has `working-mode: yes`) | `.crucible/<program>/wm.sh` from the target root — [working-mode.md](working-mode.md) |
 
 `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` stop drive. Conversational
 “keep looping” is not implement.

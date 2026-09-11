@@ -1,7 +1,9 @@
 # Working-mode (opt-in)
 
-Guided 1.6.6 stays the default. Working-mode is a second runner (`wm.sh`) plus four
-swap-out batteries. Install with `crucible adopt PROGRAM --managed --working-mode`.
+On **1.7.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
+four swap-out batteries. Install with
+`crucible adopt PROGRAM --managed --working-mode`.
 Runtime is the target repo plus one harness CLI. Skills live in the repo
 (`.crucible/skills/` and harness views). There is no `$HOME` skill runtime.
 
@@ -40,8 +42,12 @@ or `STOP-ASK`.
 `MAP-ACCEPT` is not `CLOSED PASS`. Map closer ≠ brick closer. Mapper id cannot
 be the maker. Architecture author id cannot be the critique author.
 
-`.crucible/<program>/wm.sh loop` stays a foreground walker (no `&`, no daemon).
-Live / destroy / push-main remain STOP-ASK (2c).
+`.crucible/<program>/wm.sh loop` is a foreground walker (no `&`, no daemon).
+One `loop` walks remaining READY slices whose `depends_on` parents are CLOSED,
+resets brick receipts between slices, and writes work-level `.wm/CLOSED` only
+when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN`.
+`.crucible/<program>/wm.sh run` returns the worker exit status after
+judge/WORD checks. Live / destroy / push-main remain STOP-ASK (2c).
 
 ## Human sign (8c)
 
@@ -81,6 +87,7 @@ are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
 .crucible/<program>/wm.sh map-verdict RETURNFILE    # MAP-ACCEPT | MAP-REVISE | MAP-STOP-ASK
 .crucible/<program>/wm.sh next                      # NEXT MAP | NEXT SLICE <id> | STOP-ASK | brick card
 .crucible/<program>/wm.sh run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
+.crucible/<program>/wm.sh loop                      # remaining READY slices; brick reset between
 ```
 
 ## Harness adapters (13b)
