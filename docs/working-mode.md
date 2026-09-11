@@ -19,8 +19,7 @@ target root). Default adopt still has no `wm.sh`; this is opt-in:
 ```sh
 SRC=/path/to/crucible
 DST=$(mktemp -d)
-git -C "$DST" init
-git -C "$DST" checkout -b main
+git -C "$DST" init -b main
 cd "$DST"
 "$SRC/crucible" adopt work --managed --working-mode
 ```
@@ -76,7 +75,8 @@ Unsigned `.crucible/work/wm.sh loop` prints `STOP-ASK MAP-HUMAN` and does
 not start the maker. Then:
 
 ```sh
-printf 'SIGNED: operator\nMAP: MAP.md\nSHA256: %s\n' "$(shasum -a 256 MAP.md | awk '{print $1}')" > MAP-HUMAN
+hash=$( (sha256sum MAP.md 2>/dev/null || shasum -a 256 MAP.md) | awk '{print $1}' )
+printf 'SIGNED: operator\nMAP: MAP.md\nSHA256: %s\n' "$hash" > MAP-HUMAN
 .crucible/work/wm.sh loop
 ```
 
