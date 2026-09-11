@@ -583,8 +583,16 @@ write_brief() {
       reviewer)
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. Do not use maker rationale.\n' "$_wb_agent"
         ;;
+      specifier)
+        printf 'Write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not implement product. Do not write MAP-ACCEPT.\n' "$_wb_agent"
+        ;;
       scout)
-        printf 'Write .wm/return/%s.md with WORD: NO-BUILD if the capability already exists, plus EVIDENCE:.\n' "$_wb_agent"
+        _wb_mw=$(map_word_recorded)
+        if [ -f MAP.md ] && { [ -z "$_wb_mw" ] || [ "$_wb_mw" = MAP-REVISE ]; }; then
+          printf 'Write .wm/return/%s.md with WORD: MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK (not authored by the mapper) plus MAP: MAP.md.\n' "$_wb_agent"
+        else
+          printf 'Write .wm/return/%s.md with WORD: NO-BUILD if the capability already exists, plus EVIDENCE:.\n' "$_wb_agent"
+        fi
         ;;
     esac
   } > "$_wb_path"
@@ -647,6 +655,11 @@ cmd_cast() {
         die "INDEPENDENCE_UNAVAILABLE: no CLI worker"
       fi
       ;;
+    specifier)
+      case $_ca_agent in
+        parent|coordinator|loop) die "specifier cannot be parent/coordinator/loop" ;;
+      esac
+      ;;
   esac
   ensure_wm
   if [ "$_ca_role" = maker ]; then
@@ -659,6 +672,13 @@ cmd_cast() {
   fi
   if [ "$_ca_role" = maker ]; then
     refuse_if_mapper_is_maker "$_ca_agent"
+    refuse_if_specifier_is_maker "$_ca_agent"
+  fi
+  if [ "$_ca_role" = specifier ]; then
+    _ca_maker=$(panel_agent maker)
+    if [ -n "$_ca_maker" ] && [ "$_ca_maker" != - ] && [ "$_ca_maker" = "$_ca_agent" ]; then
+      die "specifier cannot be maker ($_ca_agent)"
+    fi
   fi
   panel_set "$_ca_role" "$_ca_agent" "$_ca_kind" "$_ca_cmd"
   say "cast $_ca_role=$_ca_agent kind=$_ca_kind"
@@ -700,6 +720,20 @@ refuse_if_mapper_is_maker() {
   _rmm_mapper=$(mapper_id)
   [ -n "$_rmm_mapper" ] || return 0
   [ "$_rmm_agent" != "$_rmm_mapper" ] || die "mapper cannot be maker ($_rmm_agent)"
+}
+
+refuse_if_specifier_is_maker() {
+  _rsm_agent=$1
+  _rsm_spec=$(panel_agent specifier)
+  [ -n "$_rsm_spec" ] && [ "$_rsm_spec" != - ] || return 0
+  [ "$_rsm_agent" != "$_rsm_spec" ] || die "specifier cannot be maker ($_rsm_agent)"
+}
+
+role_has_cli() {
+  _rhc_agent=$(panel_agent "$1")
+  [ -n "$_rhc_agent" ] && [ "$_rhc_agent" != - ] || return 1
+  _rhc_cmd=$(panel_cmd "$1")
+  [ -n "$_rhc_cmd" ] && [ "$_rhc_cmd" != - ]
 }
 
 # TSV only (module_id, root_path, …). root: lines and markdown tables do not name roots.
@@ -1743,9 +1777,19 @@ cmd_run() {
   fi
   if [ "$_ru_prole" = maker ]; then
     refuse_if_mapper_is_maker "$_ru_agent"
+    refuse_if_specifier_is_maker "$_ru_agent"
     guard_map_before_maker
     if arch_fence_active; then
       die "STOP-ASK ARCH"
+    fi
+  fi
+  if [ "$_ru_prole" = specifier ]; then
+    case $_ru_agent in
+      parent|coordinator|loop) die "specifier cannot be parent/coordinator/loop" ;;
+    esac
+    _ru_maker=$(panel_agent maker)
+    if [ -n "$_ru_maker" ] && [ "$_ru_maker" != - ] && [ "$_ru_agent" = "$_ru_maker" ]; then
+      die "specifier cannot be maker ($_ru_agent)"
     fi
   fi
   _ru_command=$(panel_cmd "$_ru_prole")
@@ -1847,6 +1891,15 @@ cmd_run() {
       die "planted WORD file"
     fi
     grep -q '^WORD:' "$_ru_ret" || die "worker returned no WORD"
+    _ru_word=$(kv_get "$_ru_ret" WORD)
+    if [ "$_ru_role" = scout ]; then
+      case $_ru_word in
+        MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK)
+          cmd_map_verdict "$_ru_ret"
+          return "$_ru_rc"
+          ;;
+      esac
+    fi
     cmd_verdict "$_ru_ret"
   fi
   return "$_ru_rc"
@@ -1869,6 +1922,8 @@ cmd_loop() {
   fi
   while :; do
     _lp_i=$((_lp_i + 1))
+    # LOOP_BOUND 40: specifier + scout + one LOW brick is ~12 cards;
+    # three CLOSED slices stay under 40. Raise to 80 if a longer map needs it.
     if [ "$_lp_i" -gt 40 ]; then
       say "ESCALATE LOOP_BOUND"
       exit 1
@@ -1883,9 +1938,49 @@ cmd_loop() {
     _lp_card=$("$WM_BIN" next) || exit 1
     _lp_card=$(printf '%s\n' "$_lp_card" | awk 'NF { print; exit }')
     case $_lp_card in
-      "NEXT INTAKE"|"NEXT CAST"|"NEXT SPEC"|"NEXT MAP")
+      "NEXT INTAKE"|"NEXT CAST")
         say "STOP-ASK $_lp_card"
         exit 1
+        ;;
+      "NEXT SPEC")
+        if ! role_has_cli specifier; then
+          say "STOP-ASK NEXT SPEC"
+          exit 1
+        fi
+        say "$_lp_card"
+        "$WM_BIN" run specifier || exit 1
+        if ! spec_ok; then
+          say "STOP-ASK SPEC incomplete"
+          exit 1
+        fi
+        ;;
+      "NEXT MAP")
+        if [ ! -f MAP.md ]; then
+          if ! role_has_cli specifier; then
+            say "STOP-ASK NEXT MAP"
+            exit 1
+          fi
+          say "$_lp_card"
+          "$WM_BIN" run specifier || exit 1
+          if [ ! -f MAP.md ]; then
+            say "STOP-ASK NEXT MAP"
+            exit 1
+          fi
+        else
+          say "$_lp_card"
+        fi
+        "$WM_BIN" record-mapper --from MAP.md || exit 1
+        "$WM_BIN" map-ready || exit 1
+        _lp_mw=$(map_word_recorded)
+        if [ -z "$_lp_mw" ] || [ "$_lp_mw" = MAP-REVISE ]; then
+          if ! role_has_cli scout; then
+            say "STOP-ASK NEXT MAP"
+            exit 1
+          fi
+          "$WM_BIN" run scout || exit 1
+          _lp_scout=$(panel_agent scout)
+          "$WM_BIN" map-verdict "$WM/return/${_lp_scout}.md" || exit 1
+        fi
         ;;
       "NEXT SLICE "*)
         _lp_sid=${_lp_card#NEXT SLICE }

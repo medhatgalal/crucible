@@ -260,6 +260,65 @@ EOF
   chmod +x tools/loop-reviewer-nobuild.sh
 }
 
+# Vague IDEA only: no SPEC.md / MAP.md. Maker+reviewer echo CLIs.
+setup_idea_only() {
+  name=$1
+  mkdir -p "$BASE/$name"
+  CDPATH= cd "$BASE/$name"
+  git init -q
+  git config user.email 'wm@local'
+  git config user.name 'working-mode'
+  printf 'product/hello.txt contains exactly hello\n' > IDEA.md
+  if ! "$WM" init >"$OUT" 2>"$ERR"; then
+    printf 'FIXTURE BROKEN: %s init failed\n%s\n%s\n' "$name" "$(cat "$OUT")" "$(cat "$ERR")" >&2
+    exit 1
+  fi
+  "$WM" cast coordinator parent grok - >"$OUT" 2>"$ERR" || true
+  if ! "$WM" cast maker carol grok 'sh -c "echo maker {BRIEF}"' >"$OUT" 2>"$ERR"; then
+    printf 'FIXTURE BROKEN: %s cast maker failed\n%s\n' "$name" "$(cat "$ERR")" >&2
+    exit 1
+  fi
+  if ! "$WM" cast reviewer dave grok 'sh -c "echo reviewer {BRIEF}"' >"$OUT" 2>"$ERR"; then
+    printf 'FIXTURE BROKEN: %s cast reviewer failed\n%s\n' "$name" "$(cat "$ERR")" >&2
+    exit 1
+  fi
+  commit_msg 'setup idea panel'
+}
+
+install_greet_unattended_workers() {
+  mkdir -p tools
+  cp "$HERE/docs/examples/working-mode/tools/specifier.sh" tools/specifier.sh
+  cp "$HERE/docs/examples/working-mode/tools/scout.sh" tools/scout.sh
+  cp "$HERE/docs/examples/working-mode/tools/maker.sh" tools/maker.sh
+  cp "$HERE/docs/examples/working-mode/tools/reviewer.sh" tools/reviewer.sh
+  chmod +x tools/specifier.sh tools/scout.sh tools/maker.sh tools/reviewer.sh
+}
+
+write_scout_self_accept() {
+  mkdir -p tools
+  cat > tools/scout-self-accept.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -f .wm/dispatch ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' .wm/dispatch)
+  [ -n "$a" ] && agent=$a
+fi
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mapper=eve
+if [ -f MAP.md ]; then
+  m=$(awk -F ': ' '$1=="MAPPER"{print $2; exit}' MAP.md)
+  [ -n "$m" ] && mapper=$m
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: %s\nMAP: MAP.md\n' "$mapper" > ".wm/return/${agent}.md"
+EOF
+  chmod +x tools/scout-self-accept.sh
+}
+
 # Task 7: honest reviewer exec so close/LESSONS CHECKs can run.
 install_rev_pass() {
   mkdir -p tools
@@ -1884,6 +1943,120 @@ if grep -F 'docs/working-mode.md' "$HERE/README.md" | grep -q 'quickstart'; then
   ok
 else
   bad 'README Go-deeper working-mode bullet must mention (quickstart)'
+fi
+
+# Unattended IDEA→SPEC→MAP: specifier/scout CLIs, else STOP-ASK.
+sh -n "$HERE/docs/examples/working-mode/tools/specifier.sh" \
+  && ok || bad 'example specifier.sh is not valid POSIX sh'
+sh -n "$HERE/docs/examples/working-mode/tools/scout.sh" \
+  && ok || bad 'example scout.sh is not valid POSIX sh'
+
+# Vague IDEA, maker+reviewer, no specifier CLI → STOP-ASK NEXT SPEC, no product.
+setup_idea_only t-vague-no-specifier
+run_wm_loop
+assert_loop_foreground 't-vague-no-specifier'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK NEXT SPEC' \
+  && ok || bad "vague IDEA without specifier wanted STOP-ASK NEXT SPEC, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'vague IDEA without specifier must not exit 0'
+if [ -f product/hello.txt ] || [ -f product.txt ] || [ -f SPEC.md ] || [ -f MAP.md ]; then
+  bad 'vague IDEA without specifier must not write SPEC/MAP/product'
+else
+  ok
+fi
+
+# Specifier cast as `-` is not a CLI: still STOP-ASK NEXT SPEC.
+setup_idea_only t-vague-specifier-dash
+"$WM" cast specifier eve grok - >/dev/null
+run_wm_loop
+assert_loop_foreground 't-vague-specifier-dash'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK NEXT SPEC' \
+  && ok || bad "specifier '-' wanted STOP-ASK NEXT SPEC, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad "specifier '-' loop must not exit 0"
+if [ -f product/hello.txt ] || [ -f SPEC.md ]; then
+  bad "specifier '-' must not write SPEC/product"
+else
+  ok
+fi
+
+# Specifier that is also maker: refuse (specifier≠maker / mapper≠maker).
+setup_repo t-specifier-eq-maker
+refuses 'cast specifier equal to maker refused' \
+  'specifier cannot be maker|mapper cannot be maker' \
+  "$WM" cast specifier alice grok 'sh -c "echo specifier {BRIEF}"'
+setup_repo t-maker-eq-specifier
+"$WM" cast specifier eve grok 'sh -c "echo specifier {BRIEF}"' >/dev/null
+refuses 'cast maker equal to specifier refused' \
+  'specifier cannot be maker|mapper cannot be maker' \
+  "$WM" cast maker eve grok 'sh -c "echo maker {BRIEF}"'
+
+# Honest unattended: specifier eve writes SPEC+MAP, scout bob MAP-ACCEPT, brick closes.
+setup_idea_only t-unattended-greet
+install_greet_unattended_workers
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout.sh {BRIEF}' >/dev/null
+"$WM" cast maker carol grok './tools/maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'unattended greet workers'
+run_wm_loop
+assert_loop_foreground 't-unattended-greet'
+[ "$LOOP_RC" -eq 0 ] && ok \
+  || bad "unattended greet loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "unattended greet wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
+fi
+if [ -f product/hello.txt ] && grep -qx hello product/hello.txt; then
+  ok
+else
+  bad "unattended greet product/hello.txt wanted hello, got $(cat product/hello.txt 2>/dev/null || echo ABSENT)"
+fi
+[ -f SPEC.md ] && grep -q '^MAKER-WRITES$' SPEC.md \
+  && ok || bad 'unattended greet specifier did not leave spec_ok SPEC.md'
+[ -f MAP.md ] && grep -q '^MAPPER: eve$' MAP.md \
+  && ok || bad 'unattended greet MAP.md wanted MAPPER: eve'
+[ -f architecture/modules.md ] && ok || bad 'unattended greet missing architecture/modules.md'
+if [ -f .wm/mapper ]; then
+  grep -q '^id: eve$' .wm/mapper && ok || bad "unattended greet mapper id not eve: $(cat .wm/mapper)"
+else
+  bad 'unattended greet mapper id not recorded'
+fi
+if [ -f .wm/map-verdict ] && grep -q '^WORD: MAP-ACCEPT$' .wm/map-verdict \
+  && grep -q '^AGENT: bob$' .wm/map-verdict; then
+  ok
+else
+  bad "unattended greet map-verdict wanted MAP-ACCEPT by bob, got $(cat .wm/map-verdict 2>/dev/null || echo ABSENT)"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'unattended greet did not exec reviewer'
+if [ -f .wm/spawn/eve.stamp ] || [ -f .wm/verdicts/eve.md ]; then
+  bad 'specifier must not take the brick spawn-stamp/verdict path'
+else
+  ok
+fi
+
+# Scout MAP-ACCEPT whose AGENT is the mapper: map-verdict refuse; no CLOSED PASS.
+setup_idea_only t-scout-mapper-accept
+install_greet_unattended_workers
+write_scout_self_accept
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout-self-accept.sh {BRIEF}' >/dev/null
+"$WM" cast maker carol grok './tools/maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'scout self-ACCEPT workers'
+run_wm_loop
+assert_loop_foreground 't-scout-mapper-accept'
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'scout MAP-ACCEPT as mapper must not exit 0'
+if closed_pass_present; then
+  bad "scout MAP-ACCEPT as mapper must not CLOSED PASS (out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT))"
+else
+  ok
+fi
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -E -q 'refused:|authored|architecture author' \
+  && ok || bad "scout MAP-ACCEPT as mapper wanted map-verdict refuse, got out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -f product/hello.txt ]; then
+  bad 'scout MAP-ACCEPT as mapper must not land product'
+else
+  ok
 fi
 
 # Task 3: wm run maker-build whose command is false exits non-zero; no CLOSED PASS

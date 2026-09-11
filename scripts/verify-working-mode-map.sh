@@ -1131,7 +1131,8 @@ else
   ok
 fi
 
-# NEXT MAP is terminal (do not invent a map).
+# NEXT MAP is terminal when specifier/scout have no CLI (do not invent a map).
+# MAP-REVISE without specifier CLI still STOP-ASK (unattended envelope).
 setup_map_repo t-loop-next-map
 write_architecture_fixture alice LOW no
 impl_ok 'record-mapper loop NEXT MAP' "$WM" record-mapper --from MAP.md || true
@@ -1144,6 +1145,89 @@ assert_map_loop_foreground 't-loop-next-map'
 printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
   && ok || bad "MAP-REVISE loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
 [ "$LOOP_RC" -ne 0 ] && ok || bad 'NEXT MAP loop must not exit 0'
+if grep -q 'CLOSED PASS' "$OUT" 2>/dev/null; then
+  bad 'MAP-REVISE without specifier CLI must not CLOSED PASS'
+else
+  ok
+fi
+
+# Specifier cannot be maker (mapper≠maker).
+setup_map_repo t-specifier-eq-maker
+"$WM" cast maker alice grok 'sh -c "echo maker {BRIEF}"' >/dev/null
+refuses 'cast specifier equal to maker refused' \
+  'specifier cannot be maker|mapper cannot be maker' \
+  "$WM" cast specifier alice grok 'sh -c "echo specifier {BRIEF}"'
+
+# Scout MAP-ACCEPT as mapper: map-verdict refuse (via wm run scout).
+setup_map_repo t-run-scout-mapper-accept
+write_architecture_fixture eve LOW no
+impl_ok 'record-mapper scout self-ACCEPT' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready scout self-ACCEPT' "$WM" map-ready || true
+mkdir -p tools
+cat > tools/scout-map-accept.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mapper=eve
+if [ -f MAP.md ]; then
+  m=$(awk -F ': ' '$1=="MAPPER"{print $2; exit}' MAP.md)
+  [ -n "$m" ] && mapper=$m
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: %s\nMAP: MAP.md\n' "$mapper" > ".wm/return/${agent}.md"
+EOF
+chmod +x tools/scout-map-accept.sh
+"$WM" cast scout bob grok './tools/scout-map-accept.sh {BRIEF}' >/dev/null
+refuses 'wm run scout MAP-ACCEPT as mapper refused' 'refused:' \
+  "$WM" run scout
+if [ -f .wm/verdicts/bob.md ]; then
+  bad 'scout MAP-ACCEPT must not brick-ingest cmd_verdict'
+else
+  ok
+fi
+
+# Honest scout MAP-ACCEPT via wm run scout ingest map-verdict, not brick verdict.
+setup_map_repo t-run-scout-map-accept
+write_architecture_fixture eve LOW no
+impl_ok 'record-mapper scout MAP-ACCEPT' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready scout MAP-ACCEPT' "$WM" map-ready || true
+mkdir -p tools
+cat > tools/scout-map-accept-ok.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: %s\nMAP: MAP.md\n' "$agent" > ".wm/return/${agent}.md"
+EOF
+chmod +x tools/scout-map-accept-ok.sh
+"$WM" cast scout bob grok './tools/scout-map-accept-ok.sh {BRIEF}' >/dev/null
+expect 'wm run scout MAP-ACCEPT ingest map-verdict' 'MAP-ACCEPT' \
+  "$WM" run scout
+if [ -f .wm/map-verdict ] && grep -q '^WORD: MAP-ACCEPT$' .wm/map-verdict; then
+  ok
+else
+  bad 'wm run scout MAP-ACCEPT must write .wm/map-verdict'
+fi
+if [ -f .wm/verdicts/bob.md ]; then
+  bad 'wm run scout MAP-ACCEPT must not write brick verdicts/bob.md'
+else
+  ok
+fi
+if [ -f .wm/briefs/scout.* ] || ls .wm/briefs/scout.* >/dev/null 2>&1; then
+  brief=$(ls .wm/briefs/scout.* 2>/dev/null | head -1)
+  grep -E -q 'MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK' "$brief" \
+    && ok || bad 'scout brief for empty map word must ask MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK'
+else
+  bad 'scout brief missing after wm run scout'
+fi
 
 # HIGH + one kind: STOP-ASK (3d), terminal.
 setup_map_repo t-loop-high-one-kind

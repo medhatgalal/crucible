@@ -44,6 +44,14 @@ All notable changes to this project are documented here. This project follows
 - `wm close` refuses when `.wm/CLOSED` is already closeable (`already
   closed`) and does not append another LESSONS.md line. After slice
   `reset_brick`, a new close is allowed.
+- `wm loop` runs specifier on `NEXT SPEC` and map-ready + scout map-judge
+  on `NEXT MAP` when those roles are cast with a real CLI (not `-`).
+  Without those CLIs, `NEXT SPEC` / `NEXT MAP` stay `STOP-ASK`. Specifier
+  writes `SPEC.md` / `architecture/modules.md` / `MAP.md` (not a brick
+  WORD). Scout `MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK` ingest is `map-verdict`,
+  not brick `verdict`. Specifier cannot be maker; scout cannot `MAP-ACCEPT`
+  a map it authored. `LOOP_BOUND` stays 40. Quickstart Example C is a
+  vague-IDEA copy-paste.
 
 ## [1.7.0] - 2026-09-10
 

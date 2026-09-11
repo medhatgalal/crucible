@@ -83,6 +83,31 @@ printf 'SIGNED: operator\nMAP: MAP.md\nSHA256: %s\n' "$hash" > MAP-HUMAN
 `SIGNED:` must be a human id — not mapper, maker, reviewer, parent,
 coordinator, or loop. A rewrite of `MAP.md` after sign is not a sign.
 
+### Example C — vague IDEA, specifier+scout cast
+
+A vague `IDEA.md` with no hand-written SPEC/MAP. Cast specifier and scout
+with real CLIs (not `-`). Specifier `eve` writes `SPEC.md`,
+`architecture/modules.md`, and `MAP.md` (`MAPPER: eve`). Scout `bob` ≠
+`eve` returns `MAP-ACCEPT`. Maker `carol` ≠ reviewer `dave`. Without those
+CLIs, `loop` is still `STOP-ASK NEXT SPEC` / `STOP-ASK NEXT MAP`.
+
+```sh
+cp "$SRC/docs/examples/working-mode/IDEA.md" .
+mkdir -p tools
+cp "$SRC/docs/examples/working-mode/tools/"*.sh tools/
+chmod +x tools/*.sh
+.crucible/work/wm.sh init
+.crucible/work/wm.sh cast coordinator parent grok -
+.crucible/work/wm.sh cast specifier eve grok './tools/specifier.sh {BRIEF}'
+.crucible/work/wm.sh cast scout bob grok './tools/scout.sh {BRIEF}'
+.crucible/work/wm.sh cast maker carol grok './tools/maker.sh {BRIEF}'
+.crucible/work/wm.sh cast reviewer dave grok './tools/reviewer.sh {BRIEF}'
+.crucible/work/wm.sh loop
+```
+
+`loop` ends `CLOSED PASS`. `product/hello.txt` contains `hello`. Specifier
+does not write a brick WORD. `MAP-ACCEPT` is not `CLOSED PASS`.
+
 ### Prove it
 
 Kernel CHECKs from the **Crucible source** tree (empty HOME):
@@ -133,7 +158,11 @@ be the maker. Architecture author id cannot be the critique author.
 `.crucible/<program>/wm.sh loop` is a foreground walker (no `&`, no daemon).
 One `loop` walks remaining READY slices whose `depends_on` parents are CLOSED,
 resets brick receipts between slices, and writes work-level `.wm/CLOSED` only
-when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN` (A4).
+when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN` (A4). When specifier
+and scout are cast with a real CLI (not `-`), `NEXT SPEC` runs specifier and
+`NEXT MAP` runs map-ready plus scout map-judge; without those CLIs those
+cards stay `STOP-ASK`. Specifier cannot be maker. Scout cannot `MAP-ACCEPT`
+a map it authored. `LOOP_BOUND` is 40.
 `.crucible/<program>/wm.sh run` returns the worker exit status after
 judge/WORD checks. Live / destroy / push-main remain STOP-ASK (2c).
 
