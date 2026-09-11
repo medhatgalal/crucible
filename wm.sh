@@ -581,7 +581,7 @@ write_brief() {
         emit_lessons_section
         ;;
       reviewer)
-        printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. Do not use maker rationale.\n' "$_wb_agent"
+        printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
         printf 'Write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not implement product. Do not write MAP-ACCEPT.\n' "$_wb_agent"
@@ -1892,6 +1892,10 @@ cmd_run() {
     fi
     grep -q '^WORD:' "$_ru_ret" || die "worker returned no WORD"
     _ru_word=$(kv_get "$_ru_ret" WORD)
+    if [ "$_ru_role" = reviewer ] && [ -f "$WM/red.status" ] \
+      && [ "$(cat "$WM/red.status")" = no-build ]; then
+      [ "$_ru_word" = NO-BUILD ] || die "NO-BUILD red cannot PASS"
+    fi
     if [ "$_ru_role" = scout ]; then
       case $_ru_word in
         MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK)

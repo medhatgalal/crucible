@@ -23,6 +23,9 @@ All notable changes to this project are documented here. This project follows
 - `wm run` returns the worker exit status after judge/WORD checks. A
   `false` maker-build is non-zero and does not CLOSED PASS. Maker-falsify/build
   that `die`, and reviewer missing WORD, still die.
+- `wm loop` runs `specifier` then map-judge `scout` when those CLIs are
+  cast (IDEA→SPEC→MAP without a hand-written map). Uncast stays STOP-ASK.
+  A `no-build` red cannot ingest reviewer PASS (must be NO-BUILD).
 - MAP-HUMAN binds `SHA256:` (or `MAP-SHA256:`) to the named MAP file bytes;
   a rewrite after sign is not a sign (8c). Travelling copy is next-slice
   scoped: sign when the next READY slice is HIGH or `live_write=yes`.

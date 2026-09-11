@@ -1097,6 +1097,24 @@ fi
 [ -f .wm/reviewer-ran ] && ok || bad 'nobuild loop did not exec the reviewer CLI'
 [ "$LOOP_RC" -eq 0 ] && ok || bad "nobuild loop exit $LOOP_RC err=$(cat "$ERR")"
 
+# (17b) already-green (red no-build) + reviewer PASS is refused
+setup_repo t17b-nobuild-cannot-pass
+write_loop_maker_nobuild
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker-nobuild.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'nobuild cannot PASS workers'
+run_wm_loop
+assert_loop_foreground 't17b-nobuild-cannot-pass'
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'NO-BUILD red + PASS reviewer must not exit 0'
+if closed_pass_present; then
+  bad 'NO-BUILD red + PASS must not CLOSED PASS'
+else
+  ok
+fi
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'NO-BUILD red cannot PASS' \
+  && ok || bad "wanted NO-BUILD red cannot PASS, got out=$(cat "$OUT") err=$(cat "$ERR")"
+
 # (18) Planted .wm/CLOSED without reviewer exec must not make wm loop CLOSED PASS
 setup_repo t18-planted-closed
 printf 'CLOSED PASS\n' > .wm/CLOSED

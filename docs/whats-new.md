@@ -12,7 +12,8 @@ are missing or cannot auth. `START.md` / `BOOTSTRAP.md` point at opt-in working-
 the flag. Commands use `.crucible/<program>/wm.sh` from the target repo root.
 `wm run` returns the worker rc. When specifier and scout are cast with a
 CLI, `wm loop` writes SPEC/MAP and map-judges unattended; without those
-CLIs, `NEXT SPEC` / `NEXT MAP` stay `STOP-ASK`. `LOOP_BOUND` is 40.
+CLIs, `NEXT SPEC` / `NEXT MAP` stay `STOP-ASK`. A no-build red cannot
+ingest reviewer PASS (WORD must be NO-BUILD). `LOOP_BOUND` is 40.
 
 ## 1.7.0 — opt-in working-mode
 
