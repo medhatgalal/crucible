@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Do not change guided 1.6.6 default behavior. `scripts/verify-agent-cycle.sh`, `verify-drive.sh`, `verify-package.sh` that pass on 1.7.0 must still pass.
-- Do not modify `~/Desktop/workgraph-jira`. No origin push. No live Jira.
+- Do not modify the sibling workgraph-jira repository. No origin push. No live Jira.
 - No `$HOME` skill trees as a runtime dependency.
 - Maker ≠ judge. Controller does not implement product or stamp PASS.
 - No background processes. Foreground only. Live/destroy/push-main STOP-ASK (2c).

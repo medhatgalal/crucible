@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - Do not change guided 1.6.6 default behavior. All existing `scripts/verify-*.sh` that pass today must still pass.
-- Do not modify `~/Desktop/workgraph-jira`.
+- Do not modify the sibling workgraph-jira repository.
 - No `$HOME` skill trees as a runtime dependency (`~/.grok/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.analyze-context` as product memory).
 - Runtime after adopt: target repo + one harness CLI. Refresh only from a versioned tarball; refuse `src == dst`.
 - Maker ≠ judge is a CHECK. Controller does not implement product or stamp PASS.
