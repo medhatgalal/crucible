@@ -11,6 +11,30 @@ From the **target repository root**, invoke `.crucible/<program>/wm.sh` (not a
 bare `wm` on `PATH`). After `adopt work --managed --working-mode`, `<program>`
 is `work`.
 
+## Quickstart
+
+From the **target repository root**:
+
+1. Install: from Crucible source, cwd = **target** git repo:
+   `crucible adopt work --managed --working-mode`
+2. Cast: mapper ≠ maker ≠ reviewer; HIGH needs two harness kinds
+3. Map: architecture writes `architecture/modules.md` + `MAP.md`;
+   `.crucible/work/wm.sh record-mapper`; `.crucible/work/wm.sh map-ready`
+4. Critique: map-judge returns MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK;
+   `.crucible/work/wm.sh map-verdict RETURNFILE`
+5. If next slice HIGH/live: write `MAP-HUMAN` (`SIGNED`, `MAP`, `SHA256` of
+   current MAP.md)
+6. Run: `.crucible/work/wm.sh loop` (foreground; walks remaining READY slices)
+7. Stop: CLOSED PASS / CLOSED NO-BUILD / STOP-ASK / ESCALATE — do not
+   background-wait
+8. Refresh engine from a **newer** tree (`adopt --refresh`); never src==dst
+
+Try the CHECKs from the **Crucible source** tree:
+
+```sh
+HOME=$(mktemp -d) scripts/verify-working-mode.sh
+```
+
 This is the coordinator travelling card for **map cadence**. Brick CHECKs
 (maker ≠ judge, observed-red, NO-BUILD, live fence) live in `wm.sh` and
 `scripts/verify-working-mode.sh`.
@@ -35,7 +59,7 @@ or `STOP-ASK`.
 | Inventory + slices | architecture battery (mapper) | write `MAP.md`; `.crucible/<program>/wm.sh record-mapper --from MAP.md`; `.crucible/<program>/wm.sh map-ready` |
 | Attack the map | critique battery (map-judge) | invert + adversarial + simple; return `MAP-ACCEPT` \| `MAP-REVISE` \| `MAP-STOP-ASK` |
 | Ingest | kernel | `.crucible/<program>/wm.sh map-verdict RETURNFILE` (calls `.crucible/<program>/wm.sh check-map-word` and, on ACCEPT, `.crucible/<program>/wm.sh check-module-fit`) |
-| Human sign | operator | `MAP-HUMAN` when the map is HIGH or live (8c) |
+| Human sign | operator | `MAP-HUMAN` when the **next READY** slice is HIGH or `live_write=yes` (8c) |
 | First slice | kernel | `.crucible/<program>/wm.sh next` → `NEXT SLICE <id>` for the first READY row |
 | Brick | maker / reviewer | existing small loop (`.crucible/<program>/wm.sh run maker-falsify` … `.crucible/<program>/wm.sh close`) |
 
@@ -45,17 +69,20 @@ be the maker. Architecture author id cannot be the critique author.
 `.crucible/<program>/wm.sh loop` is a foreground walker (no `&`, no daemon).
 One `loop` walks remaining READY slices whose `depends_on` parents are CLOSED,
 resets brick receipts between slices, and writes work-level `.wm/CLOSED` only
-when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN`.
+when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN` (A4).
 `.crucible/<program>/wm.sh run` returns the worker exit status after
 judge/WORD checks. Live / destroy / push-main remain STOP-ASK (2c).
 
 ## Human sign (8c)
 
-After `MAP-ACCEPT`, if any slice is `HIGH` or its module `live_write` is `yes`,
-the operator signs the map (`MAP-HUMAN` at repo root) before the first
-`.crucible/<program>/wm.sh run maker-falsify`. LOW local maps do not need it.
-This is a human gate after the map-judge (8c), not a replacement for critique
-and not a dummy file.
+The kernel is **next-slice** scoped. After `MAP-ACCEPT`, sign when the
+**next READY** slice is HIGH or its module `live_write` is `yes`. A LOW
+prefix may walk without `MAP-HUMAN`. HIGH unsigned is
+`STOP-ASK MAP-HUMAN` (A4). Write `MAP-HUMAN` at repo root before
+`.crucible/<program>/wm.sh run maker-falsify` on that HIGH/live slice.
+LOW local maps do not need it. This is a human gate after the map-judge
+(8c), not a replacement for critique and not a dummy file. Keep the
+SHA256 bind: a rewrite of `MAP.md` after sign is not a sign.
 
 `.crucible/<program>/wm.sh` parses the same `key: value` shape as return files.
 `SIGNED:` must be a non-empty human id — not mapper, maker, reviewer, parent,

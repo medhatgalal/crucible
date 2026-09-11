@@ -527,7 +527,7 @@ EOF
   "$WM" loop >"$OUT" 2>"$ERR"
   LOOP_RC=$?
   set -e
-  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+  if pgrep -f "$WM loop" >/dev/null 2>&1; then
     bad "leftover wm.sh loop process"
   else
     ok

@@ -24,8 +24,15 @@ All notable changes to this project are documented here. This project follows
   `false` maker-build is non-zero and does not CLOSED PASS. Maker-falsify/build
   that `die`, and reviewer missing WORD, still die.
 - MAP-HUMAN binds `SHA256:` (or `MAP-SHA256:`) to the named MAP file bytes;
-  a rewrite after sign is not a sign (8c).
-- `wm run` substitutes `{BRIEF}` as a POSIX-quoted absolute path.
+  a rewrite after sign is not a sign (8c). Travelling copy is next-slice
+  scoped: sign when the next READY slice is HIGH or `live_write=yes`.
+- `wm run` substitutes `{BRIEF}` as a POSIX-quoted absolute path. Quoting
+  happens inside awk from `ENVIRON` (`WM_BRIEF`) and escapes `\`, `"`, `$`,
+  and backticks. `awk -v` is not used (it unescapes `\"`).
+- Working-mode verifies `pgrep` leftover-loop against this `$WM` binary,
+  not any tree's `wm.sh loop`.
+- Operator quickstart in `docs/working-mode.md` (target-root
+  `.crucible/work/wm.sh` after `adopt work --managed --working-mode`).
 - Live independence probes grok/claude/codex auth under empty HOME and
   fails closed (`cannot auth`) instead of a grok-only fixture PASS.
 

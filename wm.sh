@@ -27,15 +27,6 @@ file_sha256() {
   fi
 }
 
-# POSIX double-quote a string for sh -c (escape \ and ").
-quote_dq() {
-  printf '%s\n' "$1" | awk '{
-    gsub(/\\/, "\\\\")
-    gsub(/"/, "\\\"")
-    printf "\"%s\"\n", $0
-  }'
-}
-
 file_mtime() {
   if [ ! -e "$1" ]; then
     printf '0\n'
@@ -1790,16 +1781,34 @@ cmd_run() {
   case $_ru_brief in
     /*) _ru_absbrief=$_ru_brief ;;
   esac
-  _ru_qbrief=$(quote_dq "$_ru_absbrief")
-  _ru_expanded=$(printf '%s\n' "$_ru_command" | awk -v b="$_ru_qbrief" '{
-    s = $0
-    out = ""
-    while ((i = index(s, "{BRIEF}")) > 0) {
-      out = out substr(s, 1, i - 1) b
-      s = substr(s, i + 7)
+  # Quote inside awk from ENVIRON. awk -v unescapes \" so a " in the
+  # path splits sh -c. Escape \, ", $, and ` for POSIX double quotes.
+  WM_BRIEF=$_ru_absbrief
+  export WM_BRIEF
+  _ru_expanded=$(printf '%s\n' "$_ru_command" | awk '
+    function quote_dq(s,    i, n, c, out) {
+      n = length(s)
+      out = "\""
+      for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (c == "\\" || c == "\"" || c == "$" || c == "`")
+          out = out "\\"
+        out = out c
+      }
+      return out "\""
     }
-    print out s
-  }')
+    BEGIN { b = quote_dq(ENVIRON["WM_BRIEF"]) }
+    {
+      s = $0
+      out = ""
+      while ((i = index(s, "{BRIEF}")) > 0) {
+        out = out substr(s, 1, i - 1) b
+        s = substr(s, i + 7)
+      }
+      print out s
+    }
+  ')
+  unset WM_BRIEF
   BRIEF=$_ru_absbrief
   export BRIEF
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then

@@ -172,7 +172,7 @@ then see [SECURITY.md](SECURITY.md) and [RULES.md](RULES.md) for operating guida
 - [docs/install.md](docs/install.md) — first install vs upgrade; confirm `engine:`; `--next`; `drive`
 - [START.md](START.md) — installed-cycle prompt: `cycle` vs `drive`, `STATUS.md`, human gates
 - [docs/drive.md](docs/drive.md) — Ralph-style outer loop so the coordinator cannot skip `cycle` or implement
-- [docs/working-mode.md](docs/working-mode.md) — opt-in `wm.sh` map/brick runner (not the guided default)
+- [docs/working-mode.md](docs/working-mode.md) — opt-in `wm.sh` map/brick runner (not the guided default) (quickstart)
 - [LOOP.md](LOOP.md) — lifecycle behavior and exit criteria
 - [CONFIGURE.md](CONFIGURE.md) — agents, models, personas, and risk posture
 - [RULES.md](RULES.md) — enforced checks versus instructional rules

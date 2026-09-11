@@ -307,7 +307,7 @@ run_wm_loop() {
 
 assert_loop_foreground() {
   _alf_label=$1
-  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+  if pgrep -f "$WM loop" >/dev/null 2>&1; then
     bad "$_alf_label: leftover wm.sh loop process"
   else
     ok
@@ -766,7 +766,7 @@ set +e
 "$WM" loop >"$OUT" 2>"$ERR"
 loop_rc=$?
 set -e
-if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+if pgrep -f "$WM loop" >/dev/null 2>&1; then
   bad 'wm loop left a leftover wm.sh loop process'
 else
   ok
@@ -1678,30 +1678,148 @@ else
   ok
 fi
 
-# Quote {BRIEF}: engine wraps the absolute path so a space is one argv.
+# Quote {BRIEF}: engine wraps the absolute path (ENVIRON, POSIX double quotes).
+run_brief_argv() {
+  "$WM" cast maker alice grok \
+    'sh -c '\''printf %s "$1" > .wm/brief-arg.txt'\'' _ {BRIEF}' >/dev/null
+  rm -f .wm/brief-arg.txt
+  set +e
+  "$WM" run maker-build >"$OUT" 2>"$ERR"
+  brief_rc=$?
+  set -e
+}
+
+assert_brief_argv() {
+  _ba_label=$1
+  _ba_needle=$2
+  [ "$brief_rc" -eq 0 ] && ok \
+    || bad "$_ba_label: quoted BRIEF maker-build refused rc=$brief_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+  if [ ! -f .wm/brief-arg.txt ]; then
+    bad "$_ba_label: brief-arg.txt missing after wm run"
+    return
+  fi
+  got=$(cat .wm/brief-arg.txt)
+  case $got in
+    *"$_ba_needle"*) ok ;;
+    *) bad "$_ba_label: brief-arg missing '$_ba_needle' (split/expand?): $got" ;;
+  esac
+  [ -f "$got" ] && ok || bad "$_ba_label: brief-arg.txt is not one existing brief path: $got"
+}
+
 setup_repo 'path with space/t-brief-quote'
-"$WM" cast maker alice grok 'sh -c '\''printf %s "$1" > .wm/brief-arg.txt'\'' _ {BRIEF}' >/dev/null
-rm -f .wm/brief-arg.txt
+run_brief_argv
+assert_brief_argv 'space path' ' '
+
+# Claude/codex: {BRIEF} inside a single-quoted prompt becomes 'read "/path" and …'
+"$WM" cast maker alice grok \
+  'sh -c '\''printf %s "$1" > .wm/sq-prompt.txt'\'' _ '\''read {BRIEF} and follow it exactly'\''' \
+  >/dev/null
+rm -f .wm/sq-prompt.txt
 set +e
 "$WM" run maker-build >"$OUT" 2>"$ERR"
-brief_rc=$?
+sq_rc=$?
 set -e
-[ "$brief_rc" -eq 0 ] && ok || bad "quoted BRIEF maker-build refused rc=$brief_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$sq_rc" -eq 0 ] && ok \
+  || bad "single-quoted BRIEF prompt refused rc=$sq_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -f .wm/sq-prompt.txt ]; then
+  sqgot=$(cat .wm/sq-prompt.txt)
+  case $sqgot in
+    'read "'*'" and follow it exactly') ok ;;
+    *) bad "single-quoted {BRIEF} wanted 'read \"/path\" and …', got $sqgot" ;;
+  esac
+  sqpath=${sqgot#read \"}
+  sqpath=${sqpath%\" and follow it exactly}
+  [ -n "$sqpath" ] && [ -f "$sqpath" ] && ok \
+    || bad "single-quoted BRIEF path is not one existing file: $sqgot"
+else
+  bad 'sq-prompt.txt missing after single-quoted {BRIEF} run'
+fi
+
+# Path containing $ must stay literal (no $x / $HOME expansion, no split).
+x=EXPANDED
+export x
+setup_repo 'dir$x/t-brief-dollar'
+run_brief_argv
+assert_brief_argv 'dollar path' '$x'
 if [ -f .wm/brief-arg.txt ]; then
   got=$(cat .wm/brief-arg.txt)
   case $got in
-    *' '*) ok ;;
-    *) bad "brief-arg path has no space (split?): $got" ;;
+    *EXPANDED*) bad "dollar path expanded \$x: $got" ;;
+    *"$HOME"*) bad "dollar path expanded \$HOME: $got" ;;
+    *) ok ;;
   esac
-  [ -f "$got" ] && ok || bad "brief-arg.txt is not one existing brief path: $got"
-else
-  bad 'brief-arg.txt missing after wm run'
 fi
+
+# Path containing " (if the filesystem allows) must stay one argv.
+if mkdir -p "$BASE/dir\"q/.probe" 2>/dev/null; then
+  rmdir "$BASE/dir\"q/.probe" 2>/dev/null || true
+  setup_repo 'dir"q/t-brief-dquote'
+  run_brief_argv
+  assert_brief_argv 'dquote path' '"'
+else
+  ok
+fi
+
+cmd_run_body=$(awk '/^cmd_run\(/ { p=1 } p { print } p && /^}$/ { exit }' "$WM")
+if printf '%s\n' "$cmd_run_body" | grep -q 'ENVIRON'; then
+  ok
+else
+  bad 'cmd_run must quote {BRIEF} inside awk from ENVIRON (not awk -v)'
+fi
+if printf '%s\n' "$cmd_run_body" | grep -E -q 'awk[[:space:]]+-v[[:space:]]+b='; then
+  bad 'cmd_run must not pass quoted BRIEF through awk -v'
+else
+  ok
+fi
+
 if grep -F -q '{BRIEF}' "$HERE/adapters/grok.md" \
   && grep -E -q 'engine quotes|quotes the replacement|quoted by the engine' "$HERE/adapters/grok.md"; then
   ok
 else
   bad 'adapters/grok.md must keep {BRIEF} and say the engine quotes the replacement'
+fi
+if grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/claude.md" \
+  && grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/codex.md"; then
+  ok
+else
+  bad 'adapters/claude.md and adapters/codex.md must keep {BRIEF} inside a single-quoted prompt'
+fi
+
+# Leftover-loop pgrep must match this WM binary, not any tree's wm.sh loop.
+for f in "$HERE/scripts/verify-working-mode.sh" \
+  "$HERE/scripts/verify-working-mode-map.sh" \
+  "$HERE/scripts/verify-working-mode-blank-home.sh" \
+  "$HERE/scripts/verify-working-mode-live.sh"; do
+  if grep -E -q "pgrep[[:space:]]+-f[[:space:]]+['\"]wm\\.sh loop['\"]" "$f"; then
+    bad "$f: pgrep leftover-loop is unscoped (must match this \$WM)"
+  else
+    ok
+  fi
+done
+
+if grep -q 'next READY' "$HERE/docs/working-mode.md" \
+  && grep -qi 'next-slice' "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must say MAP-HUMAN is next-slice / next READY scoped (8c)'
+fi
+if grep -q 'Quickstart' "$HERE/docs/working-mode.md" \
+  && grep -F -q '.crucible/work/wm.sh loop' "$HERE/docs/working-mode.md" \
+  && grep -F -q 'adopt work --managed --working-mode' "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must have operator Quickstart using .crucible/work/wm.sh after adopt --working-mode'
+fi
+if grep -F -q 'HOME=$(mktemp -d) scripts/verify-working-mode.sh' \
+  "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must show empty-HOME kernel CHECKs from the source tree'
+fi
+if grep -F 'docs/working-mode.md' "$HERE/README.md" | grep -q 'quickstart'; then
+  ok
+else
+  bad 'README Go-deeper working-mode bullet must mention (quickstart)'
 fi
 
 # Task 3: wm run maker-build whose command is false exits non-zero; no CLOSED PASS

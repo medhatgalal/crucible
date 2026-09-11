@@ -503,7 +503,7 @@ run_map_loop() {
 
 assert_map_loop_foreground() {
   _mlf=$1
-  if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+  if pgrep -f "$WM loop" >/dev/null 2>&1; then
     bad "$_mlf: leftover wm.sh loop process"
   else
     ok
@@ -1090,7 +1090,7 @@ set +e
 "$WM" loop >"$OUT" 2>"$ERR"
 loop_rc=$?
 set -e
-if pgrep -f 'wm.sh loop' >/dev/null 2>&1; then
+if pgrep -f "$WM loop" >/dev/null 2>&1; then
   bad 'wm loop left a leftover wm.sh loop process'
 else
   ok
