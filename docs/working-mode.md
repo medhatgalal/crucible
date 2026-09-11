@@ -128,6 +128,96 @@ Brick CHECKs (maker ≠ judge, observed-red, NO-BUILD, live fence) live in
 `wm.sh` and `scripts/verify-working-mode.sh`. Refresh the engine only from
 a **newer** tree (`adopt work --refresh`); `src == dst` is refused.
 
+## Use cases you can run today
+
+| You have | You do | System does | You cannot yet |
+| --- | --- | --- | --- |
+| Empty git repo | `adopt work --managed` | Guided cycle only | Working-mode (`wm.sh` absent) |
+| Empty git repo | `adopt work --managed --working-mode` | Copies `wm.sh`, four batteries, skill views | Default-on working-mode (1c) |
+| Hand-written LOW map | Example A | One `loop` → `CLOSED PASS` | — |
+| Vague `IDEA.md` | Example C (specifier+scout+maker+reviewer cast) | SPEC+MAP then brick → `CLOSED PASS` | Inventing a map with no specifier CLI |
+| Product already matches the falsifier | Example A files + existing hello | `CLOSED NO-BUILD` | Reviewer PASS on a no-build red |
+| HIGH slice | Example B + `MAP-HUMAN` | Stops until you sign; then walks | Unattended HIGH/live (8c) |
+| Several modules | `MAP.md` with `depends_on` | One `loop` walks READY parents-CLOSED | Parallel in-slice TASKS |
+| Live Grok/Claude/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if a CLI cannot auth | Claiming four-CLI independence when auth fails |
+| Guided stall (`WAIT APPROVAL`) | Stay on `crucible drive` | Unchanged 1.6.6 gates | Working-mode will not clear those gates |
+
+## Visuals
+
+Who talks to whom after `--working-mode` (target repo root):
+
+```mermaid
+flowchart LR
+  op[Operator] --> adopt["crucible adopt --working-mode"]
+  adopt --> engine[".crucible/work/wm.sh"]
+  adopt --> skills[".crucible/skills/*"]
+  skills --> views["./.grok .claude .agents /skills"]
+  engine --> panel[".wm/PANEL.tsv"]
+  engine --> map["MAP.md / slices.tsv"]
+  engine --> brick[".wm/FALSIFIER .wm/CLOSED"]
+  panel --> specN[specifier]
+  panel --> scoutN[scout / map-judge]
+  panel --> makerN[maker]
+  panel --> revN[reviewer]
+  specN --> specFiles["SPEC.md architecture/ MAP.md"]
+  scoutN --> accept["MAP-ACCEPT"]
+  makerN --> product[owned files]
+  revN --> word["WORD PASS or NO-BUILD"]
+```
+
+Example C — vague IDEA, workers cast, LOW (no `MAP-HUMAN`):
+
+```mermaid
+sequenceDiagram
+  participant Op as Operator
+  participant Wm as wm.sh loop
+  participant Sp as specifier
+  participant Sc as scout
+  participant Mk as maker
+  participant Rv as reviewer
+  Op->>Wm: adopt --working-mode; cast; loop
+  Wm->>Wm: next NEXT SPEC
+  Wm->>Sp: run specifier
+  Sp-->>Wm: SPEC.md modules.md MAP.md
+  Wm->>Wm: next NEXT MAP; map-ready
+  Wm->>Sc: run scout
+  Sc-->>Wm: WORD MAP-ACCEPT
+  Wm->>Wm: map-verdict; NEXT SLICE s1
+  Wm->>Mk: run maker-falsify
+  Mk-->>Wm: FALSIFIER
+  Wm->>Wm: red (missing product)
+  Wm->>Mk: run maker-build
+  Mk-->>Wm: product commit
+  Wm->>Wm: built; green
+  Wm->>Rv: run reviewer
+  Rv-->>Wm: WORD PASS + evidence
+  Wm->>Wm: close; CLOSED PASS
+```
+
+Brick states the walker consumes (one slice):
+
+```mermaid
+stateDiagram-v2
+  [*] --> Intake: no IDEA.md
+  Intake --> Cast: NEXT CAST
+  Cast --> Spec: NEXT SPEC
+  Spec --> Map: SPEC ok
+  Map --> Sign: MAP-ACCEPT and next slice HIGH/live
+  Map --> Slice: MAP-ACCEPT and LOW
+  Sign --> Slice: MAP-HUMAN valid
+  Sign --> StopAsk: unsigned HIGH
+  Slice --> Falsify: NEXT RUN maker-falsify
+  Falsify --> Red: NEXT RED
+  Red --> NoBuild: falsifier already 0
+  Red --> Build: falsifier nonzero
+  Build --> Green: NEXT GREEN
+  Green --> Review: NEXT RUN reviewer
+  NoBuild --> Review: WORD must be NO-BUILD
+  Review --> Close: NEXT CLOSE
+  Close --> Slice: more READY
+  Close --> [*]: CLOSED PASS or CLOSED NO-BUILD
+```
+
 ## Map cadence (6b)
 
 Architecture names Plane A (`architecture/modules.md`) and cuts Plane B slices
