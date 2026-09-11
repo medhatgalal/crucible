@@ -1835,7 +1835,8 @@ fi
 for f in "$HERE/scripts/verify-working-mode.sh" \
   "$HERE/scripts/verify-working-mode-map.sh" \
   "$HERE/scripts/verify-working-mode-blank-home.sh" \
-  "$HERE/scripts/verify-working-mode-live.sh"; do
+  "$HERE/scripts/verify-working-mode-live.sh" \
+  "$HERE/scripts/verify-working-mode-quickstart.sh"; do
   if grep -E -q "pgrep[[:space:]]+-f[[:space:]]+['\"]wm\\.sh loop['\"]" "$f"; then
     bad "$f: pgrep leftover-loop is unscoped (must match this \$WM)"
   else
@@ -1861,6 +1862,23 @@ if grep -F -q 'HOME=$(mktemp -d) scripts/verify-working-mode.sh' \
   ok
 else
   bad 'docs/working-mode.md must show empty-HOME kernel CHECKs from the source tree'
+fi
+if grep -F -q 'docs/examples/working-mode' "$HERE/docs/working-mode.md" \
+  && grep -F -q 'CLOSED PASS' "$HERE/docs/working-mode.md"; then
+  ok
+else
+  bad 'docs/working-mode.md must mention docs/examples/working-mode and CLOSED PASS'
+fi
+if [ -f "$HERE/docs/examples/working-mode/MAP.md" ]; then
+  ok
+else
+  bad 'docs/examples/working-mode/MAP.md missing'
+fi
+if [ -f "$HERE/scripts/verify-working-mode-quickstart.sh" ] \
+  && [ -x "$HERE/scripts/verify-working-mode-quickstart.sh" ]; then
+  ok
+else
+  bad 'scripts/verify-working-mode-quickstart.sh missing or not executable'
 fi
 if grep -F 'docs/working-mode.md' "$HERE/README.md" | grep -q 'quickstart'; then
   ok

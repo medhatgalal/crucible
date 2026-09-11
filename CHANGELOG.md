@@ -33,6 +33,9 @@ All notable changes to this project are documented here. This project follows
   not any tree's `wm.sh loop`.
 - Operator quickstart in `docs/working-mode.md` (target-root
   `.crucible/work/wm.sh` after `adopt work --managed --working-mode`).
+- Worked LOW example in `docs/examples/working-mode/` (copy-paste Quickstart);
+  `scripts/verify-working-mode-quickstart.sh` proves it (empty HOME; extra
+  proof, not a CI gate). HIGH unsigned loop is `STOP-ASK MAP-HUMAN`.
 - Live independence probes grok/claude/codex auth under empty HOME and
   fails closed (`cannot auth`) instead of a grok-only fixture PASS.
   Probes copy host grok `auth.json` and `config.toml` (yolo / always-approve

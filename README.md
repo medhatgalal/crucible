@@ -205,7 +205,8 @@ names the broken invariant:
 ```
 
 `./scripts/verify-working-mode-adopt.sh`, `./scripts/verify-working-mode-map.sh`,
-and `./scripts/verify-working-mode-blank-home.sh` exist as additional
+`./scripts/verify-working-mode-blank-home.sh`, and
+`./scripts/verify-working-mode-quickstart.sh` exist as additional
 working-mode proofs. `./scripts/verify-working-mode-live.sh` is fail-closed
 (`INDEPENDENCE_UNAVAILABLE` when grok/claude/codex are missing) and is **not**
 a required CI gate.

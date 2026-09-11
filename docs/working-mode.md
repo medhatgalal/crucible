@@ -13,32 +13,95 @@ is `work`.
 
 ## Quickstart
 
-From the **target repository root**:
+Install from Crucible source `$SRC` into an empty **target** git repo (cwd =
+target root). Default adopt still has no `wm.sh`; this is opt-in:
 
-1. Install: from Crucible source, cwd = **target** git repo:
-   `crucible adopt work --managed --working-mode`
-2. Cast: mapper ≠ maker ≠ reviewer; HIGH needs two harness kinds
-3. Map: architecture writes `architecture/modules.md` + `MAP.md`;
-   `.crucible/work/wm.sh record-mapper --from MAP.md`;
-   `.crucible/work/wm.sh map-ready`
-4. Critique: map-judge returns MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK;
-   `.crucible/work/wm.sh map-verdict RETURNFILE`
-5. If next slice HIGH/live: write `MAP-HUMAN` (`SIGNED`, `MAP`, `SHA256` of
-   current MAP.md)
-6. Run: `.crucible/work/wm.sh loop` (foreground; walks remaining READY slices)
-7. Stop: CLOSED PASS / CLOSED NO-BUILD / STOP-ASK / ESCALATE — do not
-   background-wait
-8. Refresh engine from a **newer** tree (`adopt --refresh`); never src==dst
+```sh
+SRC=/path/to/crucible
+DST=$(mktemp -d)
+git -C "$DST" init
+git -C "$DST" checkout -b main
+cd "$DST"
+"$SRC/crucible" adopt work --managed --working-mode
+```
 
-Try the CHECKs from the **Crucible source** tree:
+Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on
+`PATH`). Mapper, maker, and reviewer must be distinct agents. `{BRIEF}` is
+quoted by the engine — do not wrap it in quotes in the command. Stop on
+`CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
+background-wait.
+
+### Example A — LOW fixture walk (copy-paste)
+
+Checked-in files live in `docs/examples/working-mode/` (one LOW slice:
+`product/hello.txt` is exactly `hello`). Copy them, cast fixture workers,
+accept the map, and run one foreground loop. LOW local maps do not need
+`MAP-HUMAN`. Mapper is `alice` via `MAP.md` / `record-mapper --from MAP.md`
+(there is no `cast mapper` verb). Critique is `bob` via a `MAP-ACCEPT`
+return file. Maker `carol` ≠ reviewer `dave`.
+
+```sh
+cp -R "$SRC/docs/examples/working-mode/." .
+.crucible/work/wm.sh init
+.crucible/work/wm.sh cast coordinator parent grok -
+.crucible/work/wm.sh cast maker carol grok './tools/maker.sh {BRIEF}'
+.crucible/work/wm.sh cast reviewer dave grok './tools/reviewer.sh {BRIEF}'
+.crucible/work/wm.sh record-mapper --from MAP.md
+.crucible/work/wm.sh map-ready
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
+.crucible/work/wm.sh map-verdict .wm/return/bob.md
+.crucible/work/wm.sh loop
+```
+
+`loop` ends `CLOSED PASS`. `product/hello.txt` contains `hello`.
+`MAP-ACCEPT` is not `CLOSED PASS`.
+
+### Example B — HIGH next slice needs a sign
+
+A HIGH `MAP.md` row (two harness kinds so 3d does not STOP-ASK):
+
+```
+s1	product	product/hello.txt	-	HIGH
+```
+
+Cast maker `carol` grok and reviewer `dave` claude:
+
+```sh
+.crucible/work/wm.sh cast maker carol grok './tools/maker.sh {BRIEF}'
+.crucible/work/wm.sh cast reviewer dave claude './tools/reviewer.sh {BRIEF}'
+```
+
+Unsigned `.crucible/work/wm.sh loop` prints `STOP-ASK MAP-HUMAN` and does
+not start the maker. Then:
+
+```sh
+printf 'SIGNED: operator\nMAP: MAP.md\nSHA256: %s\n' "$(shasum -a 256 MAP.md | awk '{print $1}')" > MAP-HUMAN
+.crucible/work/wm.sh loop
+```
+
+`SIGNED:` must be a human id — not mapper, maker, reviewer, parent,
+coordinator, or loop. A rewrite of `MAP.md` after sign is not a sign.
+
+### Prove it
+
+Kernel CHECKs from the **Crucible source** tree (empty HOME):
 
 ```sh
 HOME=$(mktemp -d) scripts/verify-working-mode.sh
 ```
 
-This is the coordinator travelling card for **map cadence**. Brick CHECKs
-(maker ≠ judge, observed-red, NO-BUILD, live fence) live in `wm.sh` and
-`scripts/verify-working-mode.sh`.
+Extra proof that Example A still matches `docs/examples/working-mode/`
+(same extra-proof shape as `scripts/verify-working-mode-map.sh` and
+`scripts/verify-working-mode-blank-home.sh`; not a CI gate):
+
+```sh
+HOME=$(mktemp -d) scripts/verify-working-mode-quickstart.sh
+```
+
+Brick CHECKs (maker ≠ judge, observed-red, NO-BUILD, live fence) live in
+`wm.sh` and `scripts/verify-working-mode.sh`. Refresh the engine only from
+a **newer** tree (`adopt work --refresh`); `src == dst` is refused.
 
 ## Map cadence (6b)
 

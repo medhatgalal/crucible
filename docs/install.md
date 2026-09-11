@@ -79,7 +79,8 @@ batteries into the **target** (no `$HOME` skill trees):
 That copies `wm.sh` into `.crucible/work/`, canonical skills into `.crucible/skills/`,
 harness views under `.crucible/.{grok,claude,agents}/skills/` and repo-root
 `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
-of the installing tree). Adapters are copied when the source tree has `adapters/`;
+of the installing tree). Worked copy-paste examples (LOW fixture walk and HIGH
+sign) are in the [working-mode.md](working-mode.md) Quickstart. Adapters are copied when the source tree has `adapters/`;
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
