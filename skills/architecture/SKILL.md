@@ -15,12 +15,12 @@ Write `architecture/modules.md` as a tab-separated table (header required):
 module_id	root_path	public_contracts	test_entrypoint	pattern_instance	live_write
 ```
 
-- `root_path` is a directory that already exists (a package, `src/<name>/`, `cmd/<name>/`). Not a metaphor.
-- `pattern_instance` is a path to a real file that shows the pattern this module already uses (RULE 26).
+- `root_path` is a relative package directory (`src/<name>/`, `cmd/<name>/`). Not a metaphor. Greenfield may create empty packages (kernel `mkdir` + `.gitkeep`) then fit. Absolute paths and `..` are fairy-tale and STOP.
+- `pattern_instance` is a path to a real file that shows the pattern this module already uses (RULE 26). On greenfield, that file may land with the first slice; the root directory must exist after fit.
 - `live_write` is `yes` or `no` (credentials, destroy, push-main). Recording it is not permission to do it.
-- Every path under `src/`, `packages/`, `cmd/` that this work might touch is either under a `root_path` or listed `UNOWNED`. Two plausible packagings → ask once, do not pick in secret.
+- Every path under `src/`, `packages/`, `cmd/` that this work might touch is either under a `root_path` or listed `UNOWNED`. Two plausible packagings → write QUESTIONS.md and stop; do not pick in secret.
 
-Do not invent fairy-tale rooms. A room that is not a directory in the tree is a defect.
+Do not invent fairy-tale rooms. Absolute paths and `..` still die. A missing relative root is created empty, then fitted.
 
 ## RULE 26
 
@@ -51,4 +51,4 @@ The mapper id is durable in `.wm/mapper`. Later `wm cast maker` with that same a
 - Implement product, author the falsifier, spawn makers, or refresh skills.
 - Edit `wm.sh`. Replacing this directory must not require that.
 
-Stop: missing inventory, path outside modules, fairy-tale root that does not exist, `CHANGES-ARCHITECTURE`, two packagings with no human pick.
+Stop: missing inventory, path outside modules, fairy-tale absolute/`..` root, `CHANGES-ARCHITECTURE`, two packagings → QUESTIONS (do not pick in secret).

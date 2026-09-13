@@ -219,6 +219,10 @@ require_fgrep "$HERE/skills/architecture/SKILL.md" 'RULE 26' \
   'architecture SKILL.md must name RULE 26'
 require_fgrep "$HERE/skills/architecture/SKILL.md" 'record-mapper' \
   'architecture SKILL.md must record mapper via wm record-mapper'
+require_fgrep "$HERE/skills/architecture/SKILL.md" 'greenfield' \
+  'architecture SKILL.md must allow greenfield empty packages then fit'
+require_fgrep "$HERE/skills/architecture/SKILL.md" 'QUESTIONS.md' \
+  'architecture SKILL.md must send two packagings to QUESTIONS.md'
 
 # Critique: invert + adversarial + simple only; map words; no self-ACCEPT (8b)
 require_fgrep "$HERE/skills/critique/CONTRACT.md" 'MAP-ACCEPT' \
@@ -799,6 +803,71 @@ setup_map_repo t-no-modules
 refuses 'check-module-fit without architecture/modules.md' 'refused:' \
   "$WM" check-module-fit --path src/widget/api.py
 
+# D1: greenfield relative root is created then fitted; absolute/`..` still die.
+setup_map_repo t-greenfield-mkdir
+mkdir -p architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\tsrc/widget\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\tno\n' \
+  >> architecture/modules.md
+if [ ! -d src/widget ]; then
+  ok
+else
+  bad 'greenfield fit fixture must start without src/widget'
+fi
+if impl_ok 'greenfield check-module-fit creates missing root' "$WM" check-module-fit; then
+  grep -q MODULE-FIT "$OUT" && ok || bad "greenfield fit wanted MODULE-FIT, got $(cat "$OUT")"
+fi
+[ -d src/widget ] && ok || bad 'check-module-fit must mkdir src/widget'
+[ -f src/widget/.gitkeep ] && ok || bad 'check-module-fit must touch src/widget/.gitkeep'
+
+setup_map_repo t-greenfield-map-ready
+mkdir -p architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\tsrc/widget\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\tno\n' \
+  >> architecture/modules.md
+printf 'MAPPER: alice\n\nid\tmodule\towned_paths\tdepends_on\trisk\ns1\twidget\tsrc/widget/api.py\t-\tLOW\n' \
+  > MAP.md
+if [ ! -d src/widget ]; then
+  ok
+else
+  bad 'greenfield map-ready fixture must start without src/widget'
+fi
+impl_ok 'record-mapper greenfield map-ready' "$WM" record-mapper --from MAP.md || true
+if impl_ok 'map-ready greenfield creates missing root' "$WM" map-ready; then
+  grep -q MAP-READY "$OUT" && ok || bad "greenfield map-ready wanted MAP-READY, got $(cat "$OUT")"
+fi
+[ -d src/widget ] && ok || bad 'map-ready must mkdir src/widget'
+[ -f src/widget/.gitkeep ] && ok || bad 'map-ready must touch src/widget/.gitkeep'
+
+setup_map_repo t-fairy-abs-root
+mkdir -p architecture
+_abs_root="$BASE/must-not-create-abs"
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\t%s\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\tno\n' "$_abs_root" \
+  >> architecture/modules.md
+refuses 'absolute module root refused' 'invalid module root' "$WM" check-module-fit
+if [ -e "$_abs_root" ]; then
+  bad 'absolute module root must not be created'
+else
+  ok
+fi
+
+setup_map_repo t-fairy-dotdot-root
+mkdir -p architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\t../x\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\tno\n' \
+  >> architecture/modules.md
+refuses 'dot-dot module root refused' 'invalid module root' "$WM" check-module-fit
+if [ -e "$BASE/x" ] || [ -e ../x ]; then
+  bad 'dot-dot module root must not mkdir ../x'
+else
+  ok
+fi
+
 # ---------------------------------------------------------------------------
 # Task 5: map cadence + human sign (6b, 8c, 3d). Identity CHECKs above stay GREEN.
 # Falsifier-first: HIGH/live without MAP-HUMAN must not start maker; LOW local may.
@@ -1159,7 +1228,7 @@ else
 fi
 
 # NEXT MAP is terminal when specifier/scout have no CLI (do not invent a map).
-# MAP-REVISE without specifier CLI still STOP-ASK (unattended envelope).
+# D3: MAP-REVISE without specifier CLI still STOP-ASK even if scout is cast.
 setup_map_repo t-loop-next-map
 write_architecture_fixture alice LOW no
 impl_ok 'record-mapper loop NEXT MAP' "$WM" record-mapper --from MAP.md || true
@@ -1167,6 +1236,20 @@ impl_ok 'map-ready loop NEXT MAP' "$WM" map-ready || true
 write_map_return bob MAP-REVISE
 impl_ok 'map-verdict loop REVISE' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
+mkdir -p tools
+cat > tools/scout-map-accept-ok.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: %s\nMAP: MAP.md\n' "$agent" > ".wm/return/${agent}.md"
+EOF
+chmod +x tools/scout-map-accept-ok.sh
+"$WM" cast scout bob grok './tools/scout-map-accept-ok.sh {BRIEF}' >/dev/null
 run_map_loop
 assert_map_loop_foreground 't-loop-next-map'
 printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
@@ -1174,6 +1257,61 @@ printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
 [ "$LOOP_RC" -ne 0 ] && ok || bad 'NEXT MAP loop must not exit 0'
 if grep -q 'CLOSED PASS' "$OUT" 2>/dev/null; then
   bad 'MAP-REVISE without specifier CLI must not CLOSED PASS'
+else
+  ok
+fi
+if [ -f .wm/map-verdict ] && grep -q '^WORD: MAP-REVISE$' .wm/map-verdict; then
+  ok
+else
+  bad 'MAP-REVISE without specifier must not run scout (verdict must stay MAP-REVISE)'
+fi
+if [ -f .wm/specifier-revise ]; then
+  bad 'MAP-REVISE without specifier CLI must not touch specifier-revise'
+else
+  ok
+fi
+
+# D3: MAP-REVISE with specifier CLI re-runs specifier (even if MAP.md exists), then scout.
+setup_map_repo t-loop-revise-specifier
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper loop MAP-REVISE specifier' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop MAP-REVISE specifier' "$WM" map-ready || true
+write_map_return bob MAP-REVISE
+impl_ok 'map-verdict loop MAP-REVISE specifier' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+mkdir -p tools
+cat > tools/specifier-revise.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+touch .wm/specifier-revise
+printf '\nREVISED\n' >> MAP.md
+EOF
+cat > tools/scout-map-accept-ok.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: %s\nMAP: MAP.md\n' "$agent" > ".wm/return/${agent}.md"
+EOF
+chmod +x tools/specifier-revise.sh tools/scout-map-accept-ok.sh
+"$WM" cast specifier eve grok './tools/specifier-revise.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout-map-accept-ok.sh {BRIEF}' >/dev/null
+run_map_loop
+assert_map_loop_foreground 't-loop-revise-specifier'
+[ -f .wm/specifier-revise ] && ok || bad 'MAP-REVISE with specifier CLI must run specifier (.wm/specifier-revise missing)'
+grep -q REVISED MAP.md && ok || bad 'MAP-REVISE specifier must be allowed to rewrite MAP.md'
+if [ -f .wm/map-verdict ] && grep -q '^WORD: MAP-ACCEPT$' .wm/map-verdict; then
+  ok
+else
+  bad "MAP-REVISE with specifier must then run scout MAP-ACCEPT, got $(cat .wm/map-verdict 2>/dev/null || echo ABSENT)"
+fi
+if grep -q 'CLOSED PASS' "$OUT" 2>/dev/null; then
+  bad 'MAP-REVISE specifier loop without brick workers must not CLOSED PASS'
 else
   ok
 fi

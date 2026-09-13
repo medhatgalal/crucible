@@ -1256,6 +1256,10 @@ $1"
     case $_cm_r in
       *..*|/*) die "invalid module root: $_cm_r" ;;
     esac
+    if [ ! -d "$_cm_r" ]; then
+      mkdir -p "$_cm_r"
+      touch "$_cm_r/.gitkeep"
+    fi
     [ -d "$_cm_r" ] || die "module root does not exist: $_cm_r"
   done <<EOF
 $_cm_roots
@@ -2006,7 +2010,8 @@ cmd_loop() {
         fi
         ;;
       "NEXT MAP")
-        if [ ! -f MAP.md ]; then
+        _lp_mw=$(map_word_recorded)
+        if [ ! -f MAP.md ] || [ "$_lp_mw" = MAP-REVISE ]; then
           if ! role_has_cli specifier; then
             say "STOP-ASK NEXT MAP"
             exit 1
