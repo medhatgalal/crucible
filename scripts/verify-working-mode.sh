@@ -870,6 +870,24 @@ fi
 # ---------------------------------------------------------------------------
 
 sh -n "$WM" && ok || bad 'wm.sh is not valid POSIX sh'
+if [ -f "$HERE/wm-go.sh" ]; then
+  sh -n "$HERE/wm-go.sh" && ok || bad 'wm-go.sh is not valid POSIX sh'
+else
+  bad 'wm-go.sh missing'
+fi
+if grep -q 'wm-go.sh' "$WM" && grep -q 'WM_GO' "$WM"; then
+  ok
+else
+  bad 'wm.sh must source wm-go.sh'
+fi
+[ -f "$HERE/WORKING-MODE.md" ] && ok || bad 'WORKING-MODE.md missing'
+if [ -f "$HERE/WORKING-MODE.md" ]; then
+  if grep -E '^wm[[:space:]]' "$HERE/WORKING-MODE.md" >/dev/null; then
+    bad 'WORKING-MODE.md must not show bare wm commands'
+  else
+    ok
+  fi
+fi
 
 # (11) Honest walk: fixture maker + reviewer → CLOSED PASS and reviewer exec
 setup_repo t11-loop-pass

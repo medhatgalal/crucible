@@ -4871,6 +4871,8 @@ adopt_install_working_mode() {
 
   cp "$_wm_src/wm.sh" "$_wm_dst/wm.sh"
   chmod +x "$_wm_dst/wm.sh" 2>/dev/null || true
+  [ -f "$_wm_src/wm-go.sh" ] && cp "$_wm_src/wm-go.sh" "$_wm_dst/wm-go.sh"
+  [ -f "$_wm_src/WORKING-MODE.md" ] && cp "$_wm_src/WORKING-MODE.md" "$_wm_dst/WORKING-MODE.md"
   cp "$_wm_src/ROUTING.tsv" "$_wm_dst/ROUTING.tsv"
   mkdir -p "$_wm_repo/.crucible"
   cp "$_wm_src/ROUTING.tsv" "$_wm_repo/.crucible/ROUTING.tsv"

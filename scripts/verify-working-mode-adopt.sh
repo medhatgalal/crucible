@@ -74,7 +74,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design) ;;
+    architecture|critique|review|loop-design|working-mode) ;;
     *) extra="$extra $n" ;;
   esac
 done
@@ -254,6 +254,8 @@ fi
 AD="$BASE/adopted"
 [ -f "$AD/.crucible/work/wm.sh" ] && ok || bad 'adopt --working-mode missing .crucible/work/wm.sh'
 [ -x "$AD/.crucible/work/wm.sh" ] && ok || bad '.crucible/work/wm.sh is not executable'
+[ -f "$AD/.crucible/work/wm-go.sh" ] && ok || bad 'adopt --working-mode missing wm-go.sh'
+[ -f "$AD/.crucible/work/WORKING-MODE.md" ] && ok || bad 'adopt --working-mode missing WORKING-MODE.md'
 [ -f "$AD/.crucible/skills/architecture/SKILL.md" ] && ok || bad 'canonical skills/architecture/SKILL.md missing'
 [ -d "$AD/.crucible/skills/architecture" ] && [ ! -L "$AD/.crucible/skills/architecture" ] \
   && ok || bad 'canonical architecture is missing or is a view'

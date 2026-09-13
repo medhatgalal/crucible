@@ -2096,10 +2096,27 @@ cmd_loop() {
   done
 }
 
+WM_GO=$(CDPATH= cd "$(dirname "$0")" && pwd)/wm-go.sh
+[ -f "$WM_GO" ] && . "$WM_GO"
+
 cmd=${1:-}
-[ -n "$cmd" ] || die "usage: wm <command>"
+if [ -z "$cmd" ]; then
+  if type cmd_help >/dev/null 2>&1; then
+    cmd_help
+    exit 0
+  fi
+  die "usage: wm <command>"
+fi
 shift
 case $cmd in
+  go|bootstrap)
+    type cmd_go >/dev/null 2>&1 || die "refresh from 1.8.0"
+    cmd_go "$@"
+    ;;
+  help)
+    type cmd_help >/dev/null 2>&1 || die "refresh from 1.8.0"
+    cmd_help
+    ;;
   init) cmd_init "$@" ;;
   cast) cmd_cast "$@" ;;
   record-mapper) cmd_record_mapper "$@" ;;
