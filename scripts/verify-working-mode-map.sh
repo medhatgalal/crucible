@@ -287,6 +287,33 @@ else
   ok
 fi
 
+# Optional research battery (ROUTING required=no).
+require_file "$HERE/skills/research/SKILL.md" 'package skills/research/SKILL.md missing'
+require_file "$HERE/skills/research/CONTRACT.md" 'package skills/research/CONTRACT.md missing'
+require_fgrep "$HERE/skills/research/CONTRACT.md" 'RESEARCH.md' \
+  'research CONTRACT Out must name RESEARCH.md'
+require_fgrep "$HERE/skills/research/CONTRACT.md" 'MAP-ACCEPT' \
+  'research CONTRACT Must-not must mention MAP-ACCEPT'
+require_fgrep "$HERE/skills/research/CONTRACT.md" 'CLOSED PASS' \
+  'research CONTRACT Must-not must mention CLOSED PASS'
+require_fgrep "$HERE/skills/research/CONTRACT.md" 'FALSIFIER' \
+  'research CONTRACT Must-not must mention FALSIFIER'
+require_fgrep "$HERE/skills/research/SKILL.md" 'RESEARCH.md' \
+  'research SKILL.md must name RESEARCH.md'
+require_fgrep "$HERE/skills/research/SKILL.md" 'SPEC.md' \
+  'research SKILL.md must refuse SPEC.md on this pass'
+if [ -f "$HERE/skills/research/CONTRACT.md" ]; then
+  swap=$(section_body '## Swap' "$HERE/skills/research/CONTRACT.md")
+  printf '%s\n' "$swap" | grep -F -q 'Replacing this directory must not require editing wm.sh.' \
+    && ok || bad 'research CONTRACT.md ## Swap missing verbatim swap line'
+fi
+if awk -F '\t' '$1=="RESEARCH" && $3=="research" && $6=="no" { found=1 } END { exit !found }' \
+  "$HERE/ROUTING.tsv"; then
+  ok
+else
+  bad 'ROUTING.tsv missing RESEARCH row with required=no'
+fi
+
 # ---------------------------------------------------------------------------
 # Fixture helpers (echo/sh stubs). No Grok/Claude/Codex.
 # ---------------------------------------------------------------------------
@@ -1309,7 +1336,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode) ;;
+    architecture|critique|review|loop-design|working-mode|research) ;;
     *) extra="$extra $n" ;;
   esac
 done

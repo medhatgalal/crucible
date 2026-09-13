@@ -226,7 +226,7 @@ command_backgrounds() {
 
 guard_command() {
   _gc_cmd=$1
-  _gc_target=$2
+  _gc_role=${2:-}
   case $_gc_cmd in
     *'git push'*|*'git'*push*)
       case $_gc_cmd in
@@ -250,8 +250,22 @@ guard_command() {
       ;;
   esac
   case $_gc_cmd in
-    *'curl '*|*'wget '*|*'jira '*|*'--password'*|*'--token'*|*'--api-key'*)
+    *'--password'*|*'--token'*|*'--api-key'*)
       die "stop-ask: live write"
+      ;;
+  esac
+  case $_gc_cmd in
+    *'curl '*|*'wget '*|*'jira '*)
+      # Research pass: specifier may curl/wget without live secret flags.
+      if [ "$_gc_role" = specifier ] && [ ! -f RESEARCH.md ]; then
+        case $_gc_cmd in
+          *'jira '*)
+            die "stop-ask: live write"
+            ;;
+        esac
+      else
+        die "stop-ask: live write"
+      fi
       ;;
   esac
 }
@@ -562,6 +576,10 @@ resolve_loop_lesson() {
   printf '%s\n' "$_rl"
 }
 
+research_skill_present() {
+  [ -f .crucible/skills/research/SKILL.md ] || [ -f skills/research/SKILL.md ]
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
@@ -584,8 +602,12 @@ write_brief() {
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
-        printf 'Read IDEA.md. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
-        printf 'When specified, write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT.\n' "$_wb_agent"
+        if research_skill_present && [ ! -f RESEARCH.md ]; then
+          printf 'Read IDEA.md. Write RESEARCH.md only (stack survey, constraints, non-goals, competitors if known). Do not write SPEC.md or MAP.md yet. Do not implement product. Do not write MAP-ACCEPT, CLOSED PASS, or FALSIFIER. Do not use live tokens or passwords.\n'
+        else
+          printf 'Read IDEA.md. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
+          printf 'When specified, write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT.\n' "$_wb_agent"
+        fi
         ;;
       scout)
         _wb_mw=$(map_word_recorded)
@@ -1682,6 +1704,10 @@ cmd_next() {
     fi
   fi
   if [ ! -f SPEC.md ] || ! spec_ok; then
+    if research_skill_present && role_has_cli specifier && [ ! -f RESEARCH.md ]; then
+      say "NEXT RESEARCH"
+      return 0
+    fi
     say "NEXT SPEC"
     return 0
   fi
@@ -1802,7 +1828,7 @@ cmd_run() {
       die "host-spawn waiter"
       ;;
   esac
-  guard_command "$_ru_command" run
+  guard_command "$_ru_command" "$_ru_prole"
   if [ "$_ru_role" = maker-falsify ] && [ -f "$WM/FALSIFIER" ]; then
     die "FALSIFIER exists before maker-falsify (controller authorship)"
   fi
@@ -1946,6 +1972,22 @@ cmd_loop() {
       "NEXT INTAKE"|"NEXT CAST")
         say "STOP-ASK $_lp_card"
         exit 1
+        ;;
+      "NEXT RESEARCH")
+        if ! role_has_cli specifier; then
+          say "STOP-ASK NEXT RESEARCH"
+          exit 1
+        fi
+        say "$_lp_card"
+        "$WM_BIN" run specifier || exit 1
+        if [ -s QUESTIONS.md ]; then
+          say "STOP-ASK QUESTIONS"
+          exit 1
+        fi
+        if [ ! -s RESEARCH.md ]; then
+          say "STOP-ASK RESEARCH incomplete"
+          exit 1
+        fi
         ;;
       "NEXT SPEC")
         if ! role_has_cli specifier; then

@@ -1,5 +1,7 @@
 #!/bin/sh
-# Fixture specifier: reads IDEA.md. Hello idea → SPEC/MAP/modules.
+# Fixture specifier: reads IDEA.md.
+# RESEARCH.md missing → write RESEARCH.md from IDEA and exit (no SPEC yet).
+# Hello idea (second run) → SPEC/MAP/modules.
 # Underspecified (e.g. saas/webapp, missing IDEA) → QUESTIONS.md, no MAP.md.
 # Never ignores IDEA. Does not implement product. Does not write MAP-ACCEPT.
 set -eu
@@ -11,6 +13,28 @@ fi
 if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
   a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
   [ -n "$a" ] && agent=$a
+fi
+
+if [ -f IDEA.md ] && [ ! -f RESEARCH.md ]; then
+  {
+    printf '# RESEARCH\n\n'
+    printf '## Stack survey\nlocal files from IDEA.md; no live services\n\n'
+    printf '## Constraints\nLOW; no network; no credentials\n\n'
+    printf '## Non-goals\nSPEC.md and MAP.md on this pass; product implementation; live tokens\n\n'
+    printf '## Competitors\n'
+    if grep -qi hello IDEA.md; then
+      printf 'none known (hello product)\n'
+    else
+      printf 'unknown; idea not yet specified\n'
+    fi
+    printf '\n## Idea excerpt\n'
+    cat IDEA.md
+  } > RESEARCH.md
+  if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    git add RESEARCH.md
+    git diff --cached --quiet || git commit -qm 'specifier: RESEARCH'
+  fi
+  exit 0
 fi
 
 hello=0

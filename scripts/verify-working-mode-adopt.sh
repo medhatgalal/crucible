@@ -74,7 +74,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode) ;;
+    architecture|critique|review|loop-design|working-mode|research) ;;
     *) extra="$extra $n" ;;
   esac
 done
@@ -446,6 +446,38 @@ else
 fi
 [ ! -f "$BASE/missing-bat/.crucible/work/wm.sh" ] && ok \
   || bad 'refused adopt still installed wm.sh'
+
+# ROUTING required=no: missing optional battery does not fail adopt.
+if awk -F '\t' '$1=="RESEARCH" && $3=="research" && $6=="no" { found=1 } END { exit !found }' \
+  "$HERE/ROUTING.tsv"; then
+  ok
+else
+  bad 'package ROUTING.tsv missing RESEARCH survey research specifier spec required=no'
+fi
+FAKE_OPT="$BASE/fake-src-opt"
+mkdir -p "$FAKE_OPT/scripts" "$FAKE_OPT/skills"
+cp "$CRUCIBLE" "$FAKE_OPT/crucible"
+cp "$HERE/VERSION" "$FAKE_OPT/VERSION"
+cp "$WM" "$FAKE_OPT/wm.sh"
+cp "$PROJECT" "$FAKE_OPT/scripts/project-skills.sh"
+cp -R "$HERE/skills/." "$FAKE_OPT/skills/"
+rm -rf "$FAKE_OPT/skills/research"
+{
+  printf 'phase\tjob\tbattery\trole\tstake\trequired\n'
+  printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n'
+  printf 'RESEARCH\tsurvey\tresearch\tspecifier\tspec\tno\n'
+} > "$FAKE_OPT/ROUTING.tsv"
+chmod +x "$FAKE_OPT/crucible" "$FAKE_OPT/wm.sh" "$FAKE_OPT/scripts/project-skills.sh"
+init_git_repo "$BASE/missing-opt"
+if run_adopt "$BASE/missing-opt" "$FAKE_OPT/crucible" adopt work --managed --working-mode; then
+  ok
+else
+  bad "adopt with missing optional research battery refused: $(cat "$OUT") $(cat "$ERR")"
+fi
+[ -f "$BASE/missing-opt/.crucible/work/wm.sh" ] && ok \
+  || bad 'optional missing research must still install wm.sh'
+[ ! -f "$BASE/missing-opt/.crucible/skills/research/SKILL.md" ] && ok \
+  || bad 'optional missing research must not invent the battery'
 
 # wm ready: ROUTING present + missing required battery → refused; absent ROUTING stays Task 1.
 READY_MISS="$BASE/ready-miss"

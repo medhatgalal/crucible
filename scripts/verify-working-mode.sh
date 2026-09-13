@@ -292,6 +292,13 @@ install_greet_unattended_workers() {
   cp "$HERE/docs/examples/working-mode/tools/maker.sh" tools/maker.sh
   cp "$HERE/docs/examples/working-mode/tools/reviewer.sh" tools/reviewer.sh
   chmod +x tools/specifier.sh tools/scout.sh tools/maker.sh tools/reviewer.sh
+  if [ -f "$HERE/skills/research/SKILL.md" ]; then
+    mkdir -p skills/research
+    cp "$HERE/skills/research/SKILL.md" skills/research/SKILL.md
+    if [ -f "$HERE/skills/research/CONTRACT.md" ]; then
+      cp "$HERE/skills/research/CONTRACT.md" skills/research/CONTRACT.md
+    fi
+  fi
 }
 
 write_scout_self_accept() {
@@ -1995,18 +2002,59 @@ if printf '%s\n' "$wb" | grep -q 'IDEA.md' \
 else
   bad 'specifier brief must mention IDEA.md and QUESTIONS.md'
 fi
+if printf '%s\n' "$wb" | grep -q 'RESEARCH.md'; then
+  ok
+else
+  bad 'specifier brief must mention RESEARCH.md for the research pass'
+fi
+if grep -q 'research_skill_present' "$HERE/wm.sh" \
+  && grep -q 'NEXT RESEARCH' "$HERE/wm.sh"; then
+  ok
+else
+  bad 'wm.sh must define research_skill_present and emit NEXT RESEARCH'
+fi
 
-# Example hello IDEA + specifier fixture → SPEC.md + MAP.md (does not ignore IDEA).
+# No research skill → NEXT SPEC (battery is optional).
+setup_idea_only t-no-research-battery
+"$WM" cast specifier eve grok 'sh -c "echo specifier {BRIEF}"' >/dev/null
+expect 'no research skill next is SPEC' 'NEXT SPEC' "$WM" next
+
+# Example hello IDEA + specifier fixture → first run RESEARCH.md, second SPEC/MAP.
 setup_idea_only t-hello-specifier-reads-idea
 install_greet_unattended_workers
 "$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
 commit_msg 'hello specifier'
+expect 'hello next is RESEARCH' 'NEXT RESEARCH' "$WM" next
 set +e
 "$WM" run specifier >"$OUT" 2>"$ERR"
 hello_spec_rc=$?
 set -e
 [ "$hello_spec_rc" -eq 0 ] && ok \
-  || bad "hello specifier run exit $hello_spec_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+  || bad "hello specifier research run exit $hello_spec_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -s RESEARCH.md ]; then
+  ok
+else
+  bad "hello specifier first run wanted RESEARCH.md, got $(cat RESEARCH.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -f SPEC.md ] || [ -f MAP.md ]; then
+  bad 'hello specifier first run must not write SPEC.md or MAP.md yet'
+else
+  ok
+fi
+hello_brief=$(ls -t .wm/briefs/specifier.*.md 2>/dev/null | head -n 1)
+if [ -n "$hello_brief" ] && grep -q 'RESEARCH.md' "$hello_brief" \
+  && grep -q 'Do not write SPEC.md' "$hello_brief"; then
+  ok
+else
+  bad "research brief must say write RESEARCH.md only, got $(cat "$hello_brief" 2>/dev/null || echo ABSENT)"
+fi
+expect 'hello next is SPEC after RESEARCH' 'NEXT SPEC' "$WM" next
+set +e
+"$WM" run specifier >"$OUT" 2>"$ERR"
+hello_spec_rc=$?
+set -e
+[ "$hello_spec_rc" -eq 0 ] && ok \
+  || bad "hello specifier SPEC run exit $hello_spec_rc out=$(cat "$OUT") err=$(cat "$ERR")"
 if [ -f SPEC.md ] && grep -qi hello SPEC.md; then
   ok
 else
@@ -2022,7 +2070,7 @@ if [ -s QUESTIONS.md ]; then
 else
   ok
 fi
-hello_brief=$(ls .wm/briefs/specifier.*.md 2>/dev/null | head -n 1)
+hello_brief=$(ls -t .wm/briefs/specifier.*.md 2>/dev/null | head -n 1)
 if [ -n "$hello_brief" ] && grep -q 'IDEA.md' "$hello_brief" \
   && grep -q 'QUESTIONS.md' "$hello_brief"; then
   ok
@@ -2057,6 +2105,7 @@ if [ -s QUESTIONS.md ]; then
 else
   bad 'saas IDEA specifier must write non-empty QUESTIONS.md'
 fi
+[ -s RESEARCH.md ] && ok || bad 'saas IDEA specifier must write RESEARCH.md before QUESTIONS'
 if [ -f product/hello.txt ]; then
   bad 'saas IDEA must not land hello product'
 else
@@ -2128,6 +2177,7 @@ if [ -f product/hello.txt ] && grep -qx hello product/hello.txt; then
 else
   bad "unattended greet product/hello.txt wanted hello, got $(cat product/hello.txt 2>/dev/null || echo ABSENT)"
 fi
+[ -s RESEARCH.md ] && ok || bad 'unattended greet missing RESEARCH.md from first specifier pass'
 [ -f SPEC.md ] && grep -q '^MAKER-WRITES$' SPEC.md \
   && ok || bad 'unattended greet specifier did not leave spec_ok SPEC.md'
 [ -f MAP.md ] && grep -q '^MAPPER: eve$' MAP.md \
@@ -2190,6 +2240,33 @@ if closed_pass_present; then
 else
   ok
 fi
+
+# Maker-build command containing `curl ` still refused (research curl exception is specifier-only).
+setup_repo t-maker-build-curl
+"$WM" cast maker alice grok 'curl http://example.invalid' >/dev/null
+refuses 'maker-build command containing curl still refused' 'refused:' "$WM" run maker-build
+
+# Specifier research pass: curl/wget without secret flags is allowed; writes RESEARCH.md.
+setup_idea_only t-research-specifier-curl
+install_greet_unattended_workers
+"$WM" cast specifier eve grok \
+  'true curl http://example.invalid; ./tools/specifier.sh {BRIEF}' >/dev/null
+commit_msg 'research specifier curl'
+set +e
+"$WM" run specifier >"$OUT" 2>"$ERR"
+spec_curl_rc=$?
+set -e
+[ "$spec_curl_rc" -eq 0 ] && ok \
+  || bad "specifier research curl must be allowed (rc=$spec_curl_rc out=$(cat "$OUT") err=$(cat "$ERR"))"
+[ -s RESEARCH.md ] && ok || bad 'specifier research curl pass must write RESEARCH.md'
+if [ -f SPEC.md ]; then
+  bad 'specifier research curl pass must not write SPEC.md'
+else
+  ok
+fi
+"$WM" cast specifier eve grok \
+  'curl --token secret http://example.invalid; ./tools/specifier.sh {BRIEF}' >/dev/null
+refuses 'specifier curl --token still refused' 'refused:' "$WM" run specifier
 
 # Home leak: empty HOME must stay empty (no skills, no LESSONS)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
