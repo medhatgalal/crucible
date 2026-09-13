@@ -1894,6 +1894,25 @@ else
   ok
 fi
 
+# LOOP_BOUND = max(40, min(240, 16+12*n))
+setup_repo t-loop-bound-empty
+b=$("$WM" bound)
+[ "$b" = 40 ] && ok || bad "bound without slices.tsv wanted 40 got $b"
+setup_repo t-loop-bound-five
+printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > slices.tsv
+i=1
+while [ "$i" -le 5 ]; do
+  printf 's%s\tm\tp\t-\tLOW\tREADY\n' "$i" >> slices.tsv
+  i=$((i + 1))
+done
+b=$("$WM" bound)
+[ "$b" = 76 ] && ok || bad "bound with 5 slices wanted 76 got $b"
+if grep -q '16 + 12' "$HERE/wm.sh" && grep -q '16+12' "$HERE/WORKING-MODE.md"; then
+  ok
+else
+  bad 'LOOP_BOUND formula 16+12*n must be in wm.sh and WORKING-MODE.md'
+fi
+
 # Quote {BRIEF}: engine wraps the absolute path (ENVIRON, POSIX double quotes).
 run_brief_argv() {
   "$WM" cast maker alice grok \

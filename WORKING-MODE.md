@@ -30,7 +30,7 @@ Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Specifier `spec0` is not maker
 | MAP-REVISE | Specifier revises `MAP.md` |
 | MAP-HUMAN | HIGH or live: sign `SIGNED`, `MAP`, `SHA256` of current `MAP.md` |
 | ARCH | Human / architecture; do not start the next maker |
-| ESCALATE LOOP_BOUND | Inspect `.wm/`; bound is 40 |
+| ESCALATE LOOP_BOUND | Inspect `.wm/`; bound is max(40, min(240, 16+12×slices)) |
 | live / destroy / push-main | Stop. Not unattended |
 
 HIGH needs `MAP-HUMAN`. LOW local maps do not.

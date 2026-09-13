@@ -76,7 +76,7 @@ else
   bad "no-args wanted run:/go/harness:, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 if grep -q 'working-mode' "$OUT" \
-  && grep -q 'commands: go help status init cast loop' "$OUT" \
+  && grep -q 'commands: go help status init cast loop bound' "$OUT" \
   && grep -q 'harness: read WORKING-MODE.md then go' "$OUT"; then
   ok
 else

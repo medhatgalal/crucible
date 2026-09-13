@@ -27,7 +27,7 @@ cmd_help() {
   say "working-mode"
   say "run: .crucible/${_ch_prog}/wm.sh go [IDEA.md]"
   say "next: ${_ch_next}"
-  say "commands: go help status init cast loop"
+  say "commands: go help status init cast loop bound"
   say "harness: read WORKING-MODE.md then go"
 }
 

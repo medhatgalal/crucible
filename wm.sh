@@ -1852,6 +1852,24 @@ cmd_next() {
 
 cmd_status() { cmd_next; }
 
+# n = slices.tsv data rows; before map-ready, n=0 → 40.
+loop_bound() {
+  _lb_n=0
+  if [ -f slices.tsv ]; then
+    _lb_n=$(awk 'NR > 1 && $0 !~ /^[[:space:]]*$/ && $0 !~ /^#/ { c++ } END { print c + 0 }' slices.tsv)
+  fi
+  _lb_b=$((16 + 12 * _lb_n))
+  if [ "$_lb_b" -lt 40 ]; then
+    _lb_b=40
+  fi
+  if [ "$_lb_b" -gt 240 ]; then
+    _lb_b=240
+  fi
+  printf '%s\n' "$_lb_b"
+}
+
+cmd_bound() { loop_bound; }
+
 cmd_run() {
   _ru_role=${1:-}
   [ -n "$_ru_role" ] || die "usage: wm run ROLE"
@@ -2026,14 +2044,14 @@ cmd_loop() {
   _lp_ran_reviewer=0
   _lp_slice=
   _lp_lesson=$(resolve_loop_lesson)
+  _lp_bound=$(loop_bound)
   if [ -f "$WM/slice-in-flight" ]; then
     _lp_slice=$(kv_get "$WM/slice-in-flight" id)
   fi
   while :; do
     _lp_i=$((_lp_i + 1))
-    # LOOP_BOUND 40: specifier + scout + one LOW brick is ~12 cards;
-    # three CLOSED slices stay under 40. Raise to 80 if a longer map needs it.
-    if [ "$_lp_i" -gt 40 ]; then
+    # LOOP_BOUND = max(40, min(240, 16 + 12*n)) for n data rows in slices.tsv.
+    if [ "$_lp_i" -gt "$_lp_bound" ]; then
       say "ESCALATE LOOP_BOUND"
       exit 1
     fi
@@ -2267,5 +2285,6 @@ case $cmd in
   status) cmd_status "$@" ;;
   run) cmd_run "$@" ;;
   loop) cmd_loop "$@" ;;
+  bound) cmd_bound "$@" ;;
   *) die "unknown command: $cmd" ;;
 esac
