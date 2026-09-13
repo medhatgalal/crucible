@@ -381,6 +381,7 @@ Do not write verdicts, CLOSED, or return files.
 Re-run the named falsifier. Capture the evidence path:
 cmd=$(sed -n '1p' .wm/FALSIFIER)
 ev=$(.wm/bin/wm evidence dave -- sh -c "$cmd")
+Write reviews/review.md with ## Code and ## Testing (short is fine).
 Write .wm/return/dave.md with:
 WORD: PASS
 EVIDENCE: <exact path printed by wm evidence>

@@ -267,8 +267,8 @@ if [ -n "$AD" ] && [ -f "$AD/.crucible/work/wm.sh" ]; then
 
   cat > architecture/modules.md <<'EOF'
 module_id	root_path	public_contracts	test_entrypoint	pattern_instance	live_write
-alpha	pkg/alpha	pkg/alpha/api.py	tests/test_seam.py	pkg/alpha/api.py	no
-beta	pkg/beta	pkg/beta/api.py	tests/test_seam.py	pkg/beta/api.py	no
+alpha	pkg/alpha	pkg/alpha/api.py	tools/check_alpha.py	pkg/alpha/api.py	no
+beta	pkg/beta	pkg/beta/api.py	tools/check_beta.py	pkg/beta/api.py	no
 seam	tests	tests/test_seam.py	tests/test_seam.py	tests/test_seam.py	no
 EOF
 
@@ -427,9 +427,15 @@ EOF
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
 printf 'pid %s\n' "$$" > .wm/reviewer-pid
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 cmd=$(sed -n '1p' .wm/FALSIFIER)
 ev=$(.wm/bin/wm evidence dave -- sh -c "$cmd")
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/dave.md
 printf 'reran %s\n' "$cmd" >> .wm/reviewer-reran
 EOF

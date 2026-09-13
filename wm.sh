@@ -384,6 +384,13 @@ post_spawn_return_ok() {
   return 0
 }
 
+review_md_ok() {
+  [ -f reviews/review.md ] || return 1
+  grep -q '## Code' reviews/review.md || return 1
+  grep -q '## Testing' reviews/review.md || return 1
+  return 0
+}
+
 verdict_is_closeable() {
   _vc_file=$1
   [ -f "$_vc_file" ] || return 1
@@ -424,6 +431,7 @@ verdict_is_closeable() {
       [ -n "$_vc_fals" ] || return 1
       grep -F "$_vc_fals" "$_vc_ev" >/dev/null || return 1
       grep -q '^exit: 0$' "$_vc_ev" || return 1
+      review_md_ok || return 1
       ;;
     NO-BUILD)
       [ "$_vc_who" = "$_vc_rev" ] || return 1
@@ -520,6 +528,22 @@ check_falsifier_meta() {
   fi
 }
 
+check_falsifier_test_entrypoint() {
+  [ -f "$WM/FALSIFIER" ] || return 0
+  [ -f architecture/modules.md ] || return 0
+  [ -f "$WM/slice-in-flight" ] || return 0
+  _te_sid=$(kv_get "$WM/slice-in-flight" id)
+  [ -n "$_te_sid" ] || return 0
+  _te_mod=$(slice_module "$_te_sid")
+  [ -n "$_te_mod" ] || return 0
+  _te_path=$(module_test_entrypoint "$_te_mod")
+  [ -n "$_te_path" ] && [ "$_te_path" != - ] || return 0
+  _te_fals=$(awk 'NF{print; exit}' "$WM/FALSIFIER")
+  [ -n "$_te_fals" ] || die "falsifier must invoke test_entrypoint"
+  printf '%s\n' "$_te_fals" | grep -F -- "$_te_path" >/dev/null \
+    || die "falsifier must invoke test_entrypoint"
+}
+
 # Cycle logbook. Adopted programs: .crucible/<prog>/LESSONS.md.
 # Kernel fixtures without adopt: repo-root LESSONS.md (not $HOME, not .wm).
 lessons_file() {
@@ -591,7 +615,7 @@ write_brief() {
     printf 'role: %s\nagent: %s\n' "$_wb_role" "$_wb_agent"
     case $_wb_role in
       maker-falsify)
-        printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts.\n'
+        printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts. If the in-flight module has a test_entrypoint, the FALSIFIER command must include that path.\n'
         emit_lessons_section
         ;;
       maker-build)
@@ -599,7 +623,7 @@ write_brief() {
         emit_lessons_section
         ;;
       reviewer)
-        printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. Do not use maker rationale.\n' "$_wb_agent"
+        printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. WORD PASS also requires reviews/review.md with ## Code and ## Testing. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
         if research_skill_present && [ ! -f RESEARCH.md ]; then
@@ -884,6 +908,26 @@ module_live_write() {
   ' architecture/modules.md
 }
 
+module_test_entrypoint() {
+  _mte_mod=$1
+  [ -n "$_mte_mod" ] || return 0
+  [ -f architecture/modules.md ] || return 0
+  awk -F '\t' -v m="$_mte_mod" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^#/ { next }
+    /^[[:space:]]*$/ { next }
+    NF < 2 { next }
+    trim($1) == "module_id" { next }
+    trim($1) == m {
+      if (NF >= 4) print trim($4)
+      exit
+    }
+  ' architecture/modules.md
+}
+
 map_word_recorded() { kv_get "$WM/map-verdict" WORD; }
 
 human_sign_present() {
@@ -1111,7 +1155,7 @@ reset_brick() {
     "$WM/red.status" "$WM/red.out" "$WM/built.status" "$WM/built.reason" \
     "$WM/green.status" "$WM/green.out" "$WM/pre-falsify-wid" "$WM/pre-build-wid" \
     "$WM/last-maker-run" "$WM/reviewer-ran" "$WM/slice-in-flight" \
-    "$WM/dispatch" "$WM/worker.out" "$WM/worker.err"
+    "$WM/dispatch" "$WM/worker.out" "$WM/worker.err" "$WM/review-fail-count"
   rm -rf "$WM/verdicts" "$WM/return" "$WM/invoke" "$WM/spawn" "$WM/briefs" "$WM/evidence"
   mkdir -p "$WM/verdicts" "$WM/return" "$WM/return/history" "$WM/invoke" "$WM/spawn" \
     "$WM/briefs" "$WM/evidence"
@@ -1548,6 +1592,7 @@ cmd_verdict() {
     _vd_fals=$(read_falsifier_cmd)
     grep -F "$_vd_fals" "$_vd_ev" >/dev/null || die "PASS requires the reviewer to have run the named falsifier"
     grep -q '^exit: 0$' "$_vd_ev" || die "PASS requires falsifier exit 0"
+    review_md_ok || die "PASS requires reviews/review.md with ## Code and ## Testing"
   fi
   if [ "$_vd_word" = NO-BUILD ]; then
     if owned_porcelain_dirty; then
@@ -1774,6 +1819,31 @@ cmd_next() {
     return 0
   fi
   if [ "$_nx_gs" = ok ]; then
+    _nx_rev=$(panel_agent reviewer)
+    _nx_vf=
+    if [ -n "$_nx_rev" ] && [ "$_nx_rev" != - ]; then
+      _nx_vf="$WM/verdicts/${_nx_rev}.md"
+    fi
+    if [ -n "$_nx_vf" ] && [ -f "$_nx_vf" ] \
+      && [ "$(kv_get "$_nx_vf" VERDICT)" = FAIL ] \
+      && reviewer_exec_after_maker reviewer; then
+      _nx_rfc=0
+      if [ -f "$WM/review-fail-count" ]; then
+        _nx_rfc=$(awk 'NF { print $1+0; exit }' "$WM/review-fail-count")
+      fi
+      case $_nx_rfc in
+        ''|*[!0-9]*) _nx_rfc=0 ;;
+      esac
+      _nx_rfc=$((_nx_rfc + 1))
+      printf '%s\n' "$_nx_rfc" > "$WM/review-fail-count"
+      if [ "$_nx_rfc" -ge 2 ]; then
+        say "ESCALATE REVIEW_FAIL"
+        return 0
+      fi
+      rm -f "$WM/green.status" "$WM/built.status"
+      say "NEXT RUN maker-build"
+      return 0
+    fi
     say "NEXT RUN reviewer"
     return 0
   fi
@@ -1909,6 +1979,7 @@ cmd_run() {
   if [ "$_ru_role" = maker-falsify ]; then
     [ -f "$WM/FALSIFIER" ] || die "maker-falsify did not write FALSIFIER"
     check_falsifier_meta
+    check_falsifier_test_entrypoint
   fi
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
     _ru_ret="$WM/return/${_ru_agent}.md"
@@ -1926,6 +1997,9 @@ cmd_run() {
     if [ "$_ru_role" = reviewer ] && [ -f "$WM/red.status" ] \
       && [ "$(cat "$WM/red.status")" = no-build ]; then
       [ "$_ru_word" = NO-BUILD ] || die "NO-BUILD red cannot PASS"
+    fi
+    if [ "$_ru_role" = reviewer ] && [ "$_ru_word" = PASS ]; then
+      review_md_ok || die "PASS requires reviews/review.md with ## Code and ## Testing"
     fi
     if [ "$_ru_role" = scout ]; then
       case $_ru_word in

@@ -505,7 +505,7 @@ if [ "$role" = maker-build ]; then
   exit 0
 fi
 mkdir -p .wm
-printf 'grep -q %s src/widget/api.py\n' "$marker" > .wm/FALSIFIER
+printf 'grep -q %s src/widget/api.py && test -d tests/widget\n' "$marker" > .wm/FALSIFIER
 h=$(sha_of .wm/FALSIFIER)
 wid=NOCOMMIT
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
@@ -517,9 +517,15 @@ EOF
 #!/bin/sh
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 cmd=$(sed -n '1p' .wm/FALSIFIER)
 ev=$(.wm/bin/wm evidence dave -- sh -c "$cmd")
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/dave.md
 EOF
   chmod +x tools/map-loop-maker.sh tools/map-loop-reviewer.sh

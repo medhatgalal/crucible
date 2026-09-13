@@ -193,7 +193,7 @@ sha_of() {
   fi
 }
 if [ "$role" = maker-build ]; then
-  printf 'built\n' > product.txt
+  printf 'built %s\n' "$(date +%s)-$$" > product.txt
   git add product.txt
   git commit -qm maker-build
   exit 0
@@ -217,8 +217,14 @@ write_loop_reviewer_pass() {
 #!/bin/sh
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 EOF
   chmod +x tools/loop-reviewer.sh
@@ -258,6 +264,43 @@ ev=$(.wm/bin/wm evidence bob -- true)
 printf 'WORD: NO-BUILD\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 EOF
   chmod +x tools/loop-reviewer-nobuild.sh
+}
+
+write_loop_reviewer_fail() {
+  mkdir -p tools
+  cat > tools/loop-reviewer-fail.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: FAIL\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/loop-reviewer-fail.sh
+}
+
+write_loop_reviewer_fail_then_pass() {
+  mkdir -p tools
+  cat > tools/loop-reviewer-fail-then-pass.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return reviews
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+if [ ! -f .wm/fail-once ]; then
+  printf 'once\n' > .wm/fail-once
+  printf 'WORD: FAIL\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+  exit 0
+fi
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+  chmod +x tools/loop-reviewer-fail-then-pass.sh
 }
 
 # Vague IDEA only: no SPEC.md / MAP.md. Maker+reviewer echo CLIs.
@@ -333,8 +376,14 @@ install_rev_pass() {
 #!/bin/sh
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 EOF
   chmod +x tools/rev-pass.sh
@@ -509,9 +558,15 @@ write_multi_reviewer() {
 #!/bin/sh
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 cmd=$(sed -n '1p' .wm/FALSIFIER)
 ev=$(.wm/bin/wm evidence bob -- sh -c "$cmd")
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 EOF
   chmod +x tools/multi-reviewer.sh
@@ -739,8 +794,14 @@ cat > tools/rev-pass.sh <<'EOF'
 #!/bin/sh
 set -eu
 printf 'ran\n' > .wm/reviewer-ran
-mkdir -p .wm/return
+mkdir -p .wm/return reviews
 ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+cat > reviews/review.md <<'REV'
+## Code
+scope ok
+## Testing
+re-run named falsifier
+REV
 printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
 EOF
 chmod +x tools/rev-pass.sh
@@ -983,6 +1044,13 @@ printf 'Read this file and follow it exactly.\nrole: reviewer\nagent: bob\n' > "
   printf 'MODEL-SWITCH: UNVERIFIED\n'
 } > .wm/verdicts/bob.md
 printf 'role: reviewer\nagent: bob\nwriter: wm-run\nafter-maker: %s\nISOLATION: SUBAGENT-ISOLATED\n' "$need" > .wm/invoke/reviewer.log
+mkdir -p reviews
+cat > reviews/review.md <<'EOF'
+## Code
+planted
+## Testing
+planted
+EOF
 card=$("$WM" next)
 printf '%s\n' "$card" | grep -q 'NEXT CLOSE' \
   && ok || bad "planted matching receipts should look closeable to next (got $card)"
@@ -1285,7 +1353,7 @@ rm -f .wm/CLOSED .wm/FALSIFIER .wm/FALSIFIER.meta .wm/FALSIFIER.sha256 \
   .wm/red.status .wm/red.out .wm/built.status .wm/built.reason \
   .wm/green.status .wm/green.out .wm/pre-falsify-wid .wm/pre-build-wid \
   .wm/last-maker-run .wm/reviewer-ran .wm/slice-in-flight \
-  .wm/dispatch .wm/worker.out .wm/worker.err
+  .wm/dispatch .wm/worker.out .wm/worker.err .wm/review-fail-count
 rm -rf .wm/verdicts .wm/return .wm/invoke .wm/spawn .wm/briefs .wm/evidence
 mkdir -p .wm/verdicts .wm/return .wm/return/history .wm/invoke .wm/spawn \
   .wm/briefs .wm/evidence
@@ -2267,6 +2335,115 @@ fi
 "$WM" cast specifier eve grok \
   'curl --token secret http://example.invalid; ./tools/specifier.sh {BRIEF}' >/dev/null
 refuses 'specifier curl --token still refused' 'refused:' "$WM" run specifier
+
+# Task 5 E2: PASS without reviews/review.md refuses.
+setup_repo t-e2-pass-no-review-md
+reach_green
+mkdir -p tools
+cat > tools/rev-pass-no-md.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'ran\n' > .wm/reviewer-ran
+mkdir -p .wm/return
+ev=$(.wm/bin/wm evidence bob -- sh -c 'echo test -f product.txt; test -f product.txt')
+printf 'WORD: PASS\nEVIDENCE: %s\n' "$ev" > .wm/return/bob.md
+EOF
+chmod +x tools/rev-pass-no-md.sh
+"$WM" cast reviewer bob grok './tools/rev-pass-no-md.sh {BRIEF}' >/dev/null
+refuses 'PASS without reviews/review.md' 'reviews/review.md' "$WM" run reviewer
+if closed_pass_present; then
+  bad 'PASS without reviews/review.md must not CLOSED PASS'
+else
+  ok
+fi
+
+# Task 5 E3: FALSIFIER ignoring test_entrypoint refuses.
+setup_repo t-e3-falsifier-entrypoint
+mkdir -p architecture tests tools .wm
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'foo\ttests\ttests/foo.py\ttests/foo.py\ttests/foo.py\tno\n' >> architecture/modules.md
+printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\nwhen: 0\n' > .wm/map-verdict
+printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > slices.tsv
+printf 's1\tfoo\ttests/foo.py\t-\tLOW\tREADY\n' >> slices.tsv
+printf 'id: s1\n' > .wm/slice-in-flight
+cat > tools/true-falsify.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf 'true\n' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+else
+  h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+fi
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+chmod +x tools/true-falsify.sh
+"$WM" cast maker alice grok './tools/true-falsify.sh {BRIEF}' >/dev/null
+refuses 'FALSIFIER ignoring test_entrypoint' 'falsifier must invoke test_entrypoint' \
+  "$WM" run maker-falsify
+
+# Task 5 E4: FAIL then next is maker-build (count 1); second next stays maker-build.
+setup_repo t-e4-fail-next-maker-build
+reach_green
+write_loop_reviewer_fail
+"$WM" cast reviewer bob grok './tools/loop-reviewer-fail.sh {BRIEF}' >/dev/null
+if ! "$WM" run reviewer >"$OUT" 2>"$ERR"; then
+  bad "FAIL reviewer must ingest (out=$(cat "$OUT") err=$(cat "$ERR"))"
+else
+  ok
+fi
+[ -f .wm/verdicts/bob.md ] && grep -q '^VERDICT: FAIL$' .wm/verdicts/bob.md \
+  && ok || bad "FAIL reviewer wanted VERDICT FAIL, got $(cat .wm/verdicts/bob.md 2>/dev/null || echo ABSENT)"
+card=$("$WM" next)
+printf '%s\n' "$card" | grep -q 'NEXT RUN maker-build' \
+  && ok || bad "after FAIL next wanted NEXT RUN maker-build, got $card"
+rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc" = 1 ] && ok || bad "after first FAIL review-fail-count wanted 1, got $rfc"
+
+# FAIL then maker-build then PASS can close.
+setup_repo t-e4-fail-then-pass
+write_loop_maker_pass
+write_loop_reviewer_fail_then_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer-fail-then-pass.sh {BRIEF}' >/dev/null
+commit_msg 'e4 fail then pass workers'
+run_wm_loop
+assert_loop_foreground 't-e4-fail-then-pass'
+[ "$LOOP_RC" -eq 0 ] && ok \
+  || bad "FAIL then PASS loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "FAIL then PASS wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+
+# Two FAILs → ESCALATE REVIEW_FAIL, nonzero loop.
+setup_repo t-e4-two-fail-escalate
+write_loop_maker_pass
+write_loop_reviewer_fail
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer-fail.sh {BRIEF}' >/dev/null
+commit_msg 'e4 two-fail workers'
+run_wm_loop
+assert_loop_foreground 't-e4-two-fail-escalate'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'ESCALATE REVIEW_FAIL' \
+  && ok || bad "two FAILs wanted ESCALATE REVIEW_FAIL, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'two FAILs loop must not exit 0'
+if closed_pass_present; then
+  bad 'two FAILs must not CLOSED PASS'
+else
+  ok
+fi
+rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc" = 2 ] && ok || bad "two FAILs review-fail-count wanted 2, got $rfc"
 
 # Home leak: empty HOME must stay empty (no skills, no LESSONS)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
