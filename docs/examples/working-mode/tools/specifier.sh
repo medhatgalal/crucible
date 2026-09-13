@@ -3,6 +3,7 @@
 # RESEARCH.md missing → write RESEARCH.md from IDEA and exit (no SPEC yet).
 # Hello idea (second run) → SPEC/MAP/modules.
 # Underspecified (e.g. saas/webapp, missing IDEA) → QUESTIONS.md, no MAP.md.
+# Non-empty ANSWERS.md → SPEC/MAP (hello path). Kernel does not invent answers.
 # Never ignores IDEA. Does not implement product. Does not write MAP-ACCEPT.
 set -eu
 agent=eve
@@ -39,6 +40,9 @@ fi
 
 hello=0
 if [ -f IDEA.md ] && [ -s IDEA.md ] && grep -qi hello IDEA.md; then
+  hello=1
+fi
+if [ -s ANSWERS.md ]; then
   hello=1
 fi
 

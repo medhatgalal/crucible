@@ -57,7 +57,7 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | Start real work while leftover DONE occupies another cycle | `adopt NAME --managed --panel-from SRC` — copies the approved panel; does not `--next` |
 | Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
-| Run working-mode (opt-in) | If adopted with `--working-mode`: `.crucible/work/wm.sh` — [docs/working-mode.md](docs/working-mode.md) |
+| Run working-mode (opt-in) | If adopted with `--working-mode`: `.crucible/work/wm.sh` then `go` — [docs/working-mode.md](docs/working-mode.md) |
 
 Conversational “keep looping” is not a waiver to implement.
 

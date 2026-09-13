@@ -270,6 +270,170 @@ else
   bad 'adopt_install_working_mode must copy wm-go.sh and WORKING-MODE.md'
 fi
 
+# Arena POSIX: sidecar flag, $0 resolve, quoted prompts, ./IDEA.md, no type cmd_go.
+if grep -q 'WM_GO_LOADED=1' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh must set WM_GO_LOADED=1'
+fi
+if grep -q 'WM_GO_LOADED' "$WM"; then
+  ok
+else
+  bad 'wm.sh must test WM_GO_LOADED (not type cmd_go)'
+fi
+if grep -E 'type[[:space:]]+cmd_go' "$WM" >/dev/null; then
+  bad 'wm.sh must not use type cmd_go to detect sidecar'
+else
+  ok
+fi
+if grep -q '_wm_self' "$WM" && grep -F 'command -v "$_wm_self"' "$WM" >/dev/null; then
+  ok
+else
+  bad 'wm.sh must resolve wm-go.sh via command -v when $0 has no slash'
+fi
+if grep -F "claude -p --output-format text 'read {BRIEF} and follow it exactly'" \
+  "$HERE/wm-go.sh" >/dev/null \
+  && grep -F "codex exec -- 'read {BRIEF} and follow it exactly'" \
+  "$HERE/wm-go.sh" >/dev/null; then
+  ok
+else
+  bad 'wm-go.sh Claude/Codex templates must keep adapter single quotes'
+fi
+if grep -q 'cp "$_go_idea" ./IDEA.md' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'go must cp idea onto ./IDEA.md'
+fi
+if grep -q 'go_ensure_panel' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh must define go_ensure_panel'
+fi
+
+# Help program from $0 .crucible/<prog>/wm.sh; unmatched glob must not print *.
+help_prog="$BASE/help-prog"
+init_git_repo "$help_prog"
+mkdir -p "$help_prog/.crucible/demo"
+cp "$WM" "$help_prog/.crucible/demo/wm.sh"
+cp "$HERE/wm-go.sh" "$help_prog/.crucible/demo/wm-go.sh"
+chmod +x "$help_prog/.crucible/demo/wm.sh"
+set +e
+(
+  CDPATH=
+  cd "$help_prog"
+  "$help_prog/.crucible/demo/wm.sh"
+) >"$OUT" 2>"$ERR"
+hp_rc=$?
+set -e
+[ "$hp_rc" -eq 0 ] && ok || bad "demo-program help wanted exit 0, got $hp_rc"
+if grep -q 'run: .crucible/demo/wm.sh go' "$OUT"; then
+  ok
+else
+  bad "help from \$0 wanted .crucible/demo/wm.sh, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+if grep -q '\*' "$OUT"; then
+  bad "help must not print literal glob *, got out=$(cat "$OUT")"
+else
+  ok
+fi
+
+# Idea path starting with - is refused.
+dash="$BASE/dash-idea"
+init_git_repo "$dash"
+set +e
+(
+  CDPATH=
+  cd "$dash"
+  "$WM" go -n
+) >"$OUT" 2>"$ERR"
+dash_rc=$?
+set -e
+[ "$dash_rc" -ne 0 ] && ok || bad "go -n must be nonzero"
+if grep -q 'must not start with -' "$OUT" "$ERR"; then
+  ok
+else
+  bad "go -n wanted idea path refuse, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+
+# QUESTIONS only → STOP-ASK before panel; QUESTIONS+ANSWERS does not.
+qonly="$BASE/q-only"
+init_git_repo "$qonly"
+printf 'an idea\n' > "$qonly/IDEA.md"
+printf 'Who is the user?\n' > "$qonly/QUESTIONS.md"
+set +e
+(
+  CDPATH=
+  cd "$qonly"
+  PATH=/usr/bin:/bin
+  export PATH
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+q_rc=$?
+set -e
+[ "$q_rc" -ne 0 ] && ok || bad "QUESTIONS-only go must be nonzero"
+if grep -q 'STOP-ASK QUESTIONS' "$OUT" "$ERR"; then
+  ok
+else
+  bad "QUESTIONS-only go wanted STOP-ASK QUESTIONS, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+if grep -q 'INDEPENDENCE_UNAVAILABLE' "$OUT" "$ERR"; then
+  bad 'QUESTIONS-only go must stop before CLI discovery'
+else
+  ok
+fi
+
+qans="$BASE/q-ans"
+init_git_repo "$qans"
+printf 'an idea\n' > "$qans/IDEA.md"
+printf 'Who is the user?\n' > "$qans/QUESTIONS.md"
+printf 'A local hello file is enough.\n' > "$qans/ANSWERS.md"
+set +e
+(
+  CDPATH=
+  cd "$qans"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+qa_rc=$?
+set -e
+[ "$qa_rc" -ne 0 ] && ok || bad "QUESTIONS+ANSWERS go must not CLOSED PASS without SPEC"
+if grep -q 'STOP-ASK QUESTIONS' "$OUT" "$ERR"; then
+  bad "QUESTIONS+ANSWERS go must not STOP-ASK QUESTIONS, got out=$(cat "$OUT") err=$(cat "$ERR")"
+else
+  ok
+fi
+
+# Maker+reviewer valid, specifier/scout missing → still discover-cast those roles.
+partial="$BASE/partial-panel"
+init_git_repo "$partial"
+printf 'an idea\n' > "$partial/IDEA.md"
+set +e
+(
+  CDPATH=
+  cd "$partial"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" init >/dev/null
+  "$WM" cast maker make0 grok 'true' >/dev/null
+  "$WM" cast reviewer rev0 grok 'true' >/dev/null
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+part_rc=$?
+set -e
+[ "$part_rc" -ne 0 ] && ok || bad "partial-panel go must not CLOSED PASS"
+spec_id=
+scout_id=
+if [ -f "$partial/.wm/PANEL.tsv" ]; then
+  spec_id=$(awk -F '\t' '$1=="specifier"{print $2; exit}' "$partial/.wm/PANEL.tsv")
+  scout_id=$(awk -F '\t' '$1=="scout"{print $2; exit}' "$partial/.wm/PANEL.tsv")
+fi
+if [ "$spec_id" = spec0 ] && [ "$scout_id" = scout0 ]; then
+  ok
+else
+  bad "go_ensure_panel wanted spec0+scout0, got spec=$spec_id scout=$scout_id panel=$(cat "$partial/.wm/PANEL.tsv" 2>/dev/null || echo ABSENT)"
+fi
+
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
 if [ -z "$home_leftovers" ]; then
   ok

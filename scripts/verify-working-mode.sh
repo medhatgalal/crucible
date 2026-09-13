@@ -97,6 +97,28 @@ SPEC-AUTHOR: operator
 EOF
 }
 
+write_spaced_spec() {
+  cat > SPEC.md <<'EOF'
+## Goal
+owned path with a space
+## Non-goals
+live systems
+## Owned files
+- product/my file.txt
+## Test files
+- (none)
+## Acceptance criteria
+- product/my file.txt exists
+## Focused falsifier
+MAKER-WRITES
+## Stop conditions
+stop-ask on live write
+## Risk
+LOW
+SPEC-AUTHOR: operator
+EOF
+}
+
 write_falsifier() {
   cmd=$1
   agent=${2:-alice}
@@ -1912,6 +1934,56 @@ if grep -q '16 + 12' "$HERE/wm.sh" && grep -q '16+12' "$HERE/WORKING-MODE.md"; t
 else
   bad 'LOOP_BOUND formula 16+12*n must be in wm.sh and WORKING-MODE.md'
 fi
+loop_body=$(awk '/^cmd_loop\(/ { p=1 } p { print } p && /^}$/ { exit }' "$HERE/wm.sh")
+if printf '%s\n' "$loop_body" | awk '
+  /while :; do/ { w=1 }
+  w && /_lp_bound=\$\(loop_bound\)/ { found=1 }
+  END { exit found ? 0 : 1 }
+'; then
+  ok
+else
+  bad 'cmd_loop must recompute loop_bound each tick (not once at start)'
+fi
+if awk '/^owned_porcelain_dirty\(/ { p=1 } p { print } p && /^}$/ { exit }' "$HERE/wm.sh" \
+  | grep -q 'IFS= read -r'; then
+  ok
+else
+  bad 'owned_porcelain_dirty must while IFS= read -r over porcelain_paths'
+fi
+if awk '/^product_commit_changed\(/ { p=1 } p { print } p && /^}$/ { exit }' "$HERE/wm.sh" \
+  | grep -q 'IFS= read -r'; then
+  ok
+else
+  bad 'product_commit_changed must while IFS= read -r over git diff --name-only'
+fi
+if grep -E 'for _opd_p in \$_opd_paths|for _pcc_p in \$_pcc_diff' "$HERE/wm.sh" >/dev/null; then
+  bad 'owned path loops must not for-in unquoted lists'
+else
+  ok
+fi
+
+# H1: spaced owned path dirty → red refuses; commit vs pre-wid is product change.
+setup_repo t-h1-spaced-dirty
+write_spaced_spec
+commit_msg 'spaced owned spec'
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'test -f product/my file.txt' alice
+commit_msg 'spaced falsifier'
+mkdir -p product
+printf 'dirty\n' > "product/my file.txt"
+refuses 'spaced dirty owned path' 'dirty product porcelain' "$WM" red
+
+setup_repo t-h1-spaced-commit
+write_spaced_spec
+commit_msg 'spaced owned spec commit'
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'test -f product/my file.txt' alice
+commit_msg 'spaced falsifier commit'
+mkdir -p product
+printf 'built\n' > "product/my file.txt"
+git add "product/my file.txt"
+git commit -qm 'spaced product'
+refuses 'spaced owned commit vs pre-wid' 'early implement' "$WM" red
 
 # Quote {BRIEF}: engine wraps the absolute path (ENVIRON, POSIX double quotes).
 run_brief_argv() {
@@ -2089,6 +2161,11 @@ if printf '%s\n' "$wb" | grep -q 'IDEA.md' \
 else
   bad 'specifier brief must mention IDEA.md and QUESTIONS.md'
 fi
+if printf '%s\n' "$wb" | grep -q 'ANSWERS.md'; then
+  ok
+else
+  bad 'specifier brief must mention ANSWERS.md if present'
+fi
 if printf '%s\n' "$wb" | grep -q 'RESEARCH.md'; then
   ok
 else
@@ -2202,6 +2279,35 @@ if closed_pass_present; then
   bad 'saas IDEA must not CLOSED PASS'
 else
   ok
+fi
+
+# H4: QUESTIONS only → STOP-ASK; QUESTIONS+ANSWERS → specifier runs again.
+setup_idea_only t-questions-only-stop
+printf 'Who is the first user?\n' > QUESTIONS.md
+expect 'QUESTIONS only is STOP-ASK' 'STOP-ASK QUESTIONS' "$WM" next
+printf 'A local hello file is enough.\n' > ANSWERS.md
+expect 'QUESTIONS+ANSWERS is NEXT SPEC' 'NEXT SPEC' "$WM" next
+
+setup_idea_only t-questions-answers-resume
+printf 'build me a saas webapp\n' > IDEA.md
+install_greet_unattended_workers
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout.sh {BRIEF}' >/dev/null
+printf '# RESEARCH\n\nok\n' > RESEARCH.md
+printf 'Who is the first user?\n' > QUESTIONS.md
+printf 'A local hello file is enough.\n' > ANSWERS.md
+commit_msg 'questions plus answers'
+run_wm_loop
+assert_loop_foreground 't-questions-answers-resume'
+if printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK QUESTIONS'; then
+  bad "QUESTIONS+ANSWERS must not STOP-ASK QUESTIONS, got out=$(cat "$OUT") err=$(cat "$ERR")"
+else
+  ok
+fi
+if [ -f SPEC.md ] && [ -f MAP.md ]; then
+  ok
+else
+  bad "QUESTIONS+ANSWERS wanted specifier SPEC/MAP, got spec=$( [ -f SPEC.md ] && echo yes || echo ABSENT ) map=$( [ -f MAP.md ] && echo yes || echo ABSENT ) out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 
 # Vague IDEA, maker+reviewer, no specifier CLI → STOP-ASK NEXT SPEC, no product.
@@ -2409,7 +2515,7 @@ chmod +x tools/true-falsify.sh
 refuses 'FALSIFIER ignoring test_entrypoint' 'falsifier must invoke test_entrypoint' \
   "$WM" run maker-falsify
 
-# Task 5 E4: FAIL then next is maker-build (count 1); second next stays maker-build.
+# Task 5 E4 / H3: FAIL then next is maker-build; next/status/help do not mutate count.
 setup_repo t-e4-fail-next-maker-build
 reach_green
 write_loop_reviewer_fail
@@ -2421,11 +2527,32 @@ else
 fi
 [ -f .wm/verdicts/bob.md ] && grep -q '^VERDICT: FAIL$' .wm/verdicts/bob.md \
   && ok || bad "FAIL reviewer wanted VERDICT FAIL, got $(cat .wm/verdicts/bob.md 2>/dev/null || echo ABSENT)"
+rfc0=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
 card=$("$WM" next)
 printf '%s\n' "$card" | grep -q 'NEXT RUN maker-build' \
   && ok || bad "after FAIL next wanted NEXT RUN maker-build, got $card"
-rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
-[ "$rfc" = 1 ] && ok || bad "after first FAIL review-fail-count wanted 1, got $rfc"
+rfc1=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc1" = "$rfc0" ] && ok || bad "cmd_next must not change review-fail-count (before=$rfc0 after=$rfc1)"
+"$WM" status >"$OUT" 2>"$ERR" || true
+"$WM" status >"$OUT" 2>"$ERR" || true
+rfc2=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc2" = "$rfc0" ] && ok || bad "cmd_status twice must not change review-fail-count (before=$rfc0 after=$rfc2)"
+"$WM" help >"$OUT" 2>"$ERR" || true
+rfc3=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc3" = "$rfc0" ] && ok || bad "cmd_help must not change review-fail-count (before=$rfc0 after=$rfc3)"
+[ -f .wm/green.status ] && [ "$(cat .wm/green.status)" = ok ] \
+  && ok || bad 'cmd_next must not rm green.status on FAIL retry card'
+next_body=$(awk '/^cmd_next\(/ { p=1 } p { print } p && /^}$/ { exit }' "$HERE/wm.sh")
+if printf '%s\n' "$next_body" | grep 'review-fail-count' | grep -q '>'; then
+  bad 'cmd_next must not write review-fail-count'
+else
+  ok
+fi
+if printf '%s\n' "$next_body" | grep -q 'rm -f'; then
+  bad 'cmd_next must not rm green/built'
+else
+  ok
+fi
 
 # FAIL then maker-build then PASS can close.
 setup_repo t-e4-fail-then-pass

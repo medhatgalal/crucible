@@ -2,6 +2,11 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## 1.8.1 — honesty
+
+Spaced owned paths, live `LOOP_BOUND`, pure `next`, QUESTIONS/`ANSWERS.md`
+resume, `go` POSIX. Forgot the command: `.crucible/work/wm.sh` then `go`.
+
 ## 1.8.0 — `wm go` and quality loop
 
 Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.

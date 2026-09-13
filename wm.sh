@@ -142,12 +142,23 @@ path_in_list() {
 
 porcelain_paths() {
   git status --porcelain=v1 -uall 2>/dev/null | awk '
+    function unquote(s) {
+      if (s ~ /^".*"$/) {
+        s = substr(s, 2, length(s) - 2)
+        gsub(/\\\\/, "\001", s)
+        gsub(/\\"/, "\"", s)
+        gsub(/\\t/, "\t", s)
+        gsub(/\\n/, "\n", s)
+        gsub(/\001/, "\\", s)
+      }
+      return s
+    }
     {
       rest = substr($0, 4)
       if (rest ~ / -> /) {
         sub(/.* -> /, "", rest)
       }
-      print rest
+      print unquote(rest)
     }
   '
 }
@@ -157,12 +168,14 @@ owned_porcelain_dirty() {
   [ -n "$_opd_owned" ] || return 1
   _opd_paths=$(porcelain_paths)
   [ -n "$_opd_paths" ] || return 1
-  _opd_p=
-  for _opd_p in $_opd_paths; do
+  while IFS= read -r _opd_p || [ -n "$_opd_p" ]; do
+    [ -n "$_opd_p" ] || continue
     if path_in_list "$_opd_p" "$_opd_owned"; then
       return 0
     fi
-  done
+  done <<EOF
+$_opd_paths
+EOF
   return 1
 }
 
@@ -174,12 +187,14 @@ product_commit_changed() {
   [ -n "$_pcc_owned" ] || return 1
   _pcc_diff=$(git diff --name-only "$_pcc_pre"..HEAD 2>/dev/null || true)
   [ -n "$_pcc_diff" ] || return 1
-  _pcc_p=
-  for _pcc_p in $_pcc_diff; do
+  while IFS= read -r _pcc_p || [ -n "$_pcc_p" ]; do
+    [ -n "$_pcc_p" ] || continue
     if path_in_list "$_pcc_p" "$_pcc_owned"; then
       return 0
     fi
-  done
+  done <<EOF
+$_pcc_diff
+EOF
   return 1
 }
 
@@ -629,7 +644,7 @@ write_brief() {
         if research_skill_present && [ ! -f RESEARCH.md ]; then
           printf 'Read IDEA.md. Write RESEARCH.md only (stack survey, constraints, non-goals, competitors if known). Do not write SPEC.md or MAP.md yet. Do not implement product. Do not write MAP-ACCEPT, CLOSED PASS, or FALSIFIER. Do not use live tokens or passwords.\n'
         else
-          printf 'Read IDEA.md. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
+          printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
           printf 'When specified, write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT.\n' "$_wb_agent"
         fi
         ;;
@@ -1703,6 +1718,31 @@ close_append_lesson() {
   return 0
 }
 
+questions_need_ask() {
+  [ -s QUESTIONS.md ] && [ ! -s ANSWERS.md ]
+}
+
+review_fail_count() {
+  _rfc_n=0
+  if [ -f "$WM/review-fail-count" ]; then
+    _rfc_n=$(awk 'NF { print $1+0; exit }' "$WM/review-fail-count")
+  fi
+  case $_rfc_n in
+    ''|*[!0-9]*) _rfc_n=0 ;;
+  esac
+  printf '%s\n' "$_rfc_n"
+}
+
+green_reviewer_fail() {
+  [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || return 1
+  _grf_rev=$(panel_agent reviewer)
+  [ -n "$_grf_rev" ] && [ "$_grf_rev" != - ] || return 1
+  _grf_vf="$WM/verdicts/${_grf_rev}.md"
+  [ -f "$_grf_vf" ] || return 1
+  [ "$(kv_get "$_grf_vf" VERDICT)" = FAIL ] || return 1
+  reviewer_exec_after_maker reviewer
+}
+
 cmd_next() {
   if [ ! -f IDEA.md ] || [ ! -s IDEA.md ]; then
     say "NEXT INTAKE"
@@ -1710,6 +1750,10 @@ cmd_next() {
   fi
   if ! panel_valid; then
     say "NEXT CAST"
+    return 0
+  fi
+  if questions_need_ask; then
+    say "STOP-ASK QUESTIONS"
     return 0
   fi
   if [ -f MAP.md ] || [ -f slices.tsv ]; then
@@ -1819,28 +1863,12 @@ cmd_next() {
     return 0
   fi
   if [ "$_nx_gs" = ok ]; then
-    _nx_rev=$(panel_agent reviewer)
-    _nx_vf=
-    if [ -n "$_nx_rev" ] && [ "$_nx_rev" != - ]; then
-      _nx_vf="$WM/verdicts/${_nx_rev}.md"
-    fi
-    if [ -n "$_nx_vf" ] && [ -f "$_nx_vf" ] \
-      && [ "$(kv_get "$_nx_vf" VERDICT)" = FAIL ] \
-      && reviewer_exec_after_maker reviewer; then
-      _nx_rfc=0
-      if [ -f "$WM/review-fail-count" ]; then
-        _nx_rfc=$(awk 'NF { print $1+0; exit }' "$WM/review-fail-count")
-      fi
-      case $_nx_rfc in
-        ''|*[!0-9]*) _nx_rfc=0 ;;
-      esac
-      _nx_rfc=$((_nx_rfc + 1))
-      printf '%s\n' "$_nx_rfc" > "$WM/review-fail-count"
+    if green_reviewer_fail; then
+      _nx_rfc=$(review_fail_count)
       if [ "$_nx_rfc" -ge 2 ]; then
         say "ESCALATE REVIEW_FAIL"
         return 0
       fi
-      rm -f "$WM/green.status" "$WM/built.status"
       say "NEXT RUN maker-build"
       return 0
     fi
@@ -2044,13 +2072,14 @@ cmd_loop() {
   _lp_ran_reviewer=0
   _lp_slice=
   _lp_lesson=$(resolve_loop_lesson)
-  _lp_bound=$(loop_bound)
   if [ -f "$WM/slice-in-flight" ]; then
     _lp_slice=$(kv_get "$WM/slice-in-flight" id)
   fi
   while :; do
     _lp_i=$((_lp_i + 1))
+    # Recompute each tick: map can land slices.tsv after go started (40 → 16+12*n).
     # LOOP_BOUND = max(40, min(240, 16 + 12*n)) for n data rows in slices.tsv.
+    _lp_bound=$(loop_bound)
     if [ "$_lp_i" -gt "$_lp_bound" ]; then
       say "ESCALATE LOOP_BOUND"
       exit 1
@@ -2076,7 +2105,7 @@ cmd_loop() {
         fi
         say "$_lp_card"
         "$WM_BIN" run specifier || exit 1
-        if [ -s QUESTIONS.md ]; then
+        if questions_need_ask; then
           say "STOP-ASK QUESTIONS"
           exit 1
         fi
@@ -2092,7 +2121,7 @@ cmd_loop() {
         fi
         say "$_lp_card"
         "$WM_BIN" run specifier || exit 1
-        if [ -s QUESTIONS.md ]; then
+        if questions_need_ask; then
           say "STOP-ASK QUESTIONS"
           exit 1
         fi
@@ -2110,7 +2139,7 @@ cmd_loop() {
           fi
           say "$_lp_card"
           "$WM_BIN" run specifier || exit 1
-          if [ -s QUESTIONS.md ]; then
+          if questions_need_ask; then
             say "STOP-ASK QUESTIONS"
             exit 1
           fi
@@ -2184,6 +2213,16 @@ cmd_loop() {
         "$WM_BIN" run scout || exit 1
         ;;
       "NEXT RUN maker-build")
+        if green_reviewer_fail; then
+          _lp_rfc=$(review_fail_count)
+          _lp_rfc=$((_lp_rfc + 1))
+          printf '%s\n' "$_lp_rfc" > "$WM/review-fail-count"
+          if [ "$_lp_rfc" -ge 2 ]; then
+            say "ESCALATE REVIEW_FAIL"
+            exit 1
+          fi
+          rm -f "$WM/green.status" "$WM/built.status"
+        fi
         "$WM_BIN" run maker-build || exit 1
         ;;
       "NEXT BUILT")
@@ -2244,25 +2283,39 @@ cmd_loop() {
   done
 }
 
-WM_GO=$(CDPATH= cd "$(dirname "$0")" && pwd)/wm-go.sh
+_wm_self=$0
+case $_wm_self in
+  */*) ;;
+  *)
+    _wm_resolved=$(command -v "$_wm_self" 2>/dev/null || true)
+    if [ -n "$_wm_resolved" ] && [ -f "$_wm_resolved" ]; then
+      _wm_self=$_wm_resolved
+    else
+      _wm_self=$PWD/$_wm_self
+    fi
+    ;;
+esac
+case $_wm_self in
+  /*) ;;
+  *) _wm_self=$PWD/$_wm_self ;;
+esac
+WM_GO=$(CDPATH= cd "$(dirname "$_wm_self")" && pwd)/wm-go.sh
 [ -f "$WM_GO" ] && . "$WM_GO"
 
 cmd=${1:-}
 if [ -z "$cmd" ]; then
-  if type cmd_help >/dev/null 2>&1; then
-    cmd_help
-    exit 0
-  fi
-  die "usage: wm <command>"
+  [ "${WM_GO_LOADED:-}" = 1 ] || die "refresh from 1.8.0"
+  cmd_help
+  exit 0
 fi
 shift
 case $cmd in
   go|bootstrap)
-    type cmd_go >/dev/null 2>&1 || die "refresh from 1.8.0"
+    [ "${WM_GO_LOADED:-}" = 1 ] || die "refresh from 1.8.0"
     cmd_go "$@"
     ;;
   help)
-    type cmd_help >/dev/null 2>&1 || die "refresh from 1.8.0"
+    [ "${WM_GO_LOADED:-}" = 1 ] || die "refresh from 1.8.0"
     cmd_help
     ;;
   init) cmd_init "$@" ;;

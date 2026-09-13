@@ -5,6 +5,22 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.8.1] - 2026-09-13
+
+### Honesty
+
+- Owned-path dirty/commit checks walk newline lists (`while IFS= read -r`),
+  so `product/my file.txt` cannot false NO-BUILD/PASS.
+- `LOOP_BOUND` is recomputed each `loop` tick after `slices.tsv` lands.
+- `next` / `status` / `help` do not increment FAIL retries or rm green/built.
+  `loop` retries maker-build once, then `ESCALATE REVIEW_FAIL`.
+- `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`; non-empty
+  `ANSWERS.md` re-runs specifier. Kernel does not invent answers.
+- `go` POSIX: resolve sidecar from `$0`, `WM_GO_LOADED`, refuse `-` idea
+  paths, quoted Claude/Codex prompts, discover specifier/scout when maker
+  and reviewer already valid, help program from `.crucible/<prog>/wm.sh`.
+- CI runs `scripts/verify-working-mode-go.sh` on Linux.
+
 ## [1.8.0] - 2026-09-12
 
 ### CLI `go` and quality loop

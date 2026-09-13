@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.8.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.8.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
@@ -259,7 +259,7 @@ when none remain. HIGH unsigned is `STOP-ASK MAP-HUMAN` (A4). When specifier
 and scout are cast with a real CLI (not `-`), `NEXT SPEC` runs specifier and
 `NEXT MAP` runs map-ready plus scout map-judge; without those CLIs those
 cards stay `STOP-ASK`. Specifier cannot be maker. Scout cannot `MAP-ACCEPT`
-a map it authored. `LOOP_BOUND` is 40.
+a map it authored. `LOOP_BOUND` is max(40, min(240, 16+12×slices)).
 `.crucible/<program>/wm.sh run` returns the worker exit status after
 judge/WORD checks. Live / destroy / push-main remain STOP-ASK (2c).
 
@@ -301,13 +301,23 @@ are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
 
 ## Operator commands
 
+Lead with `go` / `help` / `status`. Examples A/C below stay as advanced
+fixture walks. Non-empty `QUESTIONS.md` without `ANSWERS.md` is
+`STOP-ASK QUESTIONS` (write `ANSWERS.md` then `go` again). Optional
+research writes `RESEARCH.md` before SPEC (`NEXT RESEARCH`). `LOOP_BOUND`
+is max(40, min(240, 16+12×slices)), not a fixed 40.
+
 ```sh
 # from the target repository root
-.crucible/<program>/wm.sh map-ready                 # fit + slices.tsv PENDING
-.crucible/<program>/wm.sh map-verdict RETURNFILE    # MAP-ACCEPT | MAP-REVISE | MAP-STOP-ASK
-.crucible/<program>/wm.sh next                      # NEXT MAP | NEXT SLICE <id> | STOP-ASK | brick card
-.crucible/<program>/wm.sh run maker-falsify         # first brick step; HIGH/live need MAP-HUMAN
-.crucible/<program>/wm.sh loop                      # remaining READY slices; brick reset between
+.crucible/<program>/wm.sh                 # help
+.crucible/<program>/wm.sh go [IDEA.md]
+.crucible/<program>/wm.sh help
+.crucible/<program>/wm.sh status          # same card as next; does not mutate
+.crucible/<program>/wm.sh loop            # remaining READY slices; brick reset between
+.crucible/<program>/wm.sh map-ready       # fit + slices.tsv PENDING
+.crucible/<program>/wm.sh map-verdict RETURNFILE
+.crucible/<program>/wm.sh next
+.crucible/<program>/wm.sh run maker-falsify
 ```
 
 ## Harness adapters (13b)

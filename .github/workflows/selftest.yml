@@ -64,6 +64,9 @@ jobs:
       - name: working-mode kernel CHECKs
         run: ./scripts/verify-working-mode.sh
 
+      - name: working-mode go CHECKs
+        run: ./scripts/verify-working-mode-go.sh
+
       # Each verifier gets its own step so a red run names the broken invariant without
       # anyone opening the log. Cheapest-first, so a trivial failure is not reported from
       # behind the slowest script. The order is an estimate from what is visible in the
