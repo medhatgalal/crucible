@@ -68,8 +68,8 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 ## Opt-in working-mode
 
-On **1.7.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
-`wm.sh` unless `--working-mode`. To also install the working-mode runner and the four
+On **1.8.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. To also install the working-mode runner and
 batteries into the **target** (no `$HOME` skill trees):
 
 ```sh
@@ -79,8 +79,8 @@ batteries into the **target** (no `$HOME` skill trees):
 That copies `wm.sh` into `.crucible/work/`, canonical skills into `.crucible/skills/`,
 harness views under `.crucible/.{grok,claude,agents}/skills/` and repo-root
 `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
-of the installing tree). Worked copy-paste examples (LOW fixture walk and HIGH
-sign) are in the [working-mode.md](working-mode.md) Quickstart. Adapters are copied when the source tree has `adapters/`;
+of the installing tree). Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
+Worked examples are in the [working-mode.md](working-mode.md) Quickstart. Adapters are copied when the source tree has `adapters/`;
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 

@@ -70,6 +70,8 @@ for REQUIRED in \
   BOOTSTRAP.md \
   crucible \
   wm.sh \
+  wm-go.sh \
+  WORKING-MODE.md \
   ROUTING.tsv \
   scripts/project-skills.sh \
   scripts/verify-agent-cycle.sh \
@@ -83,6 +85,8 @@ for REQUIRED in \
   skills/critique/SKILL.md \
   skills/review/SKILL.md \
   skills/loop-design/SKILL.md \
+  skills/research/SKILL.md \
+  skills/working-mode/SKILL.md \
   adapters/grok.md \
   adapters/claude.md \
   adapters/codex.md

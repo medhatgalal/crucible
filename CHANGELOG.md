@@ -5,6 +5,24 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.8.0] - 2026-09-12
+
+### CLI `go` and quality loop
+
+- `.crucible/<program>/wm.sh` with no args prints help (`run: … go`).
+  `go [IDEA.md]` discovers grok/claude/codex, casts distinct ids, and `loop`s.
+- Specifier reads `IDEA.md` or writes `QUESTIONS.md` (`STOP-ASK QUESTIONS`).
+- Optional `research` battery writes `RESEARCH.md` before SPEC (`required=no`).
+- Greenfield: missing relative module roots are created then fit.
+  `MAP-REVISE` re-runs specifier then scout.
+- Reviewer `PASS` requires `reviews/review.md` (`## Code`, `## Testing`).
+  FALSIFIER must cite the module `test_entrypoint`. `FAIL` retries maker-build
+  twice, then `ESCALATE REVIEW_FAIL`.
+- `LOOP_BOUND` is max(40, min(240, 16+12×slices)).
+- Live proof IDEA is a health-check app, not hello (fail-closed if CLIs cannot auth).
+- Forgot the command: run `.crucible/work/wm.sh` then `go`. Travelling
+  `WORKING-MODE.md` and skill `working-mode`.
+
 ## [1.7.1] - 2026-09-10
 
 ### Unattended multi-slice and live gate

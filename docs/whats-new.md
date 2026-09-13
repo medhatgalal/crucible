@@ -2,6 +2,15 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## 1.8.0 — `wm go` and quality loop
+
+Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
+Specifier reads IDEA or `STOP-ASK QUESTIONS`. Optional research before SPEC.
+Greenfield mkdir roots; MAP-REVISE re-runs specifier. PASS needs
+`reviews/review.md`. FALSIFIER must cite `test_entrypoint`. FAIL retries
+maker-build (cap 2). LOOP_BOUND scales with slices. Live walk is health-check
+or honest `INDEPENDENCE_UNAVAILABLE`. Still opt-in; no auto MAP-HUMAN.
+
 ## 1.7.1 — unattended multi-slice and live gate
 
 One foreground `wm loop` walks remaining READY slices; HIGH unsigned is

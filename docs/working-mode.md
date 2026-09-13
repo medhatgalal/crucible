@@ -1,9 +1,10 @@
 # Working-mode (opt-in)
 
-On **1.7.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.8.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
-four swap-out batteries. Install with
+swap-out batteries. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
+Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
 Runtime is the target repo plus one harness CLI. Skills live in the repo
 (`.crucible/skills/` and harness views). There is no `$HOME` skill runtime.
 
@@ -22,13 +23,19 @@ DST=$(mktemp -d)
 git -C "$DST" init -b main
 cd "$DST"
 "$SRC/crucible" adopt work --managed --working-mode
+printf '%s\n' "product/hello.txt contains exactly hello" > IDEA.md
+.crucible/work/wm.sh go
 ```
 
+Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then `go`.
 Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on
 `PATH`). Mapper, maker, and reviewer must be distinct agents. `{BRIEF}` is
 quoted by the engine — do not wrap it in quotes in the command. Stop on
 `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
-background-wait.
+background-wait. `go` discovers grok/claude/codex when the panel is empty.
+Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo fixtures).
+
+Advanced copy-paste (fixtures, HIGH sign, specifier+scout) stays below.
 
 ### Example A — LOW fixture walk (copy-paste)
 
