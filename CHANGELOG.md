@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Working-mode harness roster
+
+- `wm go` discovers grok, kiro-cli (kind **kiro**), and codex. Claude Code is
+  optional if present; it is not required. Two kinds = any two of grok/kiro/codex.
+- Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
+  fewer than two of grok/kiro-cli/codex are on PATH or cannot auth. Missing
+  `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
+- Adapter: `adapters/kiro.md`. Headless:
+  `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
+  as a `wm run` argv.
+
 ## [1.9.0] - 2026-09-13
 
 ### Factory plants

@@ -5,7 +5,8 @@ Discovery skill for the working-mode runner. Not a ROUTING battery.
 ## In
 
 A target git repository. Optional `IDEA.md` (or another idea file passed to
-`go`). Harness CLIs on PATH (`grok`, `claude`, `codex`) when the panel is empty.
+`go`). Harness CLIs on PATH (`grok`, `kiro-cli`, `codex`) when the panel is empty.
+Optional extra: `claude` if present (not required).
 
 ## Out (must-write paths / words)
 

@@ -89,7 +89,8 @@ for REQUIRED in \
   skills/working-mode/SKILL.md \
   adapters/grok.md \
   adapters/claude.md \
-  adapters/codex.md
+  adapters/codex.md \
+  adapters/kiro.md
 do
   printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/$REQUIRED\$" \
     || { echo "verify-package: package is missing crucible-$VERSION/$REQUIRED" >&2; exit 1; }

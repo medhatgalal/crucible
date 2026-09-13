@@ -15,7 +15,8 @@ Do not mix guided `drive` or `cycle` with this runner.
 
 `go` inits if needed, copies a readable idea file onto `IDEA.md` when that
 name is missing, stops on a non-empty `QUESTIONS.md` without `ANSWERS.md`,
-discovers `grok` / `claude` / `codex` when the panel is empty, and runs `loop`.
+discovers `grok` / `kiro-cli` / `codex` when the panel is empty (optional
+`claude`), and runs `loop`.
 `go --next` copies the first READY `BACKLOG.tsv` row
 (`id size risk idea_path status`) onto `IDEA.md`. One map in flight.
 

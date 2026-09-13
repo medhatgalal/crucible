@@ -32,8 +32,9 @@ Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on
 `PATH`). Mapper, maker, and reviewer must be distinct agents. `{BRIEF}` is
 quoted by the engine — do not wrap it in quotes in the command. Stop on
 `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
-background-wait. `go` discovers grok/claude/codex when the panel is empty.
-Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo fixtures).
+background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty
+(optional claude). Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent
+echo fixtures). Two kinds means any two of grok/kiro/codex.
 
 Advanced copy-paste (fixtures, HIGH sign, specifier+scout) stays below.
 
@@ -71,11 +72,11 @@ A HIGH `MAP.md` row (two harness kinds so 3d does not STOP-ASK):
 s1	product	product/hello.txt	-	HIGH
 ```
 
-Cast maker `carol` grok and reviewer `dave` claude:
+Cast maker `carol` grok and reviewer `dave` kiro:
 
 ```sh
 .crucible/work/wm.sh cast maker carol grok './tools/maker.sh {BRIEF}'
-.crucible/work/wm.sh cast reviewer dave claude './tools/reviewer.sh {BRIEF}'
+.crucible/work/wm.sh cast reviewer dave kiro './tools/reviewer.sh {BRIEF}'
 ```
 
 Unsigned `.crucible/work/wm.sh loop` prints `STOP-ASK MAP-HUMAN` and does
@@ -146,7 +147,7 @@ a **newer** tree (`adopt work --refresh`); `src == dst` is refused.
 | Product already matches the falsifier | Example A files + existing hello | `CLOSED NO-BUILD` | Reviewer PASS on a no-build red |
 | HIGH slice | Example B + `MAP-HUMAN` | Stops until you sign; then walks | Unattended HIGH/live (8c) |
 | Several modules | `MAP.md` with `depends_on` | One `loop` walks READY parents-CLOSED | Parallel in-slice TASKS |
-| Live Grok/Claude/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if a CLI cannot auth | Claiming four-CLI independence when auth fails |
+| Live Grok/Kiro/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if fewer than two of grok/kiro-cli/codex can auth | Claiming independence when those CLIs are missing |
 | Guided stall (`WAIT APPROVAL`) | Stay on `crucible drive` | Unchanged 1.6.6 gates | Working-mode will not clear those gates |
 
 ## Visuals
@@ -332,10 +333,12 @@ After CLOSED it archives MAP/SPEC/slices into `history/maps/<prev-id>/`.
 
 ## Harness adapters (13b)
 
-`adopt --working-mode` copies `adapters/grok.md`, `adapters/claude.md`, and
+`adopt --working-mode` copies `adapters/grok.md`, `adapters/kiro.md`, and
 `adapters/codex.md` into `.crucible/<program>/adapters/` when the source tree
-has them. Each file says how to invoke that CLI and how to point ignored
-`agents.tsv` at it. They are not batteries and they carry no credentials.
+has them (optional extra: `adapters/claude.md`). Each file says how to invoke
+that CLI and how to point ignored `agents.tsv` at it. They are not batteries
+and they carry no credentials. Kind `kiro` is the `kiro-cli` binary.
+`kiro-cli acp` is a guided-cycle JSON-RPC server, not a `wm run` argv.
 
 `.crucible/<program>/wm.sh` does not spawn a harness by name. Cast a worker
 whose command is the CLI:
@@ -343,7 +346,7 @@ whose command is the CLI:
 ```text
 name	kind	model	effort	command
 alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
-bob	claude	sonnet	high	claude -p --output-format text 'read {BRIEF} and follow it exactly'
+bob	kiro	default	high	kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'
 carol	codex	gpt	high	codex exec -- 'read {BRIEF} and follow it exactly'
 dave	grok	grok-4	high	grok -p --prompt-file {BRIEF}
 ```

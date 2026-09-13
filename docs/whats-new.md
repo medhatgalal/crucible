@@ -2,6 +2,14 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## Unreleased
+
+`go` discovers grok, kiro-cli (kind kiro), and codex. Claude Code is optional
+extra, not required. Live independence fails closed when fewer than two of
+those three are on PATH or cannot auth. Missing `claude` is not
+`INDEPENDENCE_UNAVAILABLE` by itself. `kiro-cli acp` is a guided-cycle
+JSON-RPC server, not a `wm run` argv. Adapter: `adapters/kiro.md`.
+
 ## 1.9.0 — factory plants
 
 `go --next` drains `BACKLOG.tsv` one map at a time. Optional `REPO.md`
@@ -59,4 +67,4 @@ CLI; do not put credentials in those files.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
 - Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
 - Working-mode skills live in the target tree. `$HOME` skill trees are not a runtime. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation.
-- Live grok/claude/codex independence is unavailable when those CLIs are missing from `PATH` or cannot auth under empty HOME. Fixture workers can still close. Adapters do not ship credentials.
+- Live grok/kiro-cli/codex independence is unavailable when fewer than two of those CLIs are on `PATH` or cannot auth under empty HOME. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.

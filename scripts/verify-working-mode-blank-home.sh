@@ -1,8 +1,9 @@
 #!/bin/sh
-# 13b: three harness adapters + blank-HOME tarball adopt + 3-slice fixture walk.
+# 13b: harness adapters + blank-HOME tarball adopt + 3-slice fixture walk.
 # Falsifier-first: RED when adapters/docs/VERSION 1.9.0 pin are absent.
-# Fixture echo/python stubs only. Live grok/claude/codex are not invoked.
-# If those CLIs are missing: record INDEPENDENCE_UNAVAILABLE (not a fixture fail).
+# Fixture echo/python stubs only. Live grok/kiro-cli/codex are not invoked.
+# If fewer than two of those CLIs are on PATH: record INDEPENDENCE_UNAVAILABLE
+# (not a fixture fail). Claude Code is not required.
 set -eu
 
 HERE=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
@@ -14,9 +15,10 @@ bad() { FAIL=$((FAIL + 1)); printf 'FAIL %s\n' "$1"; }
 
 # --- load-bearing RED (13b pin) ---
 if [ ! -f "$HERE/adapters/grok.md" ] \
+  || [ ! -f "$HERE/adapters/kiro.md" ] \
   || [ ! -f "$HERE/adapters/claude.md" ] \
   || [ ! -f "$HERE/adapters/codex.md" ]; then
-  printf 'RED adapters/{grok,claude,codex}.md missing (13b)\n' >&2
+  printf 'RED adapters/{grok,kiro,claude,codex}.md missing (13b)\n' >&2
   exit 1
 fi
 
@@ -43,7 +45,7 @@ sh -n "$HERE/wm.sh" && ok || bad 'wm.sh is not valid POSIX sh'
 sh -n "$HERE/crucible" && ok || bad 'crucible is not valid POSIX sh'
 
 # Adapters: how to invoke; point agents.tsv at CLIs; no secrets.
-for name in grok claude codex; do
+for name in grok kiro claude codex; do
   f="$HERE/adapters/$name.md"
   [ -s "$f" ] && ok || bad "adapters/$name.md empty"
   if grep -q 'agents.tsv' "$f"; then
@@ -79,20 +81,22 @@ command -v python3 >/dev/null 2>&1 && ok \
 
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 
-# Live harness CLIs: detect only. Never invoke. Missing → INDEPENDENCE_UNAVAILABLE.
+# Live harness CLIs: detect only. Never invoke. Fewer than two of
+# grok/kiro-cli/codex → INDEPENDENCE_UNAVAILABLE. Claude is not required.
 LIVE_GROK=0
-LIVE_CLAUDE=0
+LIVE_KIRO=0
 LIVE_CODEX=0
 command -v grok >/dev/null 2>&1 && LIVE_GROK=1
-command -v claude >/dev/null 2>&1 && LIVE_CLAUDE=1
+command -v kiro-cli >/dev/null 2>&1 && LIVE_KIRO=1
 command -v codex >/dev/null 2>&1 && LIVE_CODEX=1
-if [ "$LIVE_GROK" -eq 1 ] && [ "$LIVE_CLAUDE" -eq 1 ] && [ "$LIVE_CODEX" -eq 1 ]; then
+LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
+if [ "$LIVE_N" -ge 2 ]; then
   INDEPENDENCE=live-clis-present
-  printf 'LIVE_CLIS_PRESENT grok claude codex (fixture 3-slice; live agents not invoked)\n'
+  printf 'LIVE_CLIS_PRESENT grok kiro-cli codex (fixture 3-slice; live agents not invoked)\n'
 else
   INDEPENDENCE=INDEPENDENCE_UNAVAILABLE
-  printf 'INDEPENDENCE_UNAVAILABLE: live grok/claude/codex CLI missing (grok=%s claude=%s codex=%s); fixture 3-slice still required\n' \
-    "$LIVE_GROK" "$LIVE_CLAUDE" "$LIVE_CODEX"
+  printf 'INDEPENDENCE_UNAVAILABLE: live grok/kiro-cli/codex CLI missing (need >=2; grok=%s kiro-cli=%s codex=%s); fixture 3-slice still required\n' \
+    "$LIVE_GROK" "$LIVE_KIRO" "$LIVE_CODEX"
 fi
 
 BASE=$(mktemp -d "${TMPDIR:-/tmp}/wm-blank-home.XXXXXX")
@@ -172,6 +176,7 @@ if [ -f "$TAR" ]; then
   for rel in \
     wm.sh \
     adapters/grok.md \
+    adapters/kiro.md \
     adapters/claude.md \
     adapters/codex.md \
     skills/architecture/SKILL.md \
@@ -230,6 +235,7 @@ if [ -n "$EXTRACT" ]; then
   AD="$BASE/adopted"
   [ -f "$AD/.crucible/work/wm.sh" ] && ok || bad 'tarball adopt missing wm.sh'
   [ -f "$AD/.crucible/work/adapters/grok.md" ] && ok || bad 'adopt missing adapters/grok.md'
+  [ -f "$AD/.crucible/work/adapters/kiro.md" ] && ok || bad 'adopt missing adapters/kiro.md'
   [ -f "$AD/.crucible/work/adapters/claude.md" ] && ok || bad 'adopt missing adapters/claude.md'
   [ -f "$AD/.crucible/work/adapters/codex.md" ] && ok || bad 'adopt missing adapters/codex.md'
   [ -f "$AD/.crucible/skills/architecture/SKILL.md" ] && ok || bad 'canonical architecture missing'

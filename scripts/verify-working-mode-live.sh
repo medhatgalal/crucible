@@ -1,11 +1,13 @@
 #!/bin/sh
 # 13b live arm: throwaway tarball adopt + real harness CLIs.
-# Fail closed: missing grok/claude/codex → INDEPENDENCE_UNAVAILABLE exit 1.
-# Fail closed: grok/claude/codex cannot auth under empty HOME →
+# Fail closed: fewer than two of grok/kiro-cli/codex on PATH →
+# INDEPENDENCE_UNAVAILABLE exit 1. Claude Code is not required.
+# Fail closed: those present binaries cannot auth under empty HOME →
 # INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
-# Host auth/config is copied (grok auth.json+config.toml, claude.json+settings.json,
+# Host auth/config is copied (grok auth.json+config.toml, kiro settings/cli.json,
 # codex auth.json+config.toml). Skills/bundled/sessions are not copied.
-# All three auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
+# Do not use kiro-cli acp (JSON-RPC server) as wm run argv.
+# Two-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
 # live CLIs (not architecture-agent.sh / critique-agent.sh); prefer wm go;
 # four distinct PIDs; one go/loop. PATH-stripped still exit 1
 # INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
@@ -70,23 +72,48 @@ fi
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 command -v tar >/dev/null 2>&1 && ok || bad 'tar required'
 
-# --- fail closed: all three harness CLIs on PATH, else stop (not a fixture PASS)
+# --- fail closed: need >=2 of grok/kiro-cli/codex (not 3 including claude)
 LIVE_GROK=0
-LIVE_CLAUDE=0
+LIVE_KIRO=0
 LIVE_CODEX=0
 command -v grok >/dev/null 2>&1 && LIVE_GROK=1
-command -v claude >/dev/null 2>&1 && LIVE_CLAUDE=1
+command -v kiro-cli >/dev/null 2>&1 && LIVE_KIRO=1
 command -v codex >/dev/null 2>&1 && LIVE_CODEX=1
-if [ "$LIVE_GROK" -ne 1 ] || [ "$LIVE_CLAUDE" -ne 1 ] || [ "$LIVE_CODEX" -ne 1 ]; then
-  die_unavail "live grok/claude/codex CLI missing (grok=$LIVE_GROK claude=$LIVE_CLAUDE codex=$LIVE_CODEX)"
+LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
+if [ "$LIVE_N" -lt 2 ]; then
+  die_unavail "live grok/kiro-cli/codex CLI missing (need >=2; grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
 fi
 
-GROK_BIN=$(command -v grok)
-CLAUDE_BIN=$(command -v claude)
-CODEX_BIN=$(command -v codex)
-export GROK_BIN CLAUDE_BIN CODEX_BIN
+GROK_BIN=
+KIRO_BIN=
+CODEX_BIN=
+[ "$LIVE_GROK" -eq 1 ] && GROK_BIN=$(command -v grok)
+[ "$LIVE_KIRO" -eq 1 ] && KIRO_BIN=$(command -v kiro-cli)
+[ "$LIVE_CODEX" -eq 1 ] && CODEX_BIN=$(command -v codex)
+export GROK_BIN KIRO_BIN CODEX_BIN
 GROK_AGENT_DASHBOARD=0
 export GROK_AGENT_DASHBOARD
+
+_live_k1=
+_live_k2=
+if [ "$LIVE_GROK" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=grok; else _live_k2=grok; fi
+fi
+if [ "$LIVE_KIRO" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=kiro; else
+    [ -n "$_live_k2" ] || _live_k2=kiro
+  fi
+fi
+if [ "$LIVE_CODEX" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=codex; else
+    [ -n "$_live_k2" ] || _live_k2=codex
+  fi
+fi
+LIVE_SPEC_KIND=$_live_k1
+LIVE_MAKE_KIND=$_live_k1
+LIVE_SCOUT_KIND=$_live_k2
+LIVE_REV_KIND=$_live_k2
+export LIVE_SPEC_KIND LIVE_MAKE_KIND LIVE_SCOUT_KIND LIVE_REV_KIND
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
 [ -n "$VERSION" ] || { printf 'RED VERSION missing\n' >&2; exit 1; }
@@ -110,8 +137,8 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
 # Auth/config only (no harness skill trees). Do not invent secrets; do not print them.
 # Copy host grok auth.json + config.toml; overlay yolo/always-approve without
-# dropping other keys. Copy claude.json + settings.json; codex auth + config.
-# Never copy skills/, bundled/, or sessions/.
+# dropping other keys. Copy kiro settings/cli.json; codex auth + config.
+# Never copy skills/, bundled/, sessions/, or kiro-cli acp state.
 copy_if_file() {
   src=$1
   dst=$2
@@ -194,8 +221,8 @@ default_skills_installs_purged = true
 EOF
   chmod 600 "$HOME/.grok/config.toml"
 fi
-copy_if_file "$HOST_HOME/.claude.json" "$HOME/.claude.json"
-copy_if_file "$HOST_HOME/.claude/settings.json" "$HOME/.claude/settings.json"
+copy_if_file "$HOST_HOME/.kiro/settings/cli.json" "$HOME/.kiro/settings/cli.json"
+copy_if_file "$HOST_HOME/.kiro/settings/permissions.yaml" "$HOME/.kiro/settings/permissions.yaml"
 copy_if_file "$HOST_HOME/.codex/auth.json" "$HOME/.codex/auth.json"
 copy_if_file "$HOST_HOME/.codex/config.toml" "$HOME/.codex/config.toml"
 
@@ -213,26 +240,32 @@ printf 'probe\n' > "$PROBE_DIR/README"
 ) >/dev/null 2>"$ERR" || true
 
 # One-shot ping under empty HOME. Discard output (do not print secrets).
+# Probe only grok/kiro-cli/codex that are on PATH. Do not die because claude is missing.
 printf 'reply with pong only\n' > "$PROBE_DIR/ping.txt"
-if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
-  "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 1 --prompt-file "$PROBE_DIR/ping.txt" ); then
-  ok
-else
-  die_unavail "grok cannot auth"
+if [ "$LIVE_GROK" -eq 1 ]; then
+  if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+    "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
+    --output-format plain --max-turns 1 --prompt-file "$PROBE_DIR/ping.txt" ); then
+    ok
+  else
+    die_unavail "grok cannot auth"
+  fi
 fi
-if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
-  "$CLAUDE_BIN" -p --output-format text --permission-mode dontAsk \
-  --dangerously-skip-permissions pong ); then
-  ok
-else
-  die_unavail "claude cannot auth"
+if [ "$LIVE_KIRO" -eq 1 ]; then
+  if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+    "$KIRO_BIN" chat --no-interactive --trust-all-tools pong ); then
+    ok
+  else
+    die_unavail "kiro-cli cannot auth"
+  fi
 fi
-if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
-  "$CODEX_BIN" exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox pong ); then
-  ok
-else
-  die_unavail "codex cannot auth"
+if [ "$LIVE_CODEX" -eq 1 ]; then
+  if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+    "$CODEX_BIN" exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox pong ); then
+    ok
+  else
+    die_unavail "codex cannot auth"
+  fi
 fi
 
 assert_no_home_skill_trees() {
@@ -240,6 +273,7 @@ assert_no_home_skill_trees() {
     -path '*/.grok/skills' -o -path '*/.grok/skills/*' \
     -o -path '*/.claude/skills' -o -path '*/.claude/skills/*' \
     -o -path '*/.agents/skills' -o -path '*/.agents/skills/*' \
+    -o -path '*/.kiro/skills' -o -path '*/.kiro/skills/*' \
     \) -print 2>/dev/null || true)
   if [ -n "$hits" ]; then
     bad "harness skill trees under HOME: $hits"
@@ -422,80 +456,84 @@ Do not edit product files. Do not be the maker.
 EOF
   } > tools/WORKER.md
 
-  cat > tools/live-specifier.sh <<'EOF'
+  cat > tools/live-exec.sh <<'EOF'
+#!/bin/sh
+set -eu
+kind=${1:-}
+brief=${2:-}
+[ -n "$kind" ] || { printf 'live-exec: kind missing\n' >&2; exit 1; }
+[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-exec: brief missing\n' >&2; exit 1; }
+mkdir -p .wm
+prompt=.wm/live-"$kind".prompt
+{
+  cat "$brief"
+  printf '\n'
+  cat tools/WORKER.md
+} > "$prompt"
+case $kind in
+  grok)
+    [ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
+    exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
+      --output-format plain --max-turns 40 --prompt-file "$prompt"
+    ;;
+  kiro)
+    [ -n "${KIRO_BIN:-}" ] || KIRO_BIN=$(command -v kiro-cli)
+    exec "$KIRO_BIN" chat --no-interactive --trust-all-tools "$(cat "$prompt")"
+    ;;
+  codex)
+    [ -n "${CODEX_BIN:-}" ] || CODEX_BIN=$(command -v codex)
+    exec "$CODEX_BIN" exec --dangerously-bypass-approvals-and-sandbox - < "$prompt"
+    ;;
+  *)
+    printf 'live-exec: unknown kind %s\n' "$kind" >&2
+    exit 1
+    ;;
+esac
+EOF
+
+  cat > tools/live-specifier.sh <<EOF
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'pid %s\n' "$$" > .wm/specifier-pid
-printf 'ran\n' > .wm/specifier-ran
-brief=${1:-${BRIEF:-}}
-[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-specifier: brief missing\n' >&2; exit 1; }
-[ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
-prompt=.wm/live-specifier.prompt
-{
-  cat "$brief"
-  printf '\n'
-  cat tools/WORKER.md
-} > "$prompt"
-exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 40 --prompt-file "$prompt"
+printf 'pid %s\\n' "\$\$" > .wm/specifier-pid
+printf 'ran\\n' > .wm/specifier-ran
+brief=\${1:-\${BRIEF:-}}
+[ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-specifier: brief missing\\n' >&2; exit 1; }
+exec ./tools/live-exec.sh ${LIVE_SPEC_KIND} "\$brief"
 EOF
 
-  cat > tools/live-scout.sh <<'EOF'
+  cat > tools/live-scout.sh <<EOF
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'pid %s\n' "$$" > .wm/scout-pid
-printf 'ran\n' > .wm/scout-ran
-brief=${1:-${BRIEF:-}}
-[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-scout: brief missing\n' >&2; exit 1; }
-[ -n "${CLAUDE_BIN:-}" ] || CLAUDE_BIN=$(command -v claude)
-prompt=.wm/live-scout.prompt
-{
-  cat "$brief"
-  printf '\n'
-  cat tools/WORKER.md
-} > "$prompt"
-exec "$CLAUDE_BIN" -p --output-format text --permission-mode dontAsk \
-  --dangerously-skip-permissions "$(cat "$prompt")"
+printf 'pid %s\\n' "\$\$" > .wm/scout-pid
+printf 'ran\\n' > .wm/scout-ran
+brief=\${1:-\${BRIEF:-}}
+[ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-scout: brief missing\\n' >&2; exit 1; }
+exec ./tools/live-exec.sh ${LIVE_SCOUT_KIND} "\$brief"
 EOF
 
-  cat > tools/live-maker.sh <<'EOF'
+  cat > tools/live-maker.sh <<EOF
 #!/bin/sh
 set -eu
-printf 'pid %s\n' "$$" > .wm/maker-pid
-printf 'ran\n' >> .wm/maker-ran
-brief=${1:-${BRIEF:-}}
-[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-maker: brief missing\n' >&2; exit 1; }
-[ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
-prompt=.wm/live-maker.prompt
-{
-  cat "$brief"
-  printf '\n'
-  cat tools/WORKER.md
-} > "$prompt"
-exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 40 --prompt-file "$prompt"
+printf 'pid %s\\n' "\$\$" > .wm/maker-pid
+printf 'ran\\n' >> .wm/maker-ran
+brief=\${1:-\${BRIEF:-}}
+[ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-maker: brief missing\\n' >&2; exit 1; }
+exec ./tools/live-exec.sh ${LIVE_MAKE_KIND} "\$brief"
 EOF
 
-  cat > tools/live-reviewer.sh <<'EOF'
+  cat > tools/live-reviewer.sh <<EOF
 #!/bin/sh
 set -eu
-printf 'pid %s\n' "$$" > .wm/reviewer-pid
-printf 'ran\n' > .wm/reviewer-ran
-brief=${1:-${BRIEF:-}}
-[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-reviewer: brief missing\n' >&2; exit 1; }
-[ -n "${CODEX_BIN:-}" ] || CODEX_BIN=$(command -v codex)
-prompt=.wm/live-reviewer.prompt
-{
-  cat "$brief"
-  printf '\n'
-  cat tools/WORKER.md
-} > "$prompt"
-exec "$CODEX_BIN" exec --dangerously-bypass-approvals-and-sandbox - < "$prompt"
+printf 'pid %s\\n' "\$\$" > .wm/reviewer-pid
+printf 'ran\\n' > .wm/reviewer-ran
+brief=\${1:-\${BRIEF:-}}
+[ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-reviewer: brief missing\\n' >&2; exit 1; }
+exec ./tools/live-exec.sh ${LIVE_REV_KIND} "\$brief"
 EOF
 
-  chmod +x tools/live-specifier.sh tools/live-scout.sh \
+  chmod +x tools/live-exec.sh tools/live-specifier.sh tools/live-scout.sh \
     tools/live-maker.sh tools/live-reviewer.sh
 
   if ! "$WM" init >"$OUT" 2>"$ERR"; then
@@ -503,27 +541,27 @@ EOF
   else
     ok
   fi
-  "$WM" cast coordinator parent grok - >/dev/null 2>"$ERR" || true
+  "$WM" cast coordinator parent "$LIVE_SPEC_KIND" - >/dev/null 2>"$ERR" || true
 
-  if "$WM" cast specifier spec0 grok './tools/live-specifier.sh {BRIEF}' \
+  if "$WM" cast specifier spec0 "$LIVE_SPEC_KIND" './tools/live-specifier.sh {BRIEF}' \
     >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast specifier refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  if "$WM" cast scout scout0 claude './tools/live-scout.sh {BRIEF}' \
+  if "$WM" cast scout scout0 "$LIVE_SCOUT_KIND" './tools/live-scout.sh {BRIEF}' \
     >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast scout refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  if "$WM" cast maker make0 grok './tools/live-maker.sh {BRIEF}' \
+  if "$WM" cast maker make0 "$LIVE_MAKE_KIND" './tools/live-maker.sh {BRIEF}' \
     >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast maker refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  if "$WM" cast reviewer rev0 codex './tools/live-reviewer.sh {BRIEF}' \
+  if "$WM" cast reviewer rev0 "$LIVE_REV_KIND" './tools/live-reviewer.sh {BRIEF}' \
     >"$OUT" 2>"$ERR"; then
     ok
   else

@@ -1,6 +1,6 @@
 #!/bin/sh
 # 1.8.0 Task 1: wm go + no-args help + discovery skill.
-# Empty HOME. Fixture git repos and a fake grok only.
+# Empty HOME. Fixture git repos and fake grok/kiro-cli. Do not require fake claude.
 set -eu
 
 HERE=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
@@ -152,9 +152,43 @@ else
   bad "fake grok loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 
-# Two CLIs: maker kind != reviewer kind.
-printf '#!/bin/sh\nexit 0\n' > "$BIN/claude"
-chmod +x "$BIN/claude"
+# Fake kiro-cli only: discovered as kind kiro. PATH-stripped already UNAVAILABLE.
+BIN_KIRO="$BASE/bin-kiro"
+mkdir -p "$BIN_KIRO"
+printf '#!/bin/sh\nexit 0\n' > "$BIN_KIRO/kiro-cli"
+chmod +x "$BIN_KIRO/kiro-cli"
+konly="$BASE/fake-kiro"
+init_git_repo "$konly"
+printf 'build a tiny product\n' > "$konly/IDEA.md"
+set +e
+(
+  CDPATH=
+  cd "$konly"
+  PATH="$BIN_KIRO:/usr/bin:/bin"
+  export PATH
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+konly_rc=$?
+set -e
+[ "$konly_rc" -ne 0 ] && ok || bad "fake kiro-cli go must STOP-ASK (rc=$konly_rc)"
+k_kind=
+k_spec=
+k_make=
+if [ -f "$konly/.wm/PANEL.tsv" ]; then
+  k_kind=$(awk -F '\t' '$1=="specifier"{print $3; exit}' "$konly/.wm/PANEL.tsv")
+  k_spec=$(awk -F '\t' '$1=="specifier"{print $2; exit}' "$konly/.wm/PANEL.tsv")
+  k_make=$(awk -F '\t' '$1=="maker"{print $2; exit}' "$konly/.wm/PANEL.tsv")
+fi
+if [ "$k_kind" = kiro ] && [ "$k_spec" = spec0 ] && [ "$k_make" = make0 ] \
+  && [ "$k_spec" != "$k_make" ]; then
+  ok
+else
+  bad "fake kiro-cli wanted kind kiro spec0!=make0, got kind=$k_kind spec=$k_spec make=$k_make panel=$(cat "$konly/.wm/PANEL.tsv" 2>/dev/null || echo ABSENT)"
+fi
+
+# Two CLIs: grok + kiro-cli; maker kind != reviewer kind. Do not require fake claude.
+printf '#!/bin/sh\nexit 0\n' > "$BIN/kiro-cli"
+chmod +x "$BIN/kiro-cli"
 two="$BASE/two-cli"
 init_git_repo "$two"
 printf 'two cli idea\n' > "$two/IDEA.md"
@@ -180,6 +214,10 @@ if [ -n "$mk_kind" ] && [ -n "$rk_kind" ] && [ "$mk_kind" != "$rk_kind" ]; then
 else
   bad "two CLIs wanted maker kind != reviewer kind, got make=$mk_kind rev=$rk_kind panel=$(cat "$two/.wm/PANEL.tsv" 2>/dev/null || echo ABSENT)"
 fi
+case $mk_kind$rk_kind in
+  *kiro*) ok ;;
+  *) bad "two CLIs wanted kiro as a kind, got make=$mk_kind rev=$rk_kind" ;;
+esac
 
 # Guided adopt lines stay without --working-mode.
 if grep -E 'adopt work --managed' "$HERE/START.md" | grep -q -- '--working-mode'; then
@@ -291,13 +329,24 @@ if grep -q '_wm_self' "$WM" && grep -F 'command -v "$_wm_self"' "$WM" >/dev/null
 else
   bad 'wm.sh must resolve wm-go.sh via command -v when $0 has no slash'
 fi
-if grep -F "claude -p --output-format text 'read {BRIEF} and follow it exactly'" \
+if grep -F "kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'" \
   "$HERE/wm-go.sh" >/dev/null \
   && grep -F "codex exec -- 'read {BRIEF} and follow it exactly'" \
   "$HERE/wm-go.sh" >/dev/null; then
   ok
 else
-  bad 'wm-go.sh Claude/Codex templates must keep adapter single quotes'
+  bad 'wm-go.sh Kiro/Codex templates must keep adapter single quotes'
+fi
+if grep -F "claude -p --output-format text 'read {BRIEF} and follow it exactly'" \
+  "$HERE/wm-go.sh" >/dev/null; then
+  ok
+else
+  bad 'wm-go.sh optional Claude template must keep adapter single quotes'
+fi
+if grep -q 'kiro-cli' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh must discover kiro-cli'
 fi
 if grep -q 'cp "$_go_idea" ./IDEA.md' "$HERE/wm-go.sh"; then
   ok

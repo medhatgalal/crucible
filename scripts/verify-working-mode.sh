@@ -2086,10 +2086,11 @@ else
   bad 'adapters/grok.md must keep {BRIEF} and say the engine quotes the replacement'
 fi
 if grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/claude.md" \
-  && grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/codex.md"; then
+  && grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/codex.md" \
+  && grep -F -q "read {BRIEF} and follow it exactly" "$HERE/adapters/kiro.md"; then
   ok
 else
-  bad 'adapters/claude.md and adapters/codex.md must keep {BRIEF} inside a single-quoted prompt'
+  bad 'adapters/claude.md, adapters/codex.md, and adapters/kiro.md must keep {BRIEF} inside a single-quoted prompt'
 fi
 
 # Leftover-loop pgrep must match this WM binary, not any tree's wm.sh loop.

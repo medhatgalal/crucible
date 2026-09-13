@@ -30,7 +30,7 @@ hand. An unrun suite rots, and a rotted suite is indistinguishable from a suite 
 asserted anything.
 
 `scripts/verify-working-mode-live.sh` is fail-closed (`INDEPENDENCE_UNAVAILABLE`
-when grok/claude/codex are missing) and is **not** a required CI gate.
+when fewer than two of grok/kiro-cli/codex are on PATH) and is **not** a required CI gate.
 
 `scripts/verify-working-mode-map.sh`, `scripts/verify-working-mode-blank-home.sh`,
 and `scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs
