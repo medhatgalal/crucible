@@ -1,5 +1,6 @@
 phase	job	battery	role	stake	required
 RESEARCH	survey	research	specifier	spec	no
+REPO	inventory	repo-scout	specifier	spec	no
 MAP	decompose	architecture	planner	spec	yes
 ATTACK-MAP	critique	critique	map-judge	review	yes
 BRICK	review	review	reviewer	review	yes

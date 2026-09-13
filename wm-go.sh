@@ -93,19 +93,36 @@ go_ensure_panel() {
 }
 
 cmd_go() {
-  _go_idea=${1:-}
+  _go_next=0
+  _go_idea=
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --next) _go_next=1 ;;
+      -*) die "idea path must not start with -" ;;
+      *)
+        if [ -n "$_go_idea" ]; then
+          die "usage: go [--next] [IDEA.md]"
+        fi
+        _go_idea=$1
+        ;;
+    esac
+    shift
+  done
+  if [ "$_go_next" -eq 1 ] && [ -n "$_go_idea" ]; then
+    die "go --next does not take an idea path"
+  fi
   if [ ! -x "$WM/bin/wm" ]; then
     cmd_init
   fi
-  if [ -n "$_go_idea" ]; then
-    case $_go_idea in
-      -*) die "idea path must not start with -" ;;
-    esac
+  if [ "$_go_next" -eq 1 ]; then
+    go_consume_backlog
+  elif [ -n "$_go_idea" ]; then
     if [ -f "$_go_idea" ] && [ -r "$_go_idea" ] && [ ! -f IDEA.md ]; then
       cp "$_go_idea" ./IDEA.md
     fi
   fi
   if questions_need_ask; then
+    metrics_append "STOP-ASK QUESTIONS" -
     say "STOP-ASK QUESTIONS"
     exit 1
   fi

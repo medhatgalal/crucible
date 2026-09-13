@@ -434,6 +434,79 @@ else
   bad "go_ensure_panel wanted spec0+scout0, got spec=$spec_id scout=$scout_id panel=$(cat "$partial/.wm/PANEL.tsv" 2>/dev/null || echo ABSENT)"
 fi
 
+# Q1: go --next copies READY idea; second --next with open MAP.md dies.
+nextbl="$BASE/go-next"
+init_git_repo "$nextbl"
+printf 'first backlog idea\n' > "$nextbl/idea1.md"
+printf 'second backlog idea\n' > "$nextbl/idea2.md"
+printf 'id\tsize\trisk\tidea_path\tstatus\n' > "$nextbl/BACKLOG.tsv"
+printf 'b1\tsmall\tLOW\tidea1.md\tREADY\n' >> "$nextbl/BACKLOG.tsv"
+printf 'b2\tsmall\tLOW\tidea2.md\tREADY\n' >> "$nextbl/BACKLOG.tsv"
+set +e
+(
+  CDPATH=
+  cd "$nextbl"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go --next
+) >"$OUT" 2>"$ERR"
+gn_rc=$?
+set -e
+[ "$gn_rc" -ne 0 ] && ok || bad "go --next fake grok must not CLOSED PASS"
+if grep -q 'first backlog idea' "$nextbl/IDEA.md"; then
+  ok
+else
+  bad "go --next must copy idea1.md onto IDEA.md, got $(cat "$nextbl/IDEA.md" 2>/dev/null || echo ABSENT)"
+fi
+b1st=$(awk -F '\t' '$1=="b1"{print $5; exit}' "$nextbl/BACKLOG.tsv")
+[ "$b1st" = INFLIGHT ] && ok || bad "go --next wanted b1 INFLIGHT, got $b1st"
+printf 'MAPPER: x\n' > "$nextbl/MAP.md"
+set +e
+(
+  CDPATH=
+  cd "$nextbl"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go --next
+) >"$OUT" 2>"$ERR"
+gn2_rc=$?
+set -e
+[ "$gn2_rc" -ne 0 ] && ok || bad 'second go --next with open MAP must be nonzero'
+if grep -q 'finish current map first' "$OUT" "$ERR"; then
+  ok
+else
+  bad "second go --next wanted finish current map first, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+if grep -q 'second backlog idea' "$nextbl/IDEA.md"; then
+  bad 'second go --next must not copy idea2 while MAP.md is open'
+else
+  ok
+fi
+
+# go without --next still copies a missing IDEA.md from the argument (unchanged).
+plain="$BASE/go-plain"
+init_git_repo "$plain"
+printf 'plain idea\n' > "$plain/seed.md"
+set +e
+(
+  CDPATH=
+  cd "$plain"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go seed.md
+) >"$OUT" 2>"$ERR"
+set -e
+if [ -f "$plain/IDEA.md" ] && grep -q 'plain idea' "$plain/IDEA.md"; then
+  ok
+else
+  bad "go without --next must still copy seed.md when IDEA.md is missing"
+fi
+if [ -f "$plain/BACKLOG.tsv" ]; then
+  bad 'go without --next must not invent BACKLOG.tsv'
+else
+  ok
+fi
+
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
 if [ -z "$home_leftovers" ]; then
   ok

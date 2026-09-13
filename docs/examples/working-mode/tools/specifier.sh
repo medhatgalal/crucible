@@ -1,9 +1,10 @@
 #!/bin/sh
 # Fixture specifier: reads IDEA.md.
+# Brief Write REPO.md and REPO.md missing → short REPO.md and exit (no SPEC).
 # RESEARCH.md missing → write RESEARCH.md from IDEA and exit (no SPEC yet).
-# Hello idea (second run) → SPEC/MAP/modules.
+# Hello idea (second run) → INTENT.md/SPEC/MAP/modules.
 # Underspecified (e.g. saas/webapp, missing IDEA) → QUESTIONS.md, no MAP.md.
-# Non-empty ANSWERS.md → SPEC/MAP (hello path). Kernel does not invent answers.
+# Non-empty ANSWERS.md → INTENT/SPEC/MAP (hello path). Kernel does not invent answers.
 # Never ignores IDEA. Does not implement product. Does not write MAP-ACCEPT.
 set -eu
 agent=eve
@@ -14,6 +15,24 @@ fi
 if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
   a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
   [ -n "$a" ] && agent=$a
+fi
+
+# NEXT/brief REPO pass: inventory only. Hello example trees skip (brief omits REPO).
+if [ ! -f REPO.md ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ] \
+  && grep -q 'Write REPO.md' "$BRIEF"; then
+  cat > REPO.md <<'EOF'
+# REPO
+layout: tracked product tree
+test command: unknown
+CI: unknown
+modules: see architecture when written
+hotspots: unknown
+EOF
+  if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    git add REPO.md
+    git diff --cached --quiet || git commit -qm 'specifier: REPO'
+  fi
+  exit 0
 fi
 
 if [ -f IDEA.md ] && [ ! -f RESEARCH.md ]; then
@@ -64,6 +83,14 @@ EOF
 fi
 
 mkdir -p architecture product
+cat > INTENT.md <<'EOF'
+## User
+local operator
+## Job
+product/hello.txt contains exactly hello
+## Non-goals
+live systems, extra modules, network
+EOF
 cat > SPEC.md <<'EOF'
 ## Goal
 product/hello.txt contains exactly hello
@@ -93,7 +120,7 @@ EOF
   printf 'id\tmodule\towned_paths\tdepends_on\trisk\n'
   printf 's1\tproduct\tproduct/hello.txt\t-\tLOW\n'
 } > MAP.md
-git add SPEC.md architecture/modules.md MAP.md
+git add INTENT.md SPEC.md architecture/modules.md MAP.md
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
   git diff --cached --quiet || git commit -qm 'specifier: SPEC MAP modules'
 fi

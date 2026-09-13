@@ -16,6 +16,13 @@ Do not mix guided `drive` or `cycle` with this runner.
 `go` inits if needed, copies a readable idea file onto `IDEA.md` when that
 name is missing, stops on a non-empty `QUESTIONS.md` without `ANSWERS.md`,
 discovers `grok` / `claude` / `codex` when the panel is empty, and runs `loop`.
+`go --next` copies the first READY `BACKLOG.tsv` row
+(`id size risk idea_path status`) onto `IDEA.md`. One map in flight.
+
+Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
+`map-ready` dies if it is missing. Reviewer PASS does not require it.
+Existing-repo inventory may write `REPO.md` (`NEXT REPO`) before SPEC.
+Greenfield (README / adopt only) skips.
 
 Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Specifier `spec0` is not maker
 `make0`. Two CLIs: maker kind is not reviewer kind.
@@ -28,6 +35,7 @@ Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Specifier `spec0` is not maker
 | NEXT INTAKE | Write `IDEA.md`, then `go` again |
 | NEXT CAST | Cast the panel, then `go` again |
 | NEXT RESEARCH | Research battery then `go` again |
+| NEXT REPO | Specifier writes `REPO.md`, then `go` again |
 | NEXT SPEC | Cast specifier or write `SPEC.md`, then `go` again |
 | NEXT MAP | Cast scout or ingest `MAP-ACCEPT`, then `go` again |
 | MAP-REVISE | Specifier revises `MAP.md`, then `go` again |

@@ -291,6 +291,33 @@ else
   ok
 fi
 
+# Optional repo-scout battery (ROUTING required=no).
+require_file "$HERE/skills/repo-scout/SKILL.md" 'package skills/repo-scout/SKILL.md missing'
+require_file "$HERE/skills/repo-scout/CONTRACT.md" 'package skills/repo-scout/CONTRACT.md missing'
+require_fgrep "$HERE/skills/repo-scout/CONTRACT.md" 'REPO.md' \
+  'repo-scout CONTRACT Out must name REPO.md'
+require_fgrep "$HERE/skills/repo-scout/CONTRACT.md" 'SPEC.md' \
+  'repo-scout CONTRACT Must-not must mention SPEC.md'
+require_fgrep "$HERE/skills/repo-scout/CONTRACT.md" 'MAP-ACCEPT' \
+  'repo-scout CONTRACT Must-not must mention MAP-ACCEPT'
+require_fgrep "$HERE/skills/repo-scout/CONTRACT.md" 'CLOSED PASS' \
+  'repo-scout CONTRACT Must-not must mention CLOSED PASS'
+require_fgrep "$HERE/skills/repo-scout/SKILL.md" 'REPO.md' \
+  'repo-scout SKILL.md must name REPO.md'
+require_fgrep "$HERE/skills/repo-scout/SKILL.md" 'SPEC.md' \
+  'repo-scout SKILL.md must refuse SPEC.md on this pass'
+if [ -f "$HERE/skills/repo-scout/CONTRACT.md" ]; then
+  swap=$(section_body '## Swap' "$HERE/skills/repo-scout/CONTRACT.md")
+  printf '%s\n' "$swap" | grep -F -q 'Replacing this directory must not require editing wm.sh.' \
+    && ok || bad 'repo-scout CONTRACT.md ## Swap missing verbatim swap line'
+fi
+if awk -F '\t' '$1=="REPO" && $3=="repo-scout" && $6=="no" { found=1 } END { exit !found }' \
+  "$HERE/ROUTING.tsv"; then
+  ok
+else
+  bad 'ROUTING.tsv missing REPO inventory repo-scout specifier spec required=no'
+fi
+
 # Optional research battery (ROUTING required=no).
 require_file "$HERE/skills/research/SKILL.md" 'package skills/research/SKILL.md missing'
 require_file "$HERE/skills/research/CONTRACT.md" 'package skills/research/CONTRACT.md missing'
@@ -329,6 +356,14 @@ setup_map_repo() {
   git config user.email 'wm@local'
   git config user.name 'working-mode'
   printf 'an idea\n' > IDEA.md
+  cat > INTENT.md <<'EOF'
+## User
+fixture operator
+## Job
+tiny widget
+## Non-goals
+live systems
+EOF
   if ! "$WM" init >"$OUT" 2>"$ERR"; then
     printf 'FIXTURE BROKEN: %s init failed\n%s\n%s\n' "$name" "$(cat "$OUT")" "$(cat "$ERR")" >&2
     exit 1
@@ -439,7 +474,7 @@ write_maker_falsify_stub() {
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'true\n' > .wm/FALSIFIER
+printf 'test -f IDEA.md\n' > .wm/FALSIFIER
 if command -v sha256sum >/dev/null 2>&1; then
   h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
 elif command -v shasum >/dev/null 2>&1; then
@@ -846,6 +881,12 @@ if impl_ok 'map-ready greenfield creates missing root' "$WM" map-ready; then
 fi
 [ -d src/widget ] && ok || bad 'map-ready must mkdir src/widget'
 [ -f src/widget/.gitkeep ] && ok || bad 'map-ready must touch src/widget/.gitkeep'
+
+setup_map_repo t-map-ready-no-intent
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper for INTENT.md missing' "$WM" record-mapper --from MAP.md || true
+rm -f INTENT.md
+refuses 'map-ready without INTENT.md' 'INTENT.md missing' "$WM" map-ready
 
 setup_map_repo t-fairy-abs-root
 mkdir -p architecture
@@ -1480,7 +1521,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode|research) ;;
+    architecture|critique|review|loop-design|working-mode|research|repo-scout) ;;
     *) extra="$extra $n" ;;
   esac
 done

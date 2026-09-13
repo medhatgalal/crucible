@@ -1,6 +1,6 @@
 #!/bin/sh
 # 13b: three harness adapters + blank-HOME tarball adopt + 3-slice fixture walk.
-# Falsifier-first: RED when adapters/docs/VERSION 1.8.1 pin are absent.
+# Falsifier-first: RED when adapters/docs/VERSION 1.9.0 pin are absent.
 # Fixture echo/python stubs only. Live grok/claude/codex are not invoked.
 # If those CLIs are missing: record INDEPENDENCE_UNAVAILABLE (not a fixture fail).
 set -eu
@@ -21,13 +21,13 @@ if [ ! -f "$HERE/adapters/grok.md" ] \
 fi
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
-if [ "$VERSION" != 1.8.1 ]; then
-  printf 'RED VERSION is %s, want 1.8.1\n' "$VERSION" >&2
+if [ "$VERSION" != 1.9.0 ]; then
+  printf 'RED VERSION is %s, want 1.9.0\n' "$VERSION" >&2
   exit 1
 fi
 
-if ! grep -q '^## \[1.8.1\] - 2026-09-13$' "$HERE/CHANGELOG.md"; then
-  printf 'RED CHANGELOG.md missing ## [1.8.1] - 2026-09-13\n' >&2
+if ! grep -q '^## \[1.9.0\] - 2026-09-13$' "$HERE/CHANGELOG.md"; then
+  printf 'RED CHANGELOG.md missing ## [1.9.0] - 2026-09-13\n' >&2
   exit 1
 fi
 
@@ -64,7 +64,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode|research) ;;
+    architecture|critique|review|loop-design|working-mode|research|repo-scout) ;;
     *) extra="$extra $n" ;;
   esac
 done
@@ -157,7 +157,7 @@ run_adopt() {
   ( CDPATH=; cd "$dir" && "$@" >"$OUT" 2>"$ERR" )
 }
 
-# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.8.1).
+# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.9.0).
 PKG_OUT="$BASE/pkg"
 mkdir -p "$PKG_OUT"
 if "$HERE/scripts/package-release.sh" "$VERSION" HEAD "$PKG_OUT" >"$OUT" 2>"$ERR"; then
@@ -240,8 +240,8 @@ if [ -n "$EXTRACT" ]; then
   [ -f "$AD/.crucible/.claude/skills/architecture/SKILL.md" ] && ok || bad 'nested claude view missing'
   [ -f "$AD/.crucible/.agents/skills/architecture/SKILL.md" ] && ok || bad 'nested agents view missing'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
-    grep -q '^version: 1.8.1$' "$AD/.crucible/work/ENGINE-SOURCE" \
-      && ok || bad 'ENGINE-SOURCE version is not 1.8.1'
+    grep -q '^version: 1.9.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
+      && ok || bad 'ENGINE-SOURCE version is not 1.9.0'
   else
     bad 'ENGINE-SOURCE missing after working-mode adopt'
   fi
@@ -298,6 +298,15 @@ stop-ask on live write
 ## Risk
 LOW
 SPEC-AUTHOR: operator
+EOF
+
+  cat > INTENT.md <<'EOF'
+## User
+fixture operator
+## Job
+tiny python package: alpha ping, beta pong, seam test
+## Non-goals
+live systems, network, extra modules
 EOF
 
   cat > tools/architecture-agent.sh <<'EOF'

@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.8.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.9.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
@@ -93,7 +93,7 @@ coordinator, or loop. A rewrite of `MAP.md` after sign is not a sign.
 ### Example C — vague IDEA, specifier+scout cast
 
 A vague `IDEA.md` with no hand-written SPEC/MAP. Cast specifier and scout
-with real CLIs (not `-`). Specifier `eve` writes `SPEC.md`,
+with real CLIs (not `-`). Specifier `eve` writes `INTENT.md`, `SPEC.md`,
 `architecture/modules.md`, and `MAP.md` (`MAPPER: eve`). Scout `bob` ≠
 `eve` returns `MAP-ACCEPT`. Maker `carol` ≠ reviewer `dave`. Without those
 CLIs, `loop` is still `STOP-ASK NEXT SPEC` / `STOP-ASK NEXT MAP`.
@@ -166,7 +166,7 @@ flowchart LR
   panel --> scoutN[scout / map-judge]
   panel --> makerN[maker]
   panel --> revN[reviewer]
-  specN --> specFiles["SPEC.md architecture/ MAP.md"]
+  specN --> specFiles["INTENT.md SPEC.md architecture/ MAP.md"]
   scoutN --> accept["MAP-ACCEPT"]
   makerN --> product[owned files]
   revN --> word["WORD PASS or NO-BUILD"]
@@ -304,17 +304,27 @@ are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
 Lead with `go` / `help` / `status`. Examples A/C below stay as advanced
 fixture walks. Non-empty `QUESTIONS.md` without `ANSWERS.md` is
 `STOP-ASK QUESTIONS` (write `ANSWERS.md` then `go` again). Optional
-research writes `RESEARCH.md` before SPEC (`NEXT RESEARCH`). `LOOP_BOUND`
+research writes `RESEARCH.md` before SPEC (`NEXT RESEARCH`). Optional
+`repo-scout` writes `REPO.md` (`NEXT REPO`) when the tree already has
+product files. Specifier SPEC pass writes `INTENT.md`. `LOOP_BOUND`
 is max(40, min(240, 16+12×slices)), not a fixed 40.
+
+`BACKLOG.tsv` header is `id	size	risk	idea_path	status`.
+`.crucible/<program>/wm.sh go --next` copies a READY `idea_path` onto
+`IDEA.md` (overwrite) and marks that row INFLIGHT. If `MAP.md` exists
+and `.wm/CLOSED` is not closeable, it dies `finish current map first`.
+After CLOSED it archives MAP/SPEC/slices into `history/maps/<prev-id>/`.
+`go` without `--next` is unchanged.
 
 ```sh
 # from the target repository root
 .crucible/<program>/wm.sh                 # help
 .crucible/<program>/wm.sh go [IDEA.md]
+.crucible/<program>/wm.sh go --next       # BACKLOG.tsv READY row → IDEA.md
 .crucible/<program>/wm.sh help
 .crucible/<program>/wm.sh status          # same card as next; does not mutate
 .crucible/<program>/wm.sh loop            # remaining READY slices; brick reset between
-.crucible/<program>/wm.sh map-ready       # fit + slices.tsv PENDING
+.crucible/<program>/wm.sh map-ready       # INTENT.md + fit + slices.tsv PENDING
 .crucible/<program>/wm.sh map-verdict RETURNFILE
 .crucible/<program>/wm.sh next
 .crucible/<program>/wm.sh run maker-falsify

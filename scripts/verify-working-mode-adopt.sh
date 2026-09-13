@@ -74,7 +74,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode|research) ;;
+    architecture|critique|review|loop-design|working-mode|research|repo-scout) ;;
     *) extra="$extra $n" ;;
   esac
 done
@@ -453,6 +453,12 @@ if awk -F '\t' '$1=="RESEARCH" && $3=="research" && $6=="no" { found=1 } END { e
   ok
 else
   bad 'package ROUTING.tsv missing RESEARCH survey research specifier spec required=no'
+fi
+if awk -F '\t' '$1=="REPO" && $3=="repo-scout" && $6=="no" { found=1 } END { exit !found }' \
+  "$HERE/ROUTING.tsv"; then
+  ok
+else
+  bad 'package ROUTING.tsv missing REPO inventory repo-scout specifier spec required=no'
 fi
 FAKE_OPT="$BASE/fake-src-opt"
 mkdir -p "$FAKE_OPT/scripts" "$FAKE_OPT/skills"

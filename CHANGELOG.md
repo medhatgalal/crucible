@@ -5,6 +5,28 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.9.0] - 2026-09-13
+
+### Factory plants
+
+- `BACKLOG.tsv` (`id	size	risk	idea_path	status`) and
+  `go --next`: copy a READY `idea_path` onto `IDEA.md` (overwrite), mark
+  INFLIGHT. One map in flight — `MAP.md` without closeable CLOSED dies
+  `finish current map first`. After CLOSED, archive MAP/SPEC/slices into
+  `history/maps/<prev-id>/`. `go` without `--next` is unchanged.
+- Optional `repo-scout` battery (`ROUTING` REPO, required=no) writes
+  `REPO.md` (layout, test command, CI, modules, hotspots) before SPEC.
+  Greenfield README/adopt-only trees skip. Hello fixture trees skip.
+- After maker-build, `git diff --name-only` `pre-build-wid`..HEAD must sit
+  in `owned_paths` or wm meta files, else `unowned path in maker-build`.
+- FALSIFIER line 1 may not be exactly `true`, `:`, or `exit 0` (trimmed):
+  `tautological falsifier`.
+- Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
+  `map-ready` dies if missing. Reviewer PASS does not require it (not a
+  CLOSE word).
+- Close / STOP-ASK / ESCALATE append `.wm/METRICS.tsv`
+  (`when	outcome	slices	bound	note`). No secrets.
+
 ## [1.8.1] - 2026-09-13
 
 ### Honesty

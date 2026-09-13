@@ -524,6 +524,7 @@ read_falsifier_cmd() {
   case $_rf in
     *TEMPLATE-FALSIFIER-UNWRITTEN*) die "FALSIFIER is template" ;;
   esac
+  check_falsifier_tautology
   printf '%s\n' "$_rf"
 }
 
@@ -619,6 +620,170 @@ research_skill_present() {
   [ -f .crucible/skills/research/SKILL.md ] || [ -f skills/research/SKILL.md ]
 }
 
+repo_scout_skill_present() {
+  [ -f .crucible/skills/repo-scout/SKILL.md ] || [ -f skills/repo-scout/SKILL.md ]
+}
+
+# Tracked files that are not IDEA / adopt / wm noise. Greenfield README+adopt skips.
+repo_has_product_tracked() {
+  _rhp_files=$(git ls-files 2>/dev/null || true)
+  [ -n "$_rhp_files" ] || return 1
+  while IFS= read -r _rhp_p || [ -n "$_rhp_p" ]; do
+    [ -n "$_rhp_p" ] || continue
+    case $_rhp_p in
+      IDEA.md|QUESTIONS.md|ANSWERS.md|RESEARCH.md|SPEC.md|MAP.md|slices.tsv) continue ;;
+      INTENT.md|REPO.md|LESSONS.md|BACKLOG.tsv|MAP-HUMAN|WORKING-MODE.md) continue ;;
+      README|README.md|LICENSE|LICENSE.md|VERSION|CHANGELOG.md|CONTRIBUTING.md|SECURITY.md) continue ;;
+      .gitignore|.gitattributes) continue ;;
+      .wm|.wm/*|.crucible|.crucible/*|.grok|.grok/*|.claude|.claude/*|.agents|.agents/*) continue ;;
+      skills|skills/*|tools|tools/*) continue ;;
+      *) return 0 ;;
+    esac
+  done <<EOF
+$_rhp_files
+EOF
+  return 1
+}
+
+repo_needs_scout() {
+  [ ! -f REPO.md ] || return 1
+  repo_scout_skill_present || return 1
+  repo_has_product_tracked
+}
+
+metrics_append() {
+  _ma_outcome=$1
+  _ma_note=${2:-}
+  ensure_wm
+  if [ ! -f "$WM/METRICS.tsv" ]; then
+    printf 'when\toutcome\tslices\tbound\tnote\n' > "$WM/METRICS.tsv"
+  fi
+  _ma_n=0
+  if [ -f slices.tsv ]; then
+    _ma_n=$(awk 'NR > 1 && $0 !~ /^[[:space:]]*$/ && $0 !~ /^#/ { c++ } END { print c + 0 }' slices.tsv)
+  fi
+  _ma_b=$(loop_bound)
+  _ma_note=$(printf '%s' "$_ma_note" | tr '\t\n' '  ')
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(iso_now)" "$_ma_outcome" "$_ma_n" "$_ma_b" "$_ma_note" \
+    >> "$WM/METRICS.tsv"
+}
+
+in_flight_owned_paths() {
+  [ -f "$WM/slice-in-flight" ] || return 0
+  [ -f slices.tsv ] || return 0
+  _ifo_sid=$(kv_get "$WM/slice-in-flight" id)
+  [ -n "$_ifo_sid" ] || return 0
+  _ifo_cell=$(awk -F '\t' -v id="$_ifo_sid" '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        c = trim($i)
+        if (c == "id") hid = i
+        if (c == "owned_paths" || c == "owned") ho = i
+      }
+      next
+    }
+    hid && ho && trim($hid) == id { print $ho; exit }
+  ' slices.tsv)
+  [ -n "$_ifo_cell" ] || return 0
+  split_csv_paths "$_ifo_cell"
+}
+
+path_is_maker_meta() {
+  case $1 in
+    .wm|.wm/*|reviews|reviews/*|architecture|architecture/*) return 0 ;;
+    MAP.md|SPEC.md|slices.tsv|LESSONS.md|INTENT.md|REPO.md|RESEARCH.md|QUESTIONS.md|ANSWERS.md) return 0 ;;
+  esac
+  return 1
+}
+
+check_maker_build_owned() {
+  _cmo_pre=$1
+  [ -n "$_cmo_pre" ] || return 0
+  git rev-parse --verify "$_cmo_pre" >/dev/null 2>&1 || return 0
+  _cmo_owned=$(owned_paths)
+  _cmo_slice=$(in_flight_owned_paths)
+  if [ -n "$_cmo_slice" ]; then
+    _cmo_owned=$(printf '%s\n%s\n' "$_cmo_owned" "$_cmo_slice")
+  fi
+  _cmo_diff=$(git diff --name-only "$_cmo_pre"..HEAD 2>/dev/null || true)
+  [ -n "$_cmo_diff" ] || return 0
+  while IFS= read -r _cmo_p || [ -n "$_cmo_p" ]; do
+    [ -n "$_cmo_p" ] || continue
+    if path_in_list "$_cmo_p" "$_cmo_owned"; then
+      continue
+    fi
+    if path_is_maker_meta "$_cmo_p"; then
+      continue
+    fi
+    die "unowned path in maker-build"
+  done <<EOF
+$_cmo_diff
+EOF
+}
+
+check_falsifier_tautology() {
+  [ -f "$WM/FALSIFIER" ] || return 0
+  _cft=$(awk 'NF{print; exit}' "$WM/FALSIFIER")
+  _cft=$(printf '%s\n' "$_cft" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }')
+  case $_cft in
+    true|:|'exit 0') die "tautological falsifier" ;;
+  esac
+}
+
+backlog_set_status() {
+  _bs_id=$1
+  _bs_st=$2
+  [ -f BACKLOG.tsv ] || return 0
+  [ -n "$_bs_id" ] && [ -n "$_bs_st" ] || return 0
+  _bs_tmp="$WM/.BACKLOG.tsv.$$"
+  ensure_wm
+  awk -F '\t' -v id="$_bs_id" -v st="$_bs_st" 'BEGIN { OFS="\t" }
+    NR == 1 { print; next }
+    $1 == id { $5 = st }
+    { print }
+  ' BACKLOG.tsv > "$_bs_tmp"
+  mv "$_bs_tmp" BACKLOG.tsv
+}
+
+# go --next: one READY row → IDEA.md. One map in flight.
+go_consume_backlog() {
+  [ -f BACKLOG.tsv ] || die "BACKLOG.tsv missing"
+  _gn_hdr=$(awk 'NR==1 { print; exit }' BACKLOG.tsv)
+  [ "$_gn_hdr" = "id	size	risk	idea_path	status" ] || die "BACKLOG.tsv header"
+  _gn_line=$(awk -F '\t' 'NR>1 && $5=="READY" && $1!="" { print; exit }' BACKLOG.tsv)
+  [ -n "$_gn_line" ] || die "no READY backlog row"
+  _gn_id=$(printf '%s\n' "$_gn_line" | awk -F '\t' '{ print $1 }')
+  _gn_path=$(printf '%s\n' "$_gn_line" | awk -F '\t' '{ print $4 }')
+  [ -n "$_gn_id" ] && [ -n "$_gn_path" ] || die "READY backlog row incomplete"
+  case $_gn_path in
+    -*) die "idea path must not start with -" ;;
+  esac
+  [ -f "$_gn_path" ] && [ -r "$_gn_path" ] || die "idea_path missing"
+  if [ -f MAP.md ]; then
+    if ! closed_is_closeable; then
+      die "finish current map first"
+    fi
+    _gn_prev=$(awk -F '\t' 'NR>1 && $5=="INFLIGHT" { print $1; exit }' BACKLOG.tsv)
+    [ -n "$_gn_prev" ] || _gn_prev=prior
+    mkdir -p "history/maps/$_gn_prev"
+    for _gn_f in MAP.md slices.tsv SPEC.md; do
+      if [ -f "$_gn_f" ]; then
+        mv "$_gn_f" "history/maps/$_gn_prev/"
+      fi
+    done
+    if [ "$_gn_prev" != prior ]; then
+      backlog_set_status "$_gn_prev" CLOSED
+    fi
+    reset_brick
+  fi
+  cp "$_gn_path" ./IDEA.md
+  backlog_set_status "$_gn_id" INFLIGHT
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
@@ -641,11 +806,13 @@ write_brief() {
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. WORD PASS also requires reviews/review.md with ## Code and ## Testing. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
-        if research_skill_present && [ ! -f RESEARCH.md ]; then
+        if repo_needs_scout; then
+          printf 'Write REPO.md (layout, test command, CI, modules, hotspots). Do not write SPEC.md, MAP.md, or INTENT.md. Do not implement product. Do not stamp PASS or CLOSED PASS. Do not write MAP-ACCEPT or FALSIFIER.\n'
+        elif research_skill_present && [ ! -f RESEARCH.md ]; then
           printf 'Read IDEA.md. Write RESEARCH.md only (stack survey, constraints, non-goals, competitors if known). Do not write SPEC.md or MAP.md yet. Do not implement product. Do not write MAP-ACCEPT, CLOSED PASS, or FALSIFIER. Do not use live tokens or passwords.\n'
         else
-          printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
-          printf 'When specified, write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT.\n' "$_wb_agent"
+          printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product. Do not stamp PASS.\n'
+          printf 'When specified, write INTENT.md with ## User, ## Job, and ## Non-goals; SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH); architecture/modules.md TSV; and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT. Do not stamp PASS.\n' "$_wb_agent"
         fi
         ;;
       scout)
@@ -1388,6 +1555,7 @@ cmd_check_map_word() {
 
 cmd_map_ready() {
   [ -f MAP.md ] || die "MAP.md missing"
+  [ -f INTENT.md ] || die "INTENT.md missing"
   _mr_mapper=$(mapper_id)
   [ -n "$_mr_mapper" ] || die "mapper id not recorded"
   cmd_check_module_fit
@@ -1484,6 +1652,7 @@ cmd_built() {
     printf 'no-commit\n' > "$WM/built.reason"
     die "work id did not change after build — maker must commit"
   fi
+  check_maker_build_owned "$_bu_pre"
   printf 'ok\n' > "$WM/built.status"
   rm -f "$WM/built.reason"
   write_last_maker_run "$(date +%s).$$" maker-build "$(date +%s)"
@@ -1682,6 +1851,7 @@ cmd_close() {
     [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || die "PASS path requires green.status=ok"
     printf 'CLOSED PASS\n' > "$WM/CLOSED"
     say "CLOSED PASS"
+    metrics_append "CLOSED PASS" -
     if close_append_lesson "$_cl_lesson"; then
       return 0
     fi
@@ -1690,6 +1860,7 @@ cmd_close() {
   if [ "$_cl_nobuild" -eq 1 ]; then
     printf 'CLOSED NO-BUILD\n' > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
+    metrics_append "CLOSED NO-BUILD" -
     if close_append_lesson "$_cl_lesson"; then
       return 0
     fi
@@ -1797,6 +1968,10 @@ cmd_next() {
     fi
   fi
   if [ ! -f SPEC.md ] || ! spec_ok; then
+    if repo_needs_scout && role_has_cli specifier; then
+      say "NEXT REPO"
+      return 0
+    fi
     if research_skill_present && role_has_cli specifier && [ ! -f RESEARCH.md ]; then
       say "NEXT RESEARCH"
       return 0
@@ -2025,7 +2200,11 @@ cmd_run() {
   if [ "$_ru_role" = maker-falsify ]; then
     [ -f "$WM/FALSIFIER" ] || die "maker-falsify did not write FALSIFIER"
     check_falsifier_meta
+    check_falsifier_tautology
     check_falsifier_test_entrypoint
+  fi
+  if [ "$_ru_role" = maker-build ] && [ -f "$WM/pre-build-wid" ]; then
+    check_maker_build_owned "$(cat "$WM/pre-build-wid")"
   fi
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
     _ru_ret="$WM/return/${_ru_agent}.md"
@@ -2060,6 +2239,13 @@ cmd_run() {
   return "$_ru_rc"
 }
 
+loop_halt() {
+  _lh_card=$1
+  metrics_append "$_lh_card" "${_lp_slice:--}"
+  say "$_lh_card"
+  exit 1
+}
+
 cmd_loop() {
   # Foreground walker: consume next until work-level CLOSE / STOP-ASK / ESCALATE.
   # One slice in flight. After a closeable brick, mark that slice CLOSED and
@@ -2081,8 +2267,7 @@ cmd_loop() {
     # LOOP_BOUND = max(40, min(240, 16 + 12*n)) for n data rows in slices.tsv.
     _lp_bound=$(loop_bound)
     if [ "$_lp_i" -gt "$_lp_bound" ]; then
-      say "ESCALATE LOOP_BOUND"
-      exit 1
+      loop_halt "ESCALATE LOOP_BOUND"
     fi
     if closed_is_closeable; then
       _lp_more=$(first_ready_slice)
@@ -2095,57 +2280,60 @@ cmd_loop() {
     _lp_card=$(printf '%s\n' "$_lp_card" | awk 'NF { print; exit }')
     case $_lp_card in
       "NEXT INTAKE"|"NEXT CAST")
-        say "STOP-ASK $_lp_card"
-        exit 1
+        loop_halt "STOP-ASK $_lp_card"
         ;;
-      "NEXT RESEARCH")
+      "NEXT REPO")
         if ! role_has_cli specifier; then
-          say "STOP-ASK NEXT RESEARCH"
-          exit 1
+          loop_halt "STOP-ASK NEXT REPO"
         fi
         say "$_lp_card"
         "$WM_BIN" run specifier || exit 1
         if questions_need_ask; then
-          say "STOP-ASK QUESTIONS"
-          exit 1
+          loop_halt "STOP-ASK QUESTIONS"
+        fi
+        if [ ! -s REPO.md ]; then
+          loop_halt "STOP-ASK REPO incomplete"
+        fi
+        ;;
+      "NEXT RESEARCH")
+        if ! role_has_cli specifier; then
+          loop_halt "STOP-ASK NEXT RESEARCH"
+        fi
+        say "$_lp_card"
+        "$WM_BIN" run specifier || exit 1
+        if questions_need_ask; then
+          loop_halt "STOP-ASK QUESTIONS"
         fi
         if [ ! -s RESEARCH.md ]; then
-          say "STOP-ASK RESEARCH incomplete"
-          exit 1
+          loop_halt "STOP-ASK RESEARCH incomplete"
         fi
         ;;
       "NEXT SPEC")
         if ! role_has_cli specifier; then
-          say "STOP-ASK NEXT SPEC"
-          exit 1
+          loop_halt "STOP-ASK NEXT SPEC"
         fi
         say "$_lp_card"
         "$WM_BIN" run specifier || exit 1
         if questions_need_ask; then
-          say "STOP-ASK QUESTIONS"
-          exit 1
+          loop_halt "STOP-ASK QUESTIONS"
         fi
         if ! spec_ok; then
-          say "STOP-ASK SPEC incomplete"
-          exit 1
+          loop_halt "STOP-ASK SPEC incomplete"
         fi
         ;;
       "NEXT MAP")
         _lp_mw=$(map_word_recorded)
         if [ ! -f MAP.md ] || [ "$_lp_mw" = MAP-REVISE ]; then
           if ! role_has_cli specifier; then
-            say "STOP-ASK NEXT MAP"
-            exit 1
+            loop_halt "STOP-ASK NEXT MAP"
           fi
           say "$_lp_card"
           "$WM_BIN" run specifier || exit 1
           if questions_need_ask; then
-            say "STOP-ASK QUESTIONS"
-            exit 1
+            loop_halt "STOP-ASK QUESTIONS"
           fi
           if [ ! -f MAP.md ]; then
-            say "STOP-ASK NEXT MAP"
-            exit 1
+            loop_halt "STOP-ASK NEXT MAP"
           fi
         else
           say "$_lp_card"
@@ -2155,8 +2343,7 @@ cmd_loop() {
         _lp_mw=$(map_word_recorded)
         if [ -z "$_lp_mw" ] || [ "$_lp_mw" = MAP-REVISE ]; then
           if ! role_has_cli scout; then
-            say "STOP-ASK NEXT MAP"
-            exit 1
+            loop_halt "STOP-ASK NEXT MAP"
           fi
           "$WM_BIN" run scout || exit 1
           _lp_scout=$(panel_agent scout)
@@ -2165,28 +2352,24 @@ cmd_loop() {
         ;;
       "NEXT SLICE "*)
         _lp_sid=${_lp_card#NEXT SLICE }
-        [ -n "$_lp_sid" ] || { say "STOP-ASK NEXT SLICE"; exit 1; }
+        [ -n "$_lp_sid" ] || loop_halt "STOP-ASK NEXT SLICE"
         if [ -n "$_lp_slice" ] && [ "$_lp_slice" != "$_lp_sid" ]; then
-          say "STOP-ASK one slice in flight ($_lp_slice)"
-          exit 1
+          loop_halt "STOP-ASK one slice in flight ($_lp_slice)"
         fi
         say "$_lp_card"
         _lp_slice=$_lp_sid
         ensure_wm
         printf 'id: %s\n' "$_lp_sid" > "$WM/slice-in-flight"
         if [ ! -f SPEC.md ]; then
-          say "STOP-ASK SPEC incomplete"
-          exit 1
+          loop_halt "STOP-ASK SPEC incomplete"
         fi
         "$WM_BIN" record-pre-falsify || exit 1
         ;;
       STOP-ASK|STOP-ASK*)
-        say "$_lp_card"
-        exit 1
+        loop_halt "$_lp_card"
         ;;
       ESCALATE*)
-        say "$_lp_card"
-        exit 1
+        loop_halt "$_lp_card"
         ;;
       "NEXT RECORD PRE-FALSIFY")
         "$WM_BIN" record-pre-falsify || exit 1
@@ -2203,9 +2386,9 @@ cmd_loop() {
           _lp_n2=$("$WM_BIN" next) || true
           _lp_n2=$(printf '%s\n' "$_lp_n2" | awk 'NF { print; exit }')
           case $_lp_n2 in
-            ESCALATE*) say "$_lp_n2"; exit 1 ;;
-            STOP-ASK*) say "$_lp_n2"; exit 1 ;;
-            *) say "STOP-ASK red refused"; exit 1 ;;
+            ESCALATE*) loop_halt "$_lp_n2" ;;
+            STOP-ASK*) loop_halt "$_lp_n2" ;;
+            *) loop_halt "STOP-ASK red refused" ;;
           esac
         fi
         ;;
@@ -2218,8 +2401,7 @@ cmd_loop() {
           _lp_rfc=$((_lp_rfc + 1))
           printf '%s\n' "$_lp_rfc" > "$WM/review-fail-count"
           if [ "$_lp_rfc" -ge 2 ]; then
-            say "ESCALATE REVIEW_FAIL"
-            exit 1
+            loop_halt "ESCALATE REVIEW_FAIL"
           fi
           rm -f "$WM/green.status" "$WM/built.status"
         fi
@@ -2244,8 +2426,7 @@ cmd_loop() {
         fi
         "$WM_BIN" close "$_lp_lesson" || exit 1
         if arch_fence_active; then
-          say "STOP-ASK ARCH"
-          exit 1
+          loop_halt "STOP-ASK ARCH"
         fi
         if [ -n "$_lp_slice" ]; then
           mark_slice_status "$_lp_slice" CLOSED
@@ -2268,16 +2449,13 @@ cmd_loop() {
             exit 0
           fi
         fi
-        say "STOP-ASK DONE without closeable CLOSED"
-        exit 1
+        loop_halt "STOP-ASK DONE without closeable CLOSED"
         ;;
       INDEPENDENCE_UNAVAILABLE*)
-        say "$_lp_card"
-        exit 1
+        loop_halt "$_lp_card"
         ;;
       *)
-        say "STOP-ASK unknown next card: $_lp_card"
-        exit 1
+        loop_halt "STOP-ASK unknown next card: $_lp_card"
         ;;
     esac
   done

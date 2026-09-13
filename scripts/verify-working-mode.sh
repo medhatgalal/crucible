@@ -258,7 +258,7 @@ write_loop_maker_nobuild() {
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'true\n' > .wm/FALSIFIER
+printf 'test -f IDEA.md\n' > .wm/FALSIFIER
 if command -v sha256sum >/dev/null 2>&1; then
   h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
 elif command -v shasum >/dev/null 2>&1; then
@@ -672,7 +672,7 @@ grep -q '^no-build$' .wm/red.status 2>/dev/null && bad 'missing product must not
 
 setup_repo t02-red-nobuild
 "$WM" record-pre-falsify >/dev/null
-write_falsifier 'true' alice
+write_falsifier 'test -f IDEA.md' alice
 commit_msg 'falsify already-green no product change'
 set +e
 "$WM" red >"$OUT" 2>"$ERR"
@@ -689,7 +689,7 @@ grep -q 'early-implement' .wm/red.status 2>/dev/null && bad 'already-green clean
 # ---------------------------------------------------------------------------
 setup_repo t03-early
 "$WM" record-pre-falsify >/dev/null
-write_falsifier 'true' alice
+write_falsifier 'test -f IDEA.md' alice
 printf 'early product\n' > product.txt
 commit_msg 'falsify with product-path change'
 refuses 'red product-path change is early-implement' 'refused:|early implement' "$WM" red
@@ -1181,7 +1181,7 @@ fi
 # (16) ESCALATE EARLY_IMPLEMENT is terminal (no wait)
 setup_repo t16-loop-escalate
 "$WM" record-pre-falsify >/dev/null
-write_falsifier 'true' alice
+write_falsifier 'test -f IDEA.md' alice
 printf 'early product\n' > product.txt
 commit_msg 'loop early product'
 run_wm_loop
@@ -2177,6 +2177,35 @@ if grep -q 'research_skill_present' "$HERE/wm.sh" \
 else
   bad 'wm.sh must define research_skill_present and emit NEXT RESEARCH'
 fi
+if printf '%s\n' "$wb" | grep -q 'INTENT.md'; then
+  ok
+else
+  bad 'specifier brief must mention INTENT.md for the SPEC pass'
+fi
+if printf '%s\n' "$wb" | grep -q 'Write REPO.md'; then
+  ok
+else
+  bad 'specifier brief must mention Write REPO.md for the repo-scout pass'
+fi
+if grep -q 'repo_needs_scout' "$HERE/wm.sh" \
+  && grep -q 'NEXT REPO' "$HERE/wm.sh"; then
+  ok
+else
+  bad 'wm.sh must define repo_needs_scout and emit NEXT REPO'
+fi
+if grep -q 'go_consume_backlog' "$HERE/wm.sh" \
+  && grep -q 'go --next' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm.sh/wm-go.sh must implement go --next backlog consume'
+fi
+if grep -q 'unowned path in maker-build' "$HERE/wm.sh" \
+  && grep -q 'tautological falsifier' "$HERE/wm.sh" \
+  && grep -q 'METRICS.tsv' "$HERE/wm.sh"; then
+  ok
+else
+  bad 'wm.sh must CHECK owned maker-build diff, tautological falsifier, METRICS.tsv'
+fi
 
 # No research skill → NEXT SPEC (battery is optional).
 setup_idea_only t-no-research-battery
@@ -2223,6 +2252,12 @@ if [ -f SPEC.md ] && grep -qi hello SPEC.md; then
   ok
 else
   bad "hello specifier wanted SPEC.md with hello, got $(cat SPEC.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -f INTENT.md ] && grep -q '## User' INTENT.md \
+  && grep -q '## Job' INTENT.md && grep -q '## Non-goals' INTENT.md; then
+  ok
+else
+  bad "hello specifier SPEC pass wanted INTENT.md headings, got $(cat INTENT.md 2>/dev/null || echo ABSENT)"
 fi
 if [ -f MAP.md ] && grep -q 'product/hello.txt' MAP.md; then
   ok
@@ -2371,8 +2406,15 @@ else
   bad "unattended greet product/hello.txt wanted hello, got $(cat product/hello.txt 2>/dev/null || echo ABSENT)"
 fi
 [ -s RESEARCH.md ] && ok || bad 'unattended greet missing RESEARCH.md from first specifier pass'
+[ -f INTENT.md ] && grep -q '## User' INTENT.md \
+  && ok || bad 'unattended greet missing INTENT.md from SPEC pass'
 [ -f SPEC.md ] && grep -q '^MAKER-WRITES$' SPEC.md \
   && ok || bad 'unattended greet specifier did not leave spec_ok SPEC.md'
+if [ -f .wm/METRICS.tsv ] && grep -E -q 'CLOSED PASS|CLOSED NO-BUILD' .wm/METRICS.tsv; then
+  ok
+else
+  bad "unattended greet wanted METRICS.tsv CLOSED PASS/NO-BUILD row, got $(cat .wm/METRICS.tsv 2>/dev/null || echo ABSENT)"
+fi
 [ -f MAP.md ] && grep -q '^MAPPER: eve$' MAP.md \
   && ok || bad 'unattended greet MAP.md wanted MAPPER: eve'
 [ -f architecture/modules.md ] && ok || bad 'unattended greet missing architecture/modules.md'
@@ -2496,7 +2538,7 @@ cat > tools/true-falsify.sh <<'EOF'
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'true\n' > .wm/FALSIFIER
+printf 'test -f product.txt\n' > .wm/FALSIFIER
 if command -v sha256sum >/dev/null 2>&1; then
   h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
 elif command -v shasum >/dev/null 2>&1; then
@@ -2590,6 +2632,192 @@ else
 fi
 rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
 [ "$rfc" = 2 ] && ok || bad "two FAILs review-fail-count wanted 2, got $rfc"
+
+# Q4: tautological FALSIFIER line 1 (true / : / exit 0) refused.
+write_taut_falsify() {
+  cmd=$1
+  mkdir -p tools
+  cat > tools/taut-falsify.sh <<EOF
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf '%s\\n' '$cmd' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=\$(sha256sum .wm/FALSIFIER | awk '{print \$1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=\$(shasum -a 256 .wm/FALSIFIER | awk '{print \$1}')
+else
+  h=\$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print \$NF}')
+fi
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=\$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\\nwork-id: %s\\nsha256: %s\\n' "\$wid" "\$h" > .wm/FALSIFIER.meta
+EOF
+  chmod +x tools/taut-falsify.sh
+}
+
+setup_repo t-q4-taut-true
+write_taut_falsify 'true'
+"$WM" cast maker alice grok './tools/taut-falsify.sh {BRIEF}' >/dev/null
+refuses 'tautological falsifier true' 'tautological falsifier' "$WM" run maker-falsify
+
+setup_repo t-q4-taut-colon
+write_taut_falsify ':'
+"$WM" cast maker alice grok './tools/taut-falsify.sh {BRIEF}' >/dev/null
+refuses 'tautological falsifier colon' 'tautological falsifier' "$WM" run maker-falsify
+
+setup_repo t-q4-taut-exit0
+write_taut_falsify 'exit 0'
+"$WM" cast maker alice grok './tools/taut-falsify.sh {BRIEF}' >/dev/null
+refuses 'tautological falsifier exit 0' 'tautological falsifier' "$WM" run maker-falsify
+
+setup_repo t-q4-taut-true-trim
+write_taut_falsify '  true  '
+"$WM" cast maker alice grok './tools/taut-falsify.sh {BRIEF}' >/dev/null
+refuses 'tautological falsifier trimmed true' 'tautological falsifier' "$WM" run maker-falsify
+
+# Q3: maker-build commit outside owned_paths refused.
+setup_repo t-q3-unowned-diff
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'test -f product.txt' alice
+commit_msg 'q3 falsifier'
+if ! "$WM" red >"$OUT" 2>"$ERR"; then
+  printf 'FIXTURE BROKEN: q3 red\n%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" >&2
+  exit 1
+fi
+mkdir -p tools
+cat > tools/extra-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'built\n' > product.txt
+printf 'nope\n' > extra.txt
+git add product.txt extra.txt
+git commit -qm 'maker-build extra'
+EOF
+chmod +x tools/extra-maker.sh
+"$WM" cast maker alice grok './tools/extra-maker.sh {BRIEF}' >/dev/null
+refuses 'unowned extra.txt in maker-build' 'unowned path in maker-build' "$WM" run maker-build
+
+# Q2: existing product tree + repo-scout skill + specifier CLI → NEXT REPO.
+setup_idea_only t-q2-repo-scout
+install_greet_unattended_workers
+mkdir -p skills/repo-scout src
+cp "$HERE/skills/repo-scout/SKILL.md" skills/repo-scout/SKILL.md
+cp "$HERE/skills/repo-scout/CONTRACT.md" skills/repo-scout/CONTRACT.md
+printf 'print("app")\n' > src/app.py
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+commit_msg 'q2 product tree'
+expect 'existing repo next is REPO' 'NEXT REPO' "$WM" next
+set +e
+"$WM" run specifier >"$OUT" 2>"$ERR"
+repo_rc=$?
+set -e
+[ "$repo_rc" -eq 0 ] && ok \
+  || bad "repo-scout specifier exit $repo_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -s REPO.md ]; then
+  ok
+else
+  bad "repo-scout wanted REPO.md, got $(cat REPO.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -f SPEC.md ]; then
+  bad 'repo-scout pass must not write SPEC.md'
+else
+  ok
+fi
+expect 'after REPO.md next is RESEARCH' 'NEXT RESEARCH' "$WM" next
+
+# Q2 greenfield / hello tree with repo-scout skill still skips REPO (no product files).
+setup_idea_only t-q2-greenfield-skip
+install_greet_unattended_workers
+mkdir -p skills/repo-scout
+cp "$HERE/skills/repo-scout/SKILL.md" skills/repo-scout/SKILL.md
+cp "$HERE/skills/repo-scout/CONTRACT.md" skills/repo-scout/CONTRACT.md
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+commit_msg 'q2 greenfield'
+card=$("$WM" next)
+printf '%s\n' "$card" | grep -q 'NEXT REPO' \
+  && bad "greenfield hello tree must skip NEXT REPO, got $card" \
+  || ok
+printf '%s\n' "$card" | grep -q 'NEXT RESEARCH' \
+  && ok || bad "greenfield hello tree wanted NEXT RESEARCH, got $card"
+
+# Q1: go --next copies READY idea; second --next refused until close.
+setup_idea_only t-q1-go-next
+printf 'first backlog idea\n' > idea1.md
+printf 'second backlog idea\n' > idea2.md
+printf 'id\tsize\trisk\tidea_path\tstatus\n' > BACKLOG.tsv
+printf 'b1\tsmall\tLOW\tidea1.md\tREADY\n' >> BACKLOG.tsv
+printf 'b2\tsmall\tLOW\tidea2.md\tREADY\n' >> BACKLOG.tsv
+commit_msg 'q1 backlog'
+set +e
+(
+  PATH=/usr/bin:/bin
+  export PATH
+  "$WM" go --next
+) >"$OUT" 2>"$ERR"
+gn_rc=$?
+set -e
+[ "$gn_rc" -ne 0 ] && ok || bad "go --next without specifier must not CLOSED PASS"
+if grep -q 'first backlog idea' IDEA.md; then
+  ok
+else
+  bad "go --next must copy idea1.md onto IDEA.md, got $(cat IDEA.md)"
+fi
+b1st=$(awk -F '\t' '$1=="b1"{print $5; exit}' BACKLOG.tsv)
+[ "$b1st" = INFLIGHT ] && ok || bad "go --next wanted b1 INFLIGHT, got $b1st"
+printf 'MAPPER: eve\n' > MAP.md
+set +e
+(
+  PATH=/usr/bin:/bin
+  export PATH
+  "$WM" go --next
+) >"$OUT" 2>"$ERR"
+gn2_rc=$?
+set -e
+[ "$gn2_rc" -ne 0 ] && ok || bad 'second go --next with open MAP.md must be nonzero'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'finish current map first' \
+  && ok || bad "second go --next wanted finish current map first, got out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'second backlog idea' IDEA.md; then
+  bad 'second go --next must not copy idea2 while MAP.md is open'
+else
+  ok
+fi
+
+# Q1 after CLOSED: archive map and copy the next READY idea.
+setup_idea_only t-q1-go-next-after-closed
+install_greet_unattended_workers
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout.sh {BRIEF}' >/dev/null
+"$WM" cast maker carol grok './tools/maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/reviewer.sh {BRIEF}' >/dev/null
+commit_msg 'q1 after-closed workers'
+run_wm_loop
+assert_loop_foreground 't-q1-go-next-after-closed'
+[ "$LOOP_RC" -eq 0 ] && ok \
+  || bad "q1 first map loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+printf 'build me a saas webapp\n' > idea-next.md
+printf 'id\tsize\trisk\tidea_path\tstatus\n' > BACKLOG.tsv
+printf 'b1\tsmall\tLOW\tidea-next.md\tINFLIGHT\n' >> BACKLOG.tsv
+printf 'b2\tsmall\tLOW\tidea-next.md\tREADY\n' >> BACKLOG.tsv
+set +e
+"$WM" go --next >"$OUT" 2>"$ERR"
+gn3_rc=$?
+set -e
+[ "$gn3_rc" -ne 0 ] && ok || bad 'go --next after CLOSED on saas idea must STOP-ASK'
+if grep -q saas IDEA.md; then
+  ok
+else
+  bad "go --next after CLOSED must copy idea-next.md, got $(cat IDEA.md)"
+fi
+if [ -f history/maps/b1/MAP.md ] && [ -f history/maps/b1/SPEC.md ]; then
+  ok
+else
+  bad 'go --next after CLOSED must archive MAP.md and SPEC.md under history/maps/b1/'
+fi
+b2st=$(awk -F '\t' '$1=="b2"{print $5; exit}' BACKLOG.tsv)
+[ "$b2st" = INFLIGHT ] && ok || bad "go --next after CLOSED wanted b2 INFLIGHT, got $b2st"
 
 # Home leak: empty HOME must stay empty (no skills, no LESSONS)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)

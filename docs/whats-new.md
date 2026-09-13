@@ -2,6 +2,14 @@
 
 Release history stays in `CHANGELOG.md`. This page travels with installed programs and records limits operators still need to account for.
 
+## 1.9.0 — factory plants
+
+`go --next` drains `BACKLOG.tsv` one map at a time. Optional `REPO.md`
+inventory before SPEC. Maker-build diff must stay in `owned_paths`.
+Tautological falsifiers (`true` / `:` / `exit 0`) refused. Specifier
+writes `INTENT.md` (map-ready existence CHECK, not CLOSE). `.wm/METRICS.tsv`
+on close / STOP-ASK / ESCALATE. Still opt-in; no auto MAP-HUMAN.
+
 ## 1.8.1 — honesty
 
 Spaced owned paths, live `LOOP_BOUND`, pure `next`, QUESTIONS/`ANSWERS.md`
