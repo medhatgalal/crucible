@@ -5,9 +5,10 @@
 # INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
 # Host auth/config is copied (grok auth.json+config.toml, claude.json+settings.json,
 # codex auth.json+config.toml). Skills/bundled/sessions are not copied.
-# All three auth: four live CLI processes (not architecture-agent.sh /
-# critique-agent.sh), distinct PIDs, LOW map, one wm loop.
-# PATH-stripped arm still exit 1 INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
+# All three auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
+# live CLIs (not architecture-agent.sh / critique-agent.sh); prefer wm go;
+# four distinct PIDs; one go/loop. PATH-stripped still exit 1
+# INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
 # Run from the worktree against an extracted tarball (prefer not as a tarball payload).
 set -eu
 
@@ -44,6 +45,27 @@ if grep -E -q '\./tools/(architecture|critique)-agent\.sh' \
   bad 'live walk must not use architecture-agent.sh / critique-agent.sh as workers'
 else
   ok
+fi
+# F3: walk product is a health-check app, not hello. These greps are the
+# script's own contract; they run before PATH/auth so PATH-stripped still
+# proves the IDEA is not hello, then die_unavail as today.
+# Pattern is split so this CHECK line does not match itself.
+if grep -E -q 'one-file[[:space:]]+hello[[:space:]]+product' \
+  "$HERE/scripts/verify-working-mode-live.sh"; then
+  bad 'live IDEA must not be the hello product'
+else
+  ok
+fi
+if grep -E -q 'HTTP GET /health|tests/test_health' \
+  "$HERE/scripts/verify-working-mode-live.sh"; then
+  ok
+else
+  bad 'live IDEA must be a health-check app'
+fi
+if grep -F -q '"$WM" go' "$HERE/scripts/verify-working-mode-live.sh"; then
+  ok
+else
+  bad 'live walk must prefer wm go when present'
 fi
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 command -v tar >/dev/null 2>&1 && ok || bad 'tar required'
@@ -300,122 +322,138 @@ if [ -n "$AD" ] && [ -f "$AD/.crucible/work/wm.sh" ]; then
   CDPATH=
   cd "$AD"
 
-  mkdir -p product architecture tools reviews
+  mkdir -p architecture tools reviews tests
 
-  printf 'an idea: one-file hello product\n' > IDEA.md
+  cat > IDEA.md <<'EOF'
+# IDEA
 
-  cat > architecture/modules.md <<'EOF'
-module_id	root_path	public_contracts	test_entrypoint	pattern_instance	live_write
-product	product	product/hello.txt	product/hello.txt	product/.keep	no
-EOF
-  printf 'keep\n' > product/.keep
+Local health-check app (not a hello-world product).
 
-  cat > SPEC.md <<'EOF'
-## Goal
-one file product/hello.txt contains exactly the word hello
-## Non-goals
-network, extra modules, live systems
-## Owned files
-- product/hello.txt
-## Test files
-- product/hello.txt
-## Acceptance criteria
-- product/hello.txt exists
-- the file contains exactly one line: hello
-## Focused falsifier
-MAKER-WRITES
-## Stop conditions
-stop-ask on live write
-## Risk
-LOW
-SPEC-AUTHOR: operator
+HTTP GET /health returns 200; pytest/python test in tests/test_health.py.
+
+First user: an operator running that test in this repository.
+First observable artifact: tests/test_health.py exits 0 when GET /health is 200.
+v1 is local-only: Python stdlib, in-process handler (no public bind, no deploy).
+Auth and billing are non-goals. Data: none.
+Risk: LOW. live_write=no. No MAP-HUMAN.
+Out of scope: SaaS, payments, credentials, curl/wget, public network.
 EOF
 
-  cat > tools/WORKER.md <<'EOF'
+  {
+    cat <<'EOF'
 You are a working-mode brick worker in a throwaway git repo. Read the brief
 file passed to you and this card. Do only the role named in the brief.
 Do not push. Do not use the network. Do not write under $HOME. Do not spawn
 subagents. Do not edit wm.sh. Do not write .wm/CLOSED or verdicts if you are
-the maker.
+the maker. Specifier must read IDEA.md. This product is a health-check app.
+Do not own product/hello.txt. Do not implement a hello-world file.
 
-Agent ids: mapper=alice critique=bob maker=carol reviewer=dave.
+Agent ids: specifier=spec0 scout=scout0 maker=make0 reviewer=rev0.
 
-## mapper (agent alice)
-Write MAP.md with exactly these bytes (tabs between columns):
+## specifier (agent spec0)
+If the brief says write RESEARCH.md only, or RESEARCH.md is missing:
+Write RESEARCH.md from IDEA.md (stack survey, constraints, non-goals,
+competitors). Do not write SPEC.md or MAP.md yet. git add RESEARCH.md &&
+git commit -m 'specifier: RESEARCH'. Exit.
 
-MAPPER: alice
+Otherwise read IDEA.md. The idea is HTTP GET /health returns 200 with a
+python test in tests/test_health.py. If underspecified, write QUESTIONS.md
+(at most 7) and stop. When specified, write SPEC.md with required headings
+(Goal, Non-goals, Owned files, Test files, Acceptance criteria, Focused
+falsifier MAKER-WRITES, Stop conditions, Risk LOW). Owned files:
+health/app.py. Test files: tests/test_health.py. Do not author the
+falsifier command (MAKER-WRITES only).
 
-id	module	owned_paths	depends_on	risk
-s1	product	product/hello.txt	-	LOW
+Write architecture/modules.md as tab-separated bytes:
+EOF
+    printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n'
+    printf 'health\thealth\thealth/app.py\ttests/test_health.py\thealth/app.py\tno\n'
+    cat <<'EOF'
 
-Then run: .wm/bin/wm record-mapper --from MAP.md
-Do not implement the product. Do not be the maker.
+Write MAP.md starting with MAPPER: spec0 then a blank line then tab-separated:
+EOF
+    printf 'id\tmodule\towned_paths\tdepends_on\trisk\n'
+    printf 's1\thealth\thealth/app.py\t-\tLOW\n'
+    cat <<'EOF'
+git add SPEC.md architecture/modules.md MAP.md && git commit -m 'specifier: SPEC MAP modules'
+Do not implement the product. Do not write MAP-ACCEPT. Do not be the maker.
 
-## critique (agent bob)
+## scout (agent scout0)
 Write reviews/critique.md with Invert, Adversarial, and Simple sections.
-Write .wm/return/bob.md with:
+Write .wm/return/scout0.md with:
 WORD: MAP-ACCEPT
-AGENT: bob
+AGENT: scout0
 MAP: MAP.md
-Then run: .wm/bin/wm check-map-word .wm/return/bob.md
-Do not be the mapper or maker.
+Then run: .wm/bin/wm check-map-word .wm/return/scout0.md
+Do not author MAP.md. Do not be the specifier or maker.
 
-## maker-falsify (agent carol)
-Do not create or edit product/hello.txt.
+## maker-falsify (agent make0)
+Do not create health/app.py yet.
 Write exactly one line to .wm/FALSIFIER:
-grep -qx hello product/hello.txt
+python3 tests/test_health.py
+The command must include the test_entrypoint path tests/test_health.py.
+Do not use curl or wget.
 Meta: compute sha256 of .wm/FALSIFIER (shasum -a 256 or sha256sum).
 Write .wm/FALSIFIER.meta as three lines:
-agent: carol
+agent: make0
 work-id: <git rev-parse --short=12 HEAD>
 sha256: <hex digest of .wm/FALSIFIER>
 Then: git add .wm/FALSIFIER .wm/FALSIFIER.meta && git commit -m 'maker-falsify s1'
 Do not implement the product. Do not write .wm/return or reviews.
 
-## maker-build (agent carol)
-Write product/hello.txt containing exactly the word hello (printf 'hello\n').
-git add product/hello.txt && git commit -m 'maker-build s1'
-Do not write verdicts, CLOSED, or return files.
+## maker-build (agent make0)
+Implement a stdlib in-process GET /health -> 200 handler (no live bind).
+Write health/app.py (handle GET /health returns 200) and tests/test_health.py
+(stdlib unittest; python3 tests/test_health.py exits 0). Optional empty
+health/__init__.py. git add those files && git commit -m 'maker-build s1'
+Do not write verdicts, CLOSED, or return files. Do not use pip.
 
-## reviewer (agent dave)
+## reviewer (agent rev0)
 Re-run the named falsifier. Capture the evidence path:
 cmd=$(sed -n '1p' .wm/FALSIFIER)
-ev=$(.wm/bin/wm evidence dave -- sh -c "$cmd")
+ev=$(.wm/bin/wm evidence rev0 -- sh -c "$cmd")
 Write reviews/review.md with ## Code and ## Testing (short is fine).
-Write .wm/return/dave.md with:
+Write .wm/return/rev0.md with:
 WORD: PASS
 EVIDENCE: <exact path printed by wm evidence>
 If the falsifier failed, use WORD: FAIL with the same EVIDENCE line.
 Append one line to .wm/reviewer-reran: reran <cmd>
 Do not edit product files. Do not be the maker.
 EOF
+  } > tools/WORKER.md
 
-  cat > tools/live-mapper.sh <<'EOF'
+  cat > tools/live-specifier.sh <<'EOF'
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'pid %s\n' "$$" > .wm/mapper-pid
-printf 'ran\n' > .wm/mapper-ran
+printf 'pid %s\n' "$$" > .wm/specifier-pid
+printf 'ran\n' > .wm/specifier-ran
+brief=${1:-${BRIEF:-}}
+[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-specifier: brief missing\n' >&2; exit 1; }
 [ -n "${GROK_BIN:-}" ] || GROK_BIN=$(command -v grok)
-prompt=.wm/live-mapper.prompt
+prompt=.wm/live-specifier.prompt
 {
-  printf 'role: mapper\nagent: alice\n'
+  cat "$brief"
+  printf '\n'
   cat tools/WORKER.md
 } > "$prompt"
 exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 30 --prompt-file "$prompt"
+  --output-format plain --max-turns 40 --prompt-file "$prompt"
 EOF
 
-  cat > tools/live-critique.sh <<'EOF'
+  cat > tools/live-scout.sh <<'EOF'
 #!/bin/sh
 set -eu
 mkdir -p .wm
-printf 'pid %s\n' "$$" > .wm/critique-pid
-printf 'ran\n' > .wm/critique-ran
+printf 'pid %s\n' "$$" > .wm/scout-pid
+printf 'ran\n' > .wm/scout-ran
+brief=${1:-${BRIEF:-}}
+[ -n "$brief" ] && [ -f "$brief" ] || { printf 'live-scout: brief missing\n' >&2; exit 1; }
 [ -n "${CLAUDE_BIN:-}" ] || CLAUDE_BIN=$(command -v claude)
-prompt=.wm/live-critique.prompt
+prompt=.wm/live-scout.prompt
 {
-  printf 'role: critique\nagent: bob\n'
+  cat "$brief"
+  printf '\n'
   cat tools/WORKER.md
 } > "$prompt"
 exec "$CLAUDE_BIN" -p --output-format text --permission-mode dontAsk \
@@ -437,7 +475,7 @@ prompt=.wm/live-maker.prompt
   cat tools/WORKER.md
 } > "$prompt"
 exec "$GROK_BIN" --always-approve --no-subagents --disable-web-search \
-  --output-format plain --max-turns 30 --prompt-file "$prompt"
+  --output-format plain --max-turns 40 --prompt-file "$prompt"
 EOF
 
   cat > tools/live-reviewer.sh <<'EOF'
@@ -457,7 +495,7 @@ prompt=.wm/live-reviewer.prompt
 exec "$CODEX_BIN" exec --dangerously-bypass-approvals-and-sandbox - < "$prompt"
 EOF
 
-  chmod +x tools/live-mapper.sh tools/live-critique.sh \
+  chmod +x tools/live-specifier.sh tools/live-scout.sh \
     tools/live-maker.sh tools/live-reviewer.sh
 
   if ! "$WM" init >"$OUT" 2>"$ERR"; then
@@ -467,79 +505,72 @@ EOF
   fi
   "$WM" cast coordinator parent grok - >/dev/null 2>"$ERR" || true
 
-  if ./tools/live-mapper.sh >"$OUT" 2>"$ERR"; then
+  if "$WM" cast specifier spec0 grok './tools/live-specifier.sh {BRIEF}' \
+    >"$OUT" 2>"$ERR"; then
     ok
   else
-    bad "live mapper refused: $(cat "$OUT") $(cat "$ERR")"
+    bad "cast specifier refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  [ -f MAP.md ] && grep -q '^s1	product	product/hello.txt	-	LOW$' MAP.md \
-    && ok || bad 'live mapper did not write LOW one-slice MAP.md'
-  [ -f .wm/mapper-ran ] && ok || bad 'mapper process did not run'
-
-  if "$WM" map-ready >"$OUT" 2>"$ERR"; then
+  if "$WM" cast scout scout0 claude './tools/live-scout.sh {BRIEF}' \
+    >"$OUT" 2>"$ERR"; then
     ok
   else
-    bad "map-ready refused: $(cat "$OUT") $(cat "$ERR")"
+    bad "cast scout refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  [ -f slices.tsv ] && ok || bad 'map-ready did not write slices.tsv'
-
-  if ./tools/live-critique.sh >"$OUT" 2>"$ERR"; then
-    ok
-  else
-    bad "live critique refused: $(cat "$OUT") $(cat "$ERR")"
-  fi
-  [ -f .wm/critique-ran ] && ok || bad 'critique process did not run'
-  if "$WM" map-verdict .wm/return/bob.md >"$OUT" 2>"$ERR"; then
-    grep -q 'MAP-ACCEPT' "$OUT" && ok || bad "map-verdict wanted MAP-ACCEPT, got $(cat "$OUT")"
-  else
-    bad "map-verdict refused: $(cat "$OUT") $(cat "$ERR")"
-  fi
-
-  if "$WM" cast maker carol grok './tools/live-maker.sh {BRIEF}' >"$OUT" 2>"$ERR"; then
+  if "$WM" cast maker make0 grok './tools/live-maker.sh {BRIEF}' \
+    >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast maker refused: $(cat "$OUT") $(cat "$ERR")"
   fi
-  if "$WM" cast reviewer dave codex './tools/live-reviewer.sh {BRIEF}' >"$OUT" 2>"$ERR"; then
+  if "$WM" cast reviewer rev0 codex './tools/live-reviewer.sh {BRIEF}' \
+    >"$OUT" 2>"$ERR"; then
     ok
   else
     bad "cast reviewer refused: $(cat "$OUT") $(cat "$ERR")"
   fi
 
-  mapper=$(awk -F ': ' '$1=="id"{print $2; exit}' .wm/mapper)
-  [ "$mapper" = alice ] && ok || bad "mapper id wanted alice, got $mapper"
-  [ "$mapper" != carol ] && ok || bad 'mapper is maker (alice==carol)'
-  [ "$mapper" != bob ] && ok || bad 'mapper is critique'
-  if [ -f .wm/mapper-pid ] && [ -f .wm/critique-pid ]; then
-    mp=$(awk '{print $2}' .wm/mapper-pid)
-    cp=$(awk '{print $2}' .wm/critique-pid)
-    [ "$mp" != "$cp" ] && ok || bad "mapper pid equals critique pid ($mp)"
-  else
-    bad 'mapper/critique pids missing'
-  fi
+  spec_id=$(awk -F '\t' '$1=="specifier"{print $2; exit}' .wm/PANEL.tsv)
+  make_id=$(awk -F '\t' '$1=="maker"{print $2; exit}' .wm/PANEL.tsv)
+  scout_id=$(awk -F '\t' '$1=="scout"{print $2; exit}' .wm/PANEL.tsv)
+  rev_id=$(awk -F '\t' '$1=="reviewer"{print $2; exit}' .wm/PANEL.tsv)
+  [ "$spec_id" = spec0 ] && ok || bad "specifier id wanted spec0, got $spec_id"
+  [ "$scout_id" = scout0 ] && ok || bad "scout id wanted scout0, got $scout_id"
+  [ "$make_id" = make0 ] && ok || bad "maker id wanted make0, got $make_id"
+  [ "$rev_id" = rev0 ] && ok || bad "reviewer id wanted rev0, got $rev_id"
+  [ "$spec_id" != "$make_id" ] && ok || bad 'specifier is maker'
+  [ "$make_id" != "$rev_id" ] && ok || bad 'maker is reviewer'
 
   git add -A
-  if git -c user.email=wm@local -c user.name=working-mode commit -qm 'live LOW map+spec+workers'; then
+  if git -c user.email=wm@local -c user.name=working-mode \
+    commit -qm 'live health-check IDEA+workers'; then
     ok
   else
-    bad 'fixture commit of map/spec/workers refused'
+    bad 'fixture commit of IDEA/workers refused'
   fi
 
   printf 'NONE\n' > .wm/lesson
 
-  card=$("$WM" next 2>"$ERR") || {
-    bad "wm next before walk refused: $(cat "$ERR")"
-    card=
-  }
-  printf '%s\n' "$card" | grep -E -q '^NEXT SLICE s1$' \
-    && ok || bad "walk next wanted NEXT SLICE s1, got $card"
-
   set +e
-  "$WM" loop >"$OUT" 2>"$ERR"
-  LOOP_RC=$?
+  if [ -f "$(dirname "$WM")/wm-go.sh" ]; then
+    "$WM" go >"$OUT" 2>"$ERR"
+    LOOP_RC=$?
+    walk_kind=go
+  else
+    "$WM" loop >"$OUT" 2>"$ERR"
+    LOOP_RC=$?
+    walk_kind=loop
+  fi
   set -e
+  leftover=0
   if pgrep -f "$WM loop" >/dev/null 2>&1; then
-    bad "leftover wm.sh loop process"
+    leftover=1
+  fi
+  if pgrep -f "$WM go" >/dev/null 2>&1; then
+    leftover=1
+  fi
+  if [ "$leftover" -eq 1 ]; then
+    bad "leftover wm.sh loop/go process"
   else
     ok
   fi
@@ -552,25 +583,29 @@ EOF
     && grep -Eq 'CLOSED (PASS|NO-BUILD)' .wm/CLOSED; then
     ok
   else
-    bad "one wm loop wanted CLOSED PASS or CLOSED NO-BUILD rc=0, got rc=$LOOP_RC closed=$closed_word out=$(cat "$OUT") err=$(cat "$ERR") worker.err=$(cat .wm/worker.err 2>/dev/null || true)"
+    bad "one wm $walk_kind wanted CLOSED PASS or CLOSED NO-BUILD rc=0, got rc=$LOOP_RC closed=$closed_word out=$(cat "$OUT") err=$(cat "$ERR") worker.err=$(cat .wm/worker.err 2>/dev/null || true)"
   fi
 
-  [ -f .wm/reviewer-ran ] && ok || bad "reviewer CLI not exec'd"
+  [ -f .wm/specifier-ran ] && ok || bad "specifier CLI not exec'd"
+  [ -f .wm/scout-ran ] && ok || bad "scout CLI not exec'd"
   [ -f .wm/maker-ran ] && ok || bad "maker process did not run"
+  [ -f .wm/reviewer-ran ] && ok || bad "reviewer CLI not exec'd"
+  [ -f .wm/specifier-pid ] && ok || bad "specifier pid missing"
+  [ -f .wm/scout-pid ] && ok || bad "scout pid missing"
   [ -f .wm/maker-pid ] && ok || bad "maker pid missing"
   [ -f .wm/reviewer-pid ] && ok || bad "reviewer pid missing"
 
-  if [ -f .wm/mapper-pid ] && [ -f .wm/critique-pid ] \
+  if [ -f .wm/specifier-pid ] && [ -f .wm/scout-pid ] \
     && [ -f .wm/maker-pid ] && [ -f .wm/reviewer-pid ]; then
-    mp=$(awk '{print $2}' .wm/mapper-pid)
-    cp=$(awk '{print $2}' .wm/critique-pid)
+    sp=$(awk '{print $2}' .wm/specifier-pid)
+    sc=$(awk '{print $2}' .wm/scout-pid)
     mkp=$(awk '{print $2}' .wm/maker-pid)
     rp=$(awk '{print $2}' .wm/reviewer-pid)
-    uniq=$(printf '%s\n' "$mp" "$cp" "$mkp" "$rp" | awk 'NF' | sort -u | wc -l | tr -d ' ')
+    uniq=$(printf '%s\n' "$sp" "$sc" "$mkp" "$rp" | awk 'NF' | sort -u | wc -l | tr -d ' ')
     if [ "$uniq" -eq 4 ]; then
       ok
     else
-      bad "mapper/critique/maker/reviewer PIDs not 4 distinct (mapper=$mp critique=$cp maker=$mkp reviewer=$rp uniq=$uniq)"
+      bad "specifier/scout/maker/reviewer PIDs not 4 distinct (specifier=$sp scout=$sc maker=$mkp reviewer=$rp uniq=$uniq)"
     fi
   else
     bad 'four role pid files missing'
@@ -601,25 +636,63 @@ EOF
     bad "reviewer did not re-run named falsifier (cmd=$fals_cmd)"
   fi
 
-  PRODUCT=product/hello.txt
+  if [ -f IDEA.md ] && grep -E -qi 'health|/health|test_health' IDEA.md; then
+    ok
+  else
+    bad 'IDEA.md must be a health-check app'
+  fi
+  spec_or_map=
+  health_doc=0
+  hello_owned=0
+  if [ -f SPEC.md ]; then
+    spec_or_map=1
+    grep -E -qi 'health|/health|test_health' SPEC.md && health_doc=1
+    grep -F -q 'product/hello.txt' SPEC.md && hello_owned=1
+  fi
+  if [ -f MAP.md ]; then
+    spec_or_map=1
+    grep -E -qi 'health|/health|test_health' MAP.md && health_doc=1
+    grep -F -q 'product/hello.txt' MAP.md && hello_owned=1
+  fi
+  if [ -n "$spec_or_map" ] && [ "$health_doc" -eq 1 ]; then
+    ok
+  else
+    bad 'SPEC.md or MAP.md must mention health (specifier must read IDEA)'
+  fi
+  if [ "$hello_owned" -eq 0 ]; then
+    ok
+  else
+    bad 'SPEC.md/MAP.md must not own product/hello.txt'
+  fi
+
+  PRODUCT=tests/test_health.py
   if grep -q 'CLOSED PASS' .wm/CLOSED 2>/dev/null; then
-    if [ -f "$PRODUCT" ] && grep -qx hello "$PRODUCT"; then
+    if [ -f tests/test_health.py ] || [ -f health/app.py ] || [ -f health.py ]; then
       ok
     else
-      bad "CLOSED PASS but product path $PRODUCT is not hello"
+      bad "CLOSED PASS but health-check files missing"
+    fi
+    if [ -f product/hello.txt ]; then
+      bad "CLOSED PASS must not be the hello product"
+    else
+      ok
     fi
   else
     ok
   fi
 
-  closed_rows=$(awk -F '\t' 'NR>1 && $6=="CLOSED" {c++} END{print c+0}' slices.tsv)
-  [ "$closed_rows" -eq 1 ] && ok || bad "slices.tsv CLOSED rows wanted 1, got $closed_rows"
+  if [ -f slices.tsv ]; then
+    closed_rows=$(awk -F '\t' 'NR>1 && $6=="CLOSED" {c++} END{print c+0}' slices.tsv)
+    [ "$closed_rows" -eq 1 ] && ok || bad "slices.tsv CLOSED rows wanted 1, got $closed_rows"
+  else
+    bad 'slices.tsv missing after walk'
+  fi
 
   printf 'LIVE_GATE %s product=%s invoke=.wm/invoke/reviewer.log writer: wm-run\n' \
     "${closed_word:-FAIL}" "$PRODUCT"
-  printf 'LIVE_PIDS mapper=%s critique=%s maker=%s reviewer=%s\n' \
-    "$(awk '{print $2}' .wm/mapper-pid 2>/dev/null || echo -)" \
-    "$(awk '{print $2}' .wm/critique-pid 2>/dev/null || echo -)" \
+  printf 'LIVE_PIDS specifier=%s scout=%s maker=%s reviewer=%s\n' \
+    "$(awk '{print $2}' .wm/specifier-pid 2>/dev/null || echo -)" \
+    "$(awk '{print $2}' .wm/scout-pid 2>/dev/null || echo -)" \
     "$(awk '{print $2}' .wm/maker-pid 2>/dev/null || echo -)" \
     "$(awk '{print $2}' .wm/reviewer-pid 2>/dev/null || echo -)"
 
