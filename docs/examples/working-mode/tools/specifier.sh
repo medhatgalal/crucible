@@ -1,7 +1,7 @@
 #!/bin/sh
-# Fixture specifier for the LOW hello-world example (not a live harness).
-# Writes SPEC.md + architecture/modules.md TSV + MAP.md. MAPPER is this agent.
-# Does not implement product. Does not write MAP-ACCEPT.
+# Fixture specifier: reads IDEA.md. Hello idea → SPEC/MAP/modules.
+# Underspecified (e.g. saas/webapp, missing IDEA) → QUESTIONS.md, no MAP.md.
+# Never ignores IDEA. Does not implement product. Does not write MAP-ACCEPT.
 set -eu
 agent=eve
 if [ -f .wm/dispatch ]; then
@@ -12,6 +12,29 @@ if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
   a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
   [ -n "$a" ] && agent=$a
 fi
+
+hello=0
+if [ -f IDEA.md ] && [ -s IDEA.md ] && grep -qi hello IDEA.md; then
+  hello=1
+fi
+
+if [ "$hello" -eq 0 ]; then
+  cat > QUESTIONS.md <<'EOF'
+Who is the first user and what single job can they finish?
+What is the first observable artifact (file, URL, or CLI) that proves it works?
+Is v1 local-only, or does it need live network, deploy, or destroy?
+Is auth or billing in scope for v1, or a non-goal?
+Where does v1 data live (files, sqlite, none)?
+Is this a LOW local map, or HIGH/live that needs MAP-HUMAN?
+What is explicitly out of scope for this first map?
+EOF
+  if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    git add QUESTIONS.md
+    git diff --cached --quiet || git commit -qm 'specifier: QUESTIONS'
+  fi
+  exit 0
+fi
+
 mkdir -p architecture product
 cat > SPEC.md <<'EOF'
 ## Goal

@@ -584,7 +584,8 @@ write_brief() {
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
-        printf 'Write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not implement product. Do not write MAP-ACCEPT.\n' "$_wb_agent"
+        printf 'Read IDEA.md. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product.\n'
+        printf 'When specified, write SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH), architecture/modules.md TSV, and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT.\n' "$_wb_agent"
         ;;
       scout)
         _wb_mw=$(map_word_recorded)
@@ -1953,6 +1954,10 @@ cmd_loop() {
         fi
         say "$_lp_card"
         "$WM_BIN" run specifier || exit 1
+        if [ -s QUESTIONS.md ]; then
+          say "STOP-ASK QUESTIONS"
+          exit 1
+        fi
         if ! spec_ok; then
           say "STOP-ASK SPEC incomplete"
           exit 1
@@ -1966,6 +1971,10 @@ cmd_loop() {
           fi
           say "$_lp_card"
           "$WM_BIN" run specifier || exit 1
+          if [ -s QUESTIONS.md ]; then
+            say "STOP-ASK QUESTIONS"
+            exit 1
+          fi
           if [ ! -f MAP.md ]; then
             say "STOP-ASK NEXT MAP"
             exit 1

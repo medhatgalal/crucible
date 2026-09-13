@@ -1987,6 +1987,87 @@ sh -n "$HERE/docs/examples/working-mode/tools/specifier.sh" \
 sh -n "$HERE/docs/examples/working-mode/tools/scout.sh" \
   && ok || bad 'example scout.sh is not valid POSIX sh'
 
+# Specifier brief must tell the worker to read IDEA.md and write QUESTIONS.md.
+wb=$(awk '/^write_brief\(/ { p=1 } p { print } p && /^}$/ { exit }' "$HERE/wm.sh")
+if printf '%s\n' "$wb" | grep -q 'IDEA.md' \
+  && printf '%s\n' "$wb" | grep -q 'QUESTIONS.md'; then
+  ok
+else
+  bad 'specifier brief must mention IDEA.md and QUESTIONS.md'
+fi
+
+# Example hello IDEA + specifier fixture → SPEC.md + MAP.md (does not ignore IDEA).
+setup_idea_only t-hello-specifier-reads-idea
+install_greet_unattended_workers
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+commit_msg 'hello specifier'
+set +e
+"$WM" run specifier >"$OUT" 2>"$ERR"
+hello_spec_rc=$?
+set -e
+[ "$hello_spec_rc" -eq 0 ] && ok \
+  || bad "hello specifier run exit $hello_spec_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+if [ -f SPEC.md ] && grep -qi hello SPEC.md; then
+  ok
+else
+  bad "hello specifier wanted SPEC.md with hello, got $(cat SPEC.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -f MAP.md ] && grep -q 'product/hello.txt' MAP.md; then
+  ok
+else
+  bad "hello specifier wanted MAP.md with product/hello.txt, got $(cat MAP.md 2>/dev/null || echo ABSENT)"
+fi
+if [ -s QUESTIONS.md ]; then
+  bad 'hello specifier must not write QUESTIONS.md'
+else
+  ok
+fi
+hello_brief=$(ls .wm/briefs/specifier.*.md 2>/dev/null | head -n 1)
+if [ -n "$hello_brief" ] && grep -q 'IDEA.md' "$hello_brief" \
+  && grep -q 'QUESTIONS.md' "$hello_brief"; then
+  ok
+else
+  bad "specifier brief file must mention IDEA.md and QUESTIONS.md, got $(cat "$hello_brief" 2>/dev/null || echo ABSENT)"
+fi
+
+# IDEA "build me a saas webapp" + specifier fixture → STOP-ASK QUESTIONS, no MAP.md.
+setup_idea_only t-saas-webapp-questions
+printf 'build me a saas webapp\n' > IDEA.md
+install_greet_unattended_workers
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout.sh {BRIEF}' >/dev/null
+commit_msg 'saas idea specifier scout'
+run_wm_loop
+assert_loop_foreground 't-saas-webapp-questions'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK QUESTIONS' \
+  && ok || bad "saas IDEA wanted STOP-ASK QUESTIONS, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'saas IDEA specifier loop must not exit 0'
+if [ -f MAP.md ]; then
+  bad 'saas IDEA specifier must not write MAP.md'
+else
+  ok
+fi
+if [ -s QUESTIONS.md ]; then
+  qn=$(grep -c '?' QUESTIONS.md)
+  if [ "$qn" -ge 1 ] && [ "$qn" -le 7 ]; then
+    ok
+  else
+    bad "QUESTIONS.md wanted 1-7 questions, got $qn: $(cat QUESTIONS.md)"
+  fi
+else
+  bad 'saas IDEA specifier must write non-empty QUESTIONS.md'
+fi
+if [ -f product/hello.txt ]; then
+  bad 'saas IDEA must not land hello product'
+else
+  ok
+fi
+if closed_pass_present; then
+  bad 'saas IDEA must not CLOSED PASS'
+else
+  ok
+fi
+
 # Vague IDEA, maker+reviewer, no specifier CLI → STOP-ASK NEXT SPEC, no product.
 setup_idea_only t-vague-no-specifier
 run_wm_loop
