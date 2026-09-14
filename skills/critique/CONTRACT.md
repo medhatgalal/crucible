@@ -21,6 +21,14 @@ The named map: `MAP.md` plus `architecture/modules.md`, written by a **different
 - Invoke `/full`, `/grade`, `/ult`, or any swiss-army parent. Invert + adversarial + simple only.
 - Implement product files, skip the attack, or invent defects to fill the headings.
 
+## Send-back
+
+MAP-REVISE → MAP (design/specifier). Do not re-accept the same bytes.
+
+## Andon
+
+MAP-STOP-ASK → STOP-ASK (owner).
+
 ## Swap
 
 Replacing this directory must not require editing wm.sh.

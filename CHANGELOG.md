@@ -18,6 +18,9 @@ All notable changes to this project are documented here. This project follows
 - `go` and `status` write `.wm/FLOOR.md` (station SHAPE|DESIGN|BUILD|INSPECT|ANDON|DONE,
   card, wip slice, andon, evidence paths). `.wm/TRACE.tsv` appends one line per
   `go` / `status` / `loop` card transition. `status` does not increment FAIL count.
+- Pre-brick `next` follows cwd/`ROUTING.tsv` order (reorder RESEARCH/REPO without
+  editing `wm.sh`). Specifier brief matches that station. CONTRACT `## Send-back`
+  / `## Andon` on architecture, critique, review, research.
 - Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
   fewer than two of grok/kiro-cli/codex are on PATH or cannot auth. Missing
   `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.

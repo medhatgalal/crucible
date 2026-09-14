@@ -19,6 +19,14 @@ A frozen delivery unit: `SPEC.md` (owned files, MAKER-WRITES falsifier slot), th
 - Treat map words (`MAP-ACCEPT` / `MAP-REVISE` / `MAP-STOP-ASK`) as `CLOSED PASS`. Map closer ≠ brick closer.
 - Apply product fixes, author `.wm/FALSIFIER`, or stamp `CLOSED PASS` yourself (`wm close` is the kernel).
 
+## Send-back
+
+FAIL → BRICK maker-build (cap then ESCALATE REVIEW_FAIL).
+
+## Andon
+
+ESCALATE REVIEW_FAIL → floor manager / owner.
+
 ## Swap
 
 Replacing this directory must not require editing wm.sh.

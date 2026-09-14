@@ -620,6 +620,56 @@ research_skill_present() {
   [ -f .crucible/skills/research/SKILL.md ] || [ -f skills/research/SKILL.md ]
 }
 
+# Cwd ROUTING.tsv wins (reorder without editing wm.sh). Else beside this engine.
+routing_file() {
+  if [ -f ROUTING.tsv ]; then
+    printf '%s\n' ROUTING.tsv
+    return 0
+  fi
+  _rf=$(CDPATH= cd "$(dirname "$0")" && pwd)/ROUTING.tsv
+  if [ -f "$_rf" ]; then
+    printf '%s\n' "$_rf"
+    return 0
+  fi
+  return 1
+}
+
+routing_phases() {
+  _rp=$(routing_file) || return 0
+  awk -F '\t' 'NR > 1 && $1 !~ /^#/ && NF >= 1 { print $1 }' "$_rp"
+}
+
+# First unsatisfied pre-brick station in ROUTING order. Prints NEXT RESEARCH|NEXT REPO|NEXT SPEC.
+prebrick_next_card() {
+  _pb_spec=0
+  role_has_cli specifier && _pb_spec=1
+  while IFS= read -r _pb_ph || [ -n "$_pb_ph" ]; do
+    [ -n "$_pb_ph" ] || continue
+    case $_pb_ph in
+      RESEARCH)
+        if [ "$_pb_spec" -eq 1 ] && research_skill_present && [ ! -f RESEARCH.md ]; then
+          printf '%s\n' "NEXT RESEARCH"
+          return 0
+        fi
+        ;;
+      REPO)
+        if [ "$_pb_spec" -eq 1 ] && repo_needs_scout; then
+          printf '%s\n' "NEXT REPO"
+          return 0
+        fi
+        ;;
+      MAP)
+        printf '%s\n' "NEXT SPEC"
+        return 0
+        ;;
+      ATTACK-MAP|BRICK|META) ;;
+    esac
+  done <<EOF
+$(routing_phases)
+EOF
+  printf '%s\n' "NEXT SPEC"
+}
+
 repo_scout_skill_present() {
   [ -f .crucible/skills/repo-scout/SKILL.md ] || [ -f skills/repo-scout/SKILL.md ]
 }
@@ -812,14 +862,19 @@ write_brief() {
         printf 'Write .wm/return/%s.md with WORD: and EVIDENCE:. Re-run the named falsifier via .wm/bin/wm evidence. If .wm/red.status is no-build, WORD must be NO-BUILD not PASS. WORD PASS also requires reviews/review.md with ## Code and ## Testing. Do not use maker rationale.\n' "$_wb_agent"
         ;;
       specifier)
-        if repo_needs_scout; then
-          printf 'Write REPO.md (layout, test command, CI, modules, hotspots). Do not write SPEC.md, MAP.md, or INTENT.md. Do not implement product. Do not stamp PASS or CLOSED PASS. Do not write MAP-ACCEPT or FALSIFIER.\n'
-        elif research_skill_present && [ ! -f RESEARCH.md ]; then
-          printf 'Read IDEA.md. Write RESEARCH.md only (stack survey, constraints, non-goals, competitors if known). Do not write SPEC.md or MAP.md yet. Do not implement product. Do not write MAP-ACCEPT, CLOSED PASS, or FALSIFIER. Do not use live tokens or passwords.\n'
-        else
-          printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product. Do not stamp PASS.\n'
-          printf 'When specified, write INTENT.md with ## User, ## Job, and ## Non-goals; SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH); architecture/modules.md TSV; and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT. Do not stamp PASS.\n' "$_wb_agent"
-        fi
+        _wb_pb=$(prebrick_next_card)
+        case $_wb_pb in
+          "NEXT REPO")
+            printf 'Write REPO.md (layout, test command, CI, modules, hotspots). Do not write SPEC.md, MAP.md, or INTENT.md. Do not implement product. Do not stamp PASS or CLOSED PASS. Do not write MAP-ACCEPT or FALSIFIER.\n'
+            ;;
+          "NEXT RESEARCH")
+            printf 'Read IDEA.md. Write RESEARCH.md only (stack survey, constraints, non-goals, competitors if known). Do not write SPEC.md or MAP.md yet. Do not implement product. Do not write MAP-ACCEPT, CLOSED PASS, or FALSIFIER. Do not use live tokens or passwords.\n'
+            ;;
+          *)
+            printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product. Do not stamp PASS.\n'
+            printf 'When specified, write INTENT.md with ## User, ## Job, and ## Non-goals; SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH); architecture/modules.md TSV; and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT. Do not stamp PASS.\n' "$_wb_agent"
+            ;;
+        esac
         ;;
       scout)
         _wb_mw=$(map_word_recorded)
@@ -1974,15 +2029,8 @@ cmd_next() {
     fi
   fi
   if [ ! -f SPEC.md ] || ! spec_ok; then
-    if repo_needs_scout && role_has_cli specifier; then
-      say "NEXT REPO"
-      return 0
-    fi
-    if research_skill_present && role_has_cli specifier && [ ! -f RESEARCH.md ]; then
-      say "NEXT RESEARCH"
-      return 0
-    fi
-    say "NEXT SPEC"
+    _nx_pb=$(prebrick_next_card)
+    say "$_nx_pb"
     return 0
   fi
   if arch_fence_active; then

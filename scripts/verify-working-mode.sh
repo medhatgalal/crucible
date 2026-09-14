@@ -364,6 +364,9 @@ install_greet_unattended_workers() {
       cp "$HERE/skills/research/CONTRACT.md" skills/research/CONTRACT.md
     fi
   fi
+  if [ -f "$HERE/ROUTING.tsv" ]; then
+    cp "$HERE/ROUTING.tsv" ROUTING.tsv
+  fi
 }
 
 write_scout_self_accept() {
@@ -2173,10 +2176,18 @@ else
   bad 'specifier brief must mention RESEARCH.md for the research pass'
 fi
 if grep -q 'research_skill_present' "$HERE/wm.sh" \
+  && grep -q 'prebrick_next_card' "$HERE/wm.sh" \
   && grep -q 'NEXT RESEARCH' "$HERE/wm.sh"; then
   ok
 else
   bad 'wm.sh must define research_skill_present and emit NEXT RESEARCH'
+fi
+if grep -q '## Send-back' "$HERE/skills/architecture/CONTRACT.md" \
+  && grep -q '## Send-back' "$HERE/skills/critique/CONTRACT.md" \
+  && grep -q '## Send-back' "$HERE/skills/review/CONTRACT.md"; then
+  ok
+else
+  bad 'architecture/critique/review CONTRACT.md must have ## Send-back'
 fi
 if printf '%s\n' "$wb" | grep -q 'INTENT.md'; then
   ok
@@ -2701,7 +2712,7 @@ chmod +x tools/extra-maker.sh
 "$WM" cast maker alice grok './tools/extra-maker.sh {BRIEF}' >/dev/null
 refuses 'unowned extra.txt in maker-build' 'unowned path in maker-build' "$WM" run maker-build
 
-# Q2: existing product tree + repo-scout skill + specifier CLI → NEXT REPO.
+# Q2: existing product tree follows ROUTING.tsv (RESEARCH then REPO).
 setup_idea_only t-q2-repo-scout
 install_greet_unattended_workers
 mkdir -p skills/repo-scout src
@@ -2710,24 +2721,41 @@ cp "$HERE/skills/repo-scout/CONTRACT.md" skills/repo-scout/CONTRACT.md
 printf 'print("app")\n' > src/app.py
 "$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
 commit_msg 'q2 product tree'
-expect 'existing repo next is REPO' 'NEXT REPO' "$WM" next
+expect 'existing repo next is RESEARCH (ROUTING order)' 'NEXT RESEARCH' "$WM" next
+set +e
+"$WM" run specifier >"$OUT" 2>"$ERR"
+res_rc=$?
+set -e
+[ "$res_rc" -eq 0 ] && ok \
+  || bad "research pass exit $res_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+[ -s RESEARCH.md ] && ok || bad 'wanted RESEARCH.md first'
+[ ! -f SPEC.md ] && ok || bad 'research pass must not write SPEC.md'
+expect 'after RESEARCH.md next is REPO' 'NEXT REPO' "$WM" next
 set +e
 "$WM" run specifier >"$OUT" 2>"$ERR"
 repo_rc=$?
 set -e
 [ "$repo_rc" -eq 0 ] && ok \
   || bad "repo-scout specifier exit $repo_rc out=$(cat "$OUT") err=$(cat "$ERR")"
-if [ -s REPO.md ]; then
-  ok
-else
-  bad "repo-scout wanted REPO.md, got $(cat REPO.md 2>/dev/null || echo ABSENT)"
-fi
-if [ -f SPEC.md ]; then
-  bad 'repo-scout pass must not write SPEC.md'
-else
-  ok
-fi
-expect 'after REPO.md next is RESEARCH' 'NEXT RESEARCH' "$WM" next
+[ -s REPO.md ] && ok || bad "repo-scout wanted REPO.md"
+[ ! -f SPEC.md ] && ok || bad 'repo-scout pass must not write SPEC.md'
+
+# S4: cwd ROUTING.tsv REPO before RESEARCH → next is REPO without editing wm.sh.
+setup_idea_only t-s4-routing-reorder
+install_greet_unattended_workers
+mkdir -p skills/repo-scout skills/research src
+cp "$HERE/skills/repo-scout/SKILL.md" skills/repo-scout/SKILL.md
+cp "$HERE/skills/repo-scout/CONTRACT.md" skills/repo-scout/CONTRACT.md
+cp "$HERE/skills/research/SKILL.md" skills/research/SKILL.md
+cp "$HERE/skills/research/CONTRACT.md" skills/research/CONTRACT.md
+printf 'print("app")\n' > src/app.py
+printf 'phase\tjob\tbattery\trole\tstake\trequired\n' > ROUTING.tsv
+printf 'REPO\tinventory\trepo-scout\tspecifier\tspec\tno\n' >> ROUTING.tsv
+printf 'RESEARCH\tsurvey\tresearch\tspecifier\tspec\tno\n' >> ROUTING.tsv
+printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n' >> ROUTING.tsv
+"$WM" cast specifier eve grok './tools/specifier.sh {BRIEF}' >/dev/null
+commit_msg 's4 reorder'
+expect 'reordered ROUTING next is REPO' 'NEXT REPO' "$WM" next
 
 # Q2 greenfield / hello tree with repo-scout skill still skips REPO (no product files).
 setup_idea_only t-q2-greenfield-skip

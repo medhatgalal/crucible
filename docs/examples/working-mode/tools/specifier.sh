@@ -35,7 +35,9 @@ EOF
   exit 0
 fi
 
-if [ -f IDEA.md ] && [ ! -f RESEARCH.md ]; then
+# RESEARCH pass only when the brief asks (ROUTING station), not on every SPEC card.
+if [ -f IDEA.md ] && [ ! -f RESEARCH.md ] && [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ] \
+  && grep -q 'Write RESEARCH.md' "$BRIEF"; then
   {
     printf '# RESEARCH\n\n'
     printf '## Stack survey\nlocal files from IDEA.md; no live services\n\n'

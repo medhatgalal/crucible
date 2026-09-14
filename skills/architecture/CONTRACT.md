@@ -20,6 +20,14 @@ IDEA.md, the target tree (packages, `src/`, tests, existing DESIGN.md / ADRs), a
 - Invent fairy-tale rooms, floors, or castles that are not packages / directories in the tree.
 - Silently introduce a second pattern. `CHANGES-ARCHITECTURE` is STOP, not a footnote.
 
+## Send-back
+
+MAP-REVISE → MAP (specifier rewrites MAP.md, then critique again).
+
+## Andon
+
+CHANGES-ARCHITECTURE → STOP-ASK ARCH. Two packagings → QUESTIONS.
+
 ## Swap
 
 Replacing this directory must not require editing wm.sh.

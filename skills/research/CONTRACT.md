@@ -17,6 +17,14 @@
 - Author `.wm/FALSIFIER` or implement product files.
 - Use live tokens, passwords, or `--api-key` (public `curl`/`wget` without those flags is allowed on this pass only).
 
+## Send-back
+
+None. Missing RESEARCH.md keeps NEXT RESEARCH.
+
+## Andon
+
+None beyond kernel STOP-ASK.
+
 ## Swap
 
 Replacing this directory must not require editing wm.sh.
