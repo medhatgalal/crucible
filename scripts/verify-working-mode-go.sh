@@ -76,16 +76,22 @@ else
   bad "no-args wanted run:/go/harness:, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 if grep -q 'working-mode' "$OUT" \
-  && grep -q 'commands: go help status init cast loop bound' "$OUT" \
+  && grep -q 'commands: go status help' "$OUT" \
   && grep -q 'harness: read WORKING-MODE.md then go' "$OUT"; then
   ok
 else
   bad "no-args missing help tokens, got out=$(cat "$OUT")"
 fi
+if grep -q 'debug: init cast loop bound next' "$OUT"; then
+  ok
+else
+  bad "no-args wanted debug verbs, got out=$(cat "$OUT")"
+fi
 
 # No CLI workers: INDEPENDENCE_UNAVAILABLE, nonzero.
 nocli="$BASE/nocli"
 init_git_repo "$nocli"
+printf 'an idea\n' > "$nocli/IDEA.md"
 set +e
 (
   CDPATH=
@@ -289,6 +295,22 @@ if [ -f "$HERE/WORKING-MODE.md" ]; then
   else
     bad 'WORKING-MODE.md must mention drive, MAP-HUMAN, STOP-ASK'
   fi
+  # S1: start path is go/status, not "then loop".
+  if awk 'NR<=20' "$HERE/WORKING-MODE.md" | grep -qi 'then loop'; then
+    bad 'WORKING-MODE.md start path must not say then loop'
+  else
+    ok
+  fi
+  if grep -q 'status' "$HERE/WORKING-MODE.md"; then
+    ok
+  else
+    bad 'WORKING-MODE.md must mention status'
+  fi
+fi
+if grep -q 'status' "$HERE/skills/working-mode/SKILL.md"; then
+  ok
+else
+  bad 'working-mode skill must mention status'
 fi
 
 # wm.sh sources wm-go.sh; go/help die refresh from 1.8.0 when missing.
@@ -337,11 +359,16 @@ if grep -F "kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and f
 else
   bad 'wm-go.sh Kiro/Codex templates must keep adapter single quotes'
 fi
-if grep -F "claude -p --output-format text 'read {BRIEF} and follow it exactly'" \
-  "$HERE/wm-go.sh" >/dev/null; then
+# S0: discover loop is grok kiro-cli codex only (no claude).
+if grep -E 'for _go_cli in grok kiro-cli codex; do' "$HERE/wm-go.sh" >/dev/null; then
   ok
 else
-  bad 'wm-go.sh optional Claude template must keep adapter single quotes'
+  bad 'discover loop must be grok kiro-cli codex'
+fi
+if awk '/for _go_cli in / { print; exit }' "$HERE/wm-go.sh" | grep -q claude; then
+  bad 'S0 discover loop must not include claude'
+else
+  ok
 fi
 if grep -q 'kiro-cli' "$HERE/wm-go.sh"; then
   ok
@@ -552,6 +579,110 @@ else
 fi
 if [ -f "$plain/BACKLOG.tsv" ]; then
   bad 'go without --next must not invent BACKLOG.tsv'
+else
+  ok
+fi
+
+# S2: two backlog rows, go with no IDEA acts like --next; second go refuses until close.
+s2bl="$BASE/go-default-next"
+init_git_repo "$s2bl"
+printf 'first backlog idea\n' > "$s2bl/idea1.md"
+printf 'second backlog idea\n' > "$s2bl/idea2.md"
+printf 'id\tsize\trisk\tidea_path\tstatus\n' > "$s2bl/BACKLOG.tsv"
+printf 'b1\tsmall\tLOW\tidea1.md\tREADY\n' >> "$s2bl/BACKLOG.tsv"
+printf 'b2\tsmall\tLOW\tidea2.md\tREADY\n' >> "$s2bl/BACKLOG.tsv"
+set +e
+(
+  CDPATH=
+  cd "$s2bl"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+s2_rc=$?
+set -e
+[ "$s2_rc" -ne 0 ] && ok || bad "S2 go (no flags) fake grok must not CLOSED PASS"
+if grep -q 'first backlog idea' "$s2bl/IDEA.md"; then
+  ok
+else
+  bad "S2 go must copy idea1.md onto IDEA.md, got $(cat "$s2bl/IDEA.md" 2>/dev/null || echo ABSENT)"
+fi
+s2b1=$(awk -F '\t' '$1=="b1"{print $5; exit}' "$s2bl/BACKLOG.tsv")
+[ "$s2b1" = INFLIGHT ] && ok || bad "S2 go wanted b1 INFLIGHT, got $s2b1"
+printf 'MAPPER: x\n' > "$s2bl/MAP.md"
+set +e
+(
+  CDPATH=
+  cd "$s2bl"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+s2b_rc=$?
+set -e
+[ "$s2b_rc" -ne 0 ] && ok || bad 'S2 second go with open MAP must be nonzero'
+if grep -q 'second backlog idea' "$s2bl/IDEA.md"; then
+  bad 'S2 second go must not copy idea2 until close'
+else
+  ok
+fi
+s2b2=$(awk -F '\t' '$1=="b2"{print $5; exit}' "$s2bl/BACKLOG.tsv")
+[ "$s2b2" = READY ] && ok || bad "S2 second go wanted b2 still READY, got $s2b2"
+
+# S2+S3: init+go with no IDEA and no backlog → STOP-ASK INTAKE; FLOOR mentions INTAKE or ANDON.
+s3in="$BASE/intake-floor"
+init_git_repo "$s3in"
+set +e
+(
+  CDPATH=
+  cd "$s3in"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" init >/dev/null
+  "$WM" go
+) >"$OUT" 2>"$ERR"
+s3_rc=$?
+set -e
+[ "$s3_rc" -ne 0 ] && ok || bad "S3 go without IDEA must be nonzero"
+if grep -q 'STOP-ASK INTAKE' "$OUT" "$ERR"; then
+  ok
+else
+  bad "S3 wanted STOP-ASK INTAKE, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+if [ -f "$s3in/.wm/FLOOR.md" ] \
+  && grep -E -q 'INTAKE|ANDON' "$s3in/.wm/FLOOR.md"; then
+  ok
+else
+  bad "S3 FLOOR.md must exist and mention INTAKE or ANDON, got $(cat "$s3in/.wm/FLOOR.md" 2>/dev/null || echo ABSENT)"
+fi
+if [ -f "$s3in/.wm/TRACE.tsv" ] \
+  && grep -q 'when	card	outcome' "$s3in/.wm/TRACE.tsv"; then
+  ok
+else
+  bad "S3 TRACE.tsv must exist with header, got $(cat "$s3in/.wm/TRACE.tsv" 2>/dev/null || echo ABSENT)"
+fi
+
+# S3: status writes FLOOR.md and does not invent a FAIL count.
+s3st="$BASE/status-floor"
+init_git_repo "$s3st"
+set +e
+(
+  CDPATH=
+  cd "$s3st"
+  "$WM" init >/dev/null
+  "$WM" status
+) >"$OUT" 2>"$ERR"
+s3st_rc=$?
+set -e
+[ "$s3st_rc" -eq 0 ] && ok || bad "S3 status wanted exit 0, got $s3st_rc"
+if [ -f "$s3st/.wm/FLOOR.md" ] \
+  && grep -E -q 'INTAKE|ANDON|SHAPE' "$s3st/.wm/FLOOR.md"; then
+  ok
+else
+  bad "S3 status FLOOR.md missing INTAKE/ANDON/SHAPE, got $(cat "$s3st/.wm/FLOOR.md" 2>/dev/null || echo ABSENT)"
+fi
+if [ -f "$s3st/.wm/review-fail-count" ]; then
+  bad 'S3 status must not write review-fail-count'
 else
   ok
 fi

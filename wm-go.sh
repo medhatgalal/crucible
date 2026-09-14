@@ -1,12 +1,11 @@
 # wm-go.sh — sourced by wm.sh (same directory). Not a standalone entrypoint.
-# go discovers grok/kiro-cli/codex (optional claude), casts distinct ids, then cmd_loop.
+# go discovers grok/kiro-cli/codex, casts distinct ids, then cmd_loop.
 # kiro-cli binary → kind kiro. Do not use `kiro-cli acp` as a wm run argv.
 
 _go_cli_cmd() {
   case $1 in
     grok) printf '%s\n' 'grok -p --prompt-file {BRIEF}' ;;
     kiro) printf '%s\n' "kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'" ;;
-    claude) printf '%s\n' "claude -p --output-format text 'read {BRIEF} and follow it exactly'" ;;
     codex) printf '%s\n' "codex exec -- 'read {BRIEF} and follow it exactly'" ;;
     *) die "INDEPENDENCE_UNAVAILABLE: no CLI worker" ;;
   esac
@@ -47,7 +46,8 @@ cmd_help() {
   say "working-mode"
   say "run: .crucible/${_ch_prog}/wm.sh go [IDEA.md]"
   say "next: ${_ch_next}"
-  say "commands: go help status init cast loop bound"
+  say "commands: go status help"
+  say "debug: init cast loop bound next"
   say "harness: read WORKING-MODE.md then go"
 }
 
@@ -64,9 +64,8 @@ go_ensure_panel() {
   _go_n=0
   _go_k1=
   _go_k2=
-  # Primary roster: grok, kiro-cli (kind kiro), codex. Optional extra: claude.
-  # Two kinds = any two of grok/kiro/codex (claude fills only if still needed).
-  for _go_cli in grok kiro-cli codex claude; do
+  # Roster: grok, kiro-cli (kind kiro), codex. Two kinds = any two of those.
+  for _go_cli in grok kiro-cli codex; do
     if command -v "$_go_cli" >/dev/null 2>&1; then
       case $_go_cli in
         kiro-cli) _go_kind=kiro ;;
@@ -128,13 +127,30 @@ cmd_go() {
     if [ -f "$_go_idea" ] && [ -r "$_go_idea" ] && [ ! -f IDEA.md ]; then
       cp "$_go_idea" ./IDEA.md
     fi
+  else
+    if [ ! -f IDEA.md ] || [ ! -s IDEA.md ]; then
+      if backlog_has_ready; then
+        go_consume_backlog
+      else
+        metrics_append "STOP-ASK INTAKE" -
+        floor_write "STOP-ASK INTAKE"
+        say "STOP-ASK INTAKE"
+        exit 1
+      fi
+    elif closed_is_closeable && backlog_has_ready; then
+      go_consume_backlog
+    fi
   fi
   if questions_need_ask; then
     metrics_append "STOP-ASK QUESTIONS" -
+    floor_write "STOP-ASK QUESTIONS"
     say "STOP-ASK QUESTIONS"
     exit 1
   fi
   go_ensure_panel
+  _go_preview=$(cmd_next)
+  _go_preview=$(printf '%s\n' "$_go_preview" | awk 'NF { print; exit }')
+  floor_write "$_go_preview"
   cmd_loop
 }
 

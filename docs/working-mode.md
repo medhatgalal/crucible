@@ -4,9 +4,10 @@ On **1.9.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
-Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
-Runtime is the target repo plus one harness CLI. Skills live in the repo
-(`.crucible/skills/` and harness views). There is no `$HOME` skill runtime.
+Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
+or `status`. Runtime is the target repo plus one harness CLI. Skills live
+in the repo (`.crucible/skills/` and harness views). There is no `$HOME`
+skill runtime.
 
 From the **target repository root**, invoke `.crucible/<program>/wm.sh` (not a
 bare `wm` on `PATH`). After `adopt work --managed --working-mode`, `<program>`
@@ -27,14 +28,14 @@ printf '%s\n' "product/hello.txt contains exactly hello" > IDEA.md
 .crucible/work/wm.sh go
 ```
 
-Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then `go`.
-Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on
-`PATH`). Mapper, maker, and reviewer must be distinct agents. `{BRIEF}` is
-quoted by the engine — do not wrap it in quotes in the command. Stop on
-`CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
-background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty
-(optional claude). Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent
-echo fixtures). Two kinds means any two of grok/kiro/codex.
+Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then `go`
+or `status`. Runtime is `.crucible/work/wm.sh` from that target root (not a
+bare `wm` on `PATH`). Mapper, maker, and reviewer must be distinct agents.
+`{BRIEF}` is quoted by the engine — do not wrap it in quotes in the command.
+Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
+background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty.
+Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo fixtures).
+Two kinds means any two of grok/kiro/codex.
 
 Advanced copy-paste (fixtures, HIGH sign, specifier+scout) stays below.
 
@@ -302,8 +303,8 @@ are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
 
 ## Operator commands
 
-Lead with `go` / `help` / `status`. Examples A/C below stay as advanced
-fixture walks. Non-empty `QUESTIONS.md` without `ANSWERS.md` is
+Lead with `go` / `status` / no-args help. Examples A/C below stay as
+advanced fixture walks. Non-empty `QUESTIONS.md` without `ANSWERS.md` is
 `STOP-ASK QUESTIONS` (write `ANSWERS.md` then `go` again). Optional
 research writes `RESEARCH.md` before SPEC (`NEXT RESEARCH`). Optional
 `repo-scout` writes `REPO.md` (`NEXT REPO`) when the tree already has
@@ -311,24 +312,32 @@ product files. Specifier SPEC pass writes `INTENT.md`. `LOOP_BOUND`
 is max(40, min(240, 16+12×slices)), not a fixed 40.
 
 `BACKLOG.tsv` header is `id	size	risk	idea_path	status`.
-`.crucible/<program>/wm.sh go --next` copies a READY `idea_path` onto
-`IDEA.md` (overwrite) and marks that row INFLIGHT. If `MAP.md` exists
-and `.wm/CLOSED` is not closeable, it dies `finish current map first`.
-After CLOSED it archives MAP/SPEC/slices into `history/maps/<prev-id>/`.
-`go` without `--next` is unchanged.
+`go` with no flags copies a READY `idea_path` onto `IDEA.md` when
+`IDEA.md` is missing (same as `go --next`); missing `IDEA.md` and no
+READY row is `STOP-ASK INTAKE`. If `MAP.md` exists and `.wm/CLOSED` is
+not closeable, `go --next` dies `finish current map first`. After a
+closeable CLOSED plus another READY row, `go` archives MAP/SPEC/slices
+into `history/maps/<prev-id>/` and takes the next idea. `go --next`
+remains an alias. `go` and `status` write `.wm/FLOOR.md`.
 
 ```sh
 # from the target repository root
 .crucible/<program>/wm.sh                 # help
 .crucible/<program>/wm.sh go [IDEA.md]
-.crucible/<program>/wm.sh go --next       # BACKLOG.tsv READY row → IDEA.md
-.crucible/<program>/wm.sh help
-.crucible/<program>/wm.sh status          # same card as next; does not mutate
+.crucible/<program>/wm.sh go              # missing IDEA.md → backlog or STOP-ASK INTAKE
+.crucible/<program>/wm.sh go --next       # alias: BACKLOG.tsv READY row → IDEA.md
+.crucible/<program>/wm.sh status          # card + .wm/FLOOR.md; does not mutate FAIL count
+```
+
+Debug (internal verbs; not the start path):
+
+```sh
 .crucible/<program>/wm.sh loop            # remaining READY slices; brick reset between
 .crucible/<program>/wm.sh map-ready       # INTENT.md + fit + slices.tsv PENDING
 .crucible/<program>/wm.sh map-verdict RETURNFILE
 .crucible/<program>/wm.sh next
 .crucible/<program>/wm.sh run maker-falsify
+.crucible/<program>/wm.sh cast ROLE ID KIND CMD
 ```
 
 ## Harness adapters (13b)

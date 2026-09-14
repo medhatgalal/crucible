@@ -3,22 +3,27 @@
 Cwd is the **target repository root**, not the program directory.
 
 Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then
-`.crucible/work/wm.sh go [IDEA.md]`.
+`.crucible/work/wm.sh go [IDEA.md]`. Use `status` to read the next card.
 
 Do not mix guided `drive` or `cycle` with this runner.
 
 ## Start
 
 1. Read this file.
-2. Run `.crucible/work/wm.sh` (no args), then `go` with an optional idea file.
+2. Run `.crucible/work/wm.sh` (no args), then `go` with an optional idea file
+   (or `status` to inspect).
 3. Stay in the foreground. Do not background the walker.
 
-`go` inits if needed, copies a readable idea file onto `IDEA.md` when that
-name is missing, stops on a non-empty `QUESTIONS.md` without `ANSWERS.md`,
-discovers `grok` / `kiro-cli` / `codex` when the panel is empty (optional
-`claude`), and runs `loop`.
-`go --next` copies the first READY `BACKLOG.tsv` row
-(`id size risk idea_path status`) onto `IDEA.md`. One map in flight.
+`go` inits if needed. With no flags: missing `IDEA.md` plus a READY
+`BACKLOG.tsv` row is the same as `go --next`; missing `IDEA.md` and no
+backlog is `STOP-ASK INTAKE`; a closeable CLOSED plus another READY row
+archives and takes the next idea. `go --next` remains an alias.
+A readable idea file is copied onto `IDEA.md` when that name is missing.
+Non-empty `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`.
+`go` discovers `grok` / `kiro-cli` / `codex` when the panel is empty
+and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`.
+`go` and `status` write `.wm/FLOOR.md` (station, card, wip, andon,
+evidence). `status` does not increment FAIL retries.
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if it is missing. Reviewer PASS does not require it.
@@ -54,3 +59,5 @@ SHA256: <sha256 of current MAP.md>
 Then `go` again.
 
 Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`.
+
+Debug (not the start path): `cast`, `loop`, `next`, `map-ready`.

@@ -4,11 +4,14 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
-`go` discovers grok, kiro-cli (kind kiro), and codex. Claude Code is optional
-extra, not required. Live independence fails closed when fewer than two of
-those three are on PATH or cannot auth. Missing `claude` is not
-`INDEPENDENCE_UNAVAILABLE` by itself. `kiro-cli acp` is a guided-cycle
-JSON-RPC server, not a `wm run` argv. Adapter: `adapters/kiro.md`.
+`go` discovers grok, kiro-cli (kind kiro), and codex only (not Claude Code).
+First-class verbs: no-args help, `go`, `status`. No-flag `go` drains a READY
+backlog row when `IDEA.md` is missing, `STOP-ASK INTAKE` when there is no
+backlog, and archives plus next after a closeable CLOSED. `go --next` remains
+an alias. `.wm/FLOOR.md` and `.wm/TRACE.tsv` on `go` / `status`. Live
+independence fails closed when fewer than two of grok/kiro-cli/codex are on
+PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
+`wm run` argv. Adapter: `adapters/kiro.md`.
 
 ## 1.9.0 — factory plants
 

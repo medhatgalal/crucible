@@ -749,6 +749,12 @@ backlog_set_status() {
   mv "$_bs_tmp" BACKLOG.tsv
 }
 
+backlog_has_ready() {
+  [ -f BACKLOG.tsv ] || return 1
+  _bhr=$(awk -F '\t' 'NR>1 && $5=="READY" && $1!="" { print $1; exit }' BACKLOG.tsv)
+  [ -n "$_bhr" ]
+}
+
 # go --next: one READY row → IDEA.md. One map in flight.
 go_consume_backlog() {
   [ -f BACKLOG.tsv ] || die "BACKLOG.tsv missing"
@@ -2053,7 +2059,72 @@ cmd_next() {
   say "NEXT RUN reviewer"
 }
 
-cmd_status() { cmd_next; }
+floor_station() {
+  _fs_card=$1
+  case $_fs_card in
+    STOP-ASK*|ESCALATE*|INDEPENDENCE_UNAVAILABLE*) printf 'ANDON\n' ;;
+    DONE|CLOSED*) printf 'DONE\n' ;;
+    "NEXT INTAKE"|"NEXT CAST"|"NEXT RESEARCH"|"NEXT REPO"|"NEXT SPEC") printf 'SHAPE\n' ;;
+    "NEXT MAP"|"NEXT RUN scout") printf 'DESIGN\n' ;;
+    "NEXT RUN reviewer"|"NEXT CLOSE") printf 'INSPECT\n' ;;
+    "NEXT SLICE "*|"NEXT RECORD PRE-FALSIFY"|"NEXT RUN maker-falsify"|"NEXT RED"|"NEXT RUN maker-build"|"NEXT BUILT"|"NEXT GREEN") printf 'BUILD\n' ;;
+    *)
+      case $_fs_card in
+        *MAP-HUMAN*|*ARCH*) printf 'ANDON\n' ;;
+        *SLICE*|*maker-*|*RED*|*BUILT*|*GREEN*) printf 'BUILD\n' ;;
+        *MAP*) printf 'DESIGN\n' ;;
+        *) printf 'SHAPE\n' ;;
+      esac
+      ;;
+  esac
+}
+
+floor_write() {
+  _fw_card=$1
+  _fw_card=$(printf '%s\n' "$_fw_card" | awk 'NF { print; exit }')
+  [ -n "$_fw_card" ] || _fw_card=-
+  ensure_wm
+  _fw_st=$(floor_station "$_fw_card")
+  _fw_wip=-
+  if [ -f "$WM/slice-in-flight" ]; then
+    _fw_wip=$(kv_get "$WM/slice-in-flight" id)
+    _fw_wip=$(printf '%s\n' "$_fw_wip" | awk 'NF { print; exit }')
+    [ -n "$_fw_wip" ] || _fw_wip=-
+  fi
+  _fw_andon=-
+  case $_fw_card in
+    STOP-ASK*|ESCALATE*|INDEPENDENCE_UNAVAILABLE*) _fw_andon=$_fw_card ;;
+  esac
+  {
+    printf 'station: %s\n' "$_fw_st"
+    printf 'card: %s\n' "$_fw_card"
+    printf 'wip: %s\n' "$_fw_wip"
+    printf 'andon: %s\n' "$_fw_andon"
+    printf 'evidence:\n'
+    [ -f "$WM/FALSIFIER" ] && printf '  %s\n' "$WM/FALSIFIER"
+    [ -f "$WM/CLOSED" ] && printf '  %s\n' "$WM/CLOSED"
+    [ -f reviews/review.md ] && printf '  reviews/review.md\n'
+    if [ -d "$WM/evidence" ]; then
+      for _fw_e in "$WM/evidence"/*; do
+        [ -f "$_fw_e" ] || continue
+        printf '  %s\n' "$_fw_e"
+      done
+    fi
+  } > "$WM/FLOOR.md"
+  if [ ! -f "$WM/TRACE.tsv" ]; then
+    printf 'when\tcard\toutcome\n' > "$WM/TRACE.tsv"
+  fi
+  _fw_card_t=$(printf '%s' "$_fw_card" | tr '\t\n' '  ')
+  _fw_st_t=$(printf '%s' "$_fw_st" | tr '\t\n' '  ')
+  printf '%s\t%s\t%s\n' "$(iso_now)" "$_fw_card_t" "$_fw_st_t" >> "$WM/TRACE.tsv"
+}
+
+cmd_status() {
+  _st_card=$(cmd_next)
+  _st_card=$(printf '%s\n' "$_st_card" | awk 'NF { print; exit }')
+  floor_write "$_st_card"
+  say "$_st_card"
+}
 
 # n = slices.tsv data rows; before map-ready, n=0 → 40.
 loop_bound() {
@@ -2241,6 +2312,7 @@ cmd_run() {
 
 loop_halt() {
   _lh_card=$1
+  floor_write "$_lh_card"
   metrics_append "$_lh_card" "${_lp_slice:--}"
   say "$_lh_card"
   exit 1
@@ -2272,12 +2344,15 @@ cmd_loop() {
     if closed_is_closeable; then
       _lp_more=$(first_ready_slice)
       if [ -z "$_lp_more" ]; then
+        _lp_closed=$(awk 'NF { print; exit }' "$WM/CLOSED")
+        floor_write "${_lp_closed:-DONE}"
         cat "$WM/CLOSED"
         exit 0
       fi
     fi
     _lp_card=$("$WM_BIN" next) || exit 1
     _lp_card=$(printf '%s\n' "$_lp_card" | awk 'NF { print; exit }')
+    floor_write "$_lp_card"
     case $_lp_card in
       "NEXT INTAKE"|"NEXT CAST")
         loop_halt "STOP-ASK $_lp_card"
@@ -2438,6 +2513,8 @@ cmd_loop() {
           _lp_slice=
           continue
         fi
+        _lp_closed=$(awk 'NF { print; exit }' "$WM/CLOSED")
+        floor_write "${_lp_closed:-DONE}"
         cat "$WM/CLOSED"
         exit 0
         ;;
@@ -2445,6 +2522,8 @@ cmd_loop() {
         if closed_is_closeable; then
           _lp_more=$(first_ready_slice)
           if [ -z "$_lp_more" ]; then
+            _lp_closed=$(awk 'NF { print; exit }' "$WM/CLOSED")
+            floor_write "${_lp_closed:-DONE}"
             cat "$WM/CLOSED"
             exit 0
           fi

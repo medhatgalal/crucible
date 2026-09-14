@@ -5,10 +5,19 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-### Working-mode harness roster
+### Three-verb floor
 
-- `wm go` discovers grok, kiro-cli (kind **kiro**), and codex. Claude Code is
-  optional if present; it is not required. Two kinds = any two of grok/kiro/codex.
+- `wm go` discovers grok, kiro-cli (kind **kiro**), and codex only. Claude Code
+  is not on the discover list. Two kinds = any two of grok/kiro/codex.
+- First-class verbs: no-args help, `go`, `status`. `cast` / `loop` / `next` are
+  debug, not the start path.
+- `go` with no flags: missing `IDEA.md` plus a READY `BACKLOG.tsv` row is the
+  same as `go --next`; missing `IDEA.md` and no backlog is `STOP-ASK INTAKE`;
+  a closeable CLOSED plus another READY row archives and takes the next idea.
+  `go --next` remains an alias.
+- `go` and `status` write `.wm/FLOOR.md` (station SHAPE|DESIGN|BUILD|INSPECT|ANDON|DONE,
+  card, wip slice, andon, evidence paths). `.wm/TRACE.tsv` appends one line per
+  `go` / `status` / `loop` card transition. `status` does not increment FAIL count.
 - Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
   fewer than two of grok/kiro-cli/codex are on PATH or cannot auth. Missing
   `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
