@@ -13,6 +13,13 @@ independence fails closed when fewer than two of grok/kiro-cli/codex are on
 PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
 
+## 1.10.1 — send-back kernel
+
+`## Send-back` is a TSV (`word`, `card`, `cap`, `andon`) the kernel
+executes. Overlay a judging battery under `.crucible/skills/<bat>/`
+to change FAIL cap or MAP-REVISE card without editing `wm.sh`. CI
+runs `scripts/verify-working-mode-map.sh`.
+
 ## 1.10.0 — one-kind isolation
 
 HIGH proceeds with one of grok/kiro-cli/codex when maker and reviewer

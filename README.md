@@ -202,9 +202,10 @@ names the broken invariant:
 ./scripts/verify-agent-cycle.sh
 ./scripts/verify-drive.sh
 ./scripts/verify-working-mode.sh
+./scripts/verify-working-mode-map.sh
 ```
 
-`./scripts/verify-working-mode-adopt.sh`, `./scripts/verify-working-mode-map.sh`,
+`./scripts/verify-working-mode-adopt.sh`,
 `./scripts/verify-working-mode-blank-home.sh`, and
 `./scripts/verify-working-mode-quickstart.sh` exist as additional
 working-mode proofs. `./scripts/verify-working-mode-live.sh` is fail-closed

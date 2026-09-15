@@ -16,6 +16,7 @@ multi-agent independence stronger than the CHECKs in RULES.md and the guided cyc
 ./scripts/verify-quickstart.sh             # the quickstart a reader is given actually works
 ./scripts/verify-package.sh                # reproducible release archive
 ./scripts/verify-working-mode.sh            # working-mode kernel CHECKs (empty HOME)
+./scripts/verify-working-mode-map.sh        # working-mode map CHECKs (HIGH one-kind / pack / wall)
 /bin/sh -n crucible                        # it must stay POSIX sh
 ```
 
@@ -32,9 +33,10 @@ asserted anything.
 `scripts/verify-working-mode-live.sh` is fail-closed (`INDEPENDENCE_UNAVAILABLE`
 when fewer than two of grok/kiro-cli/codex are on PATH) and is **not** a required CI gate.
 
-`scripts/verify-working-mode-map.sh`, `scripts/verify-working-mode-blank-home.sh`,
-and `scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs
+`scripts/verify-working-mode-blank-home.sh` and
+`scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs
 (empty HOME; Example A copy-paste). They are not required CI steps.
+`scripts/verify-working-mode-map.sh` is a required Linux CI step.
 
 `scripts/verify-demand.sh` is the exception to read carefully. It is a recorded RED
 contract, not a gate. Its three assertions pass on the current engine because they document

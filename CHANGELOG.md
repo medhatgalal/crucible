@@ -28,6 +28,13 @@ All notable changes to this project are documented here. This project follows
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
 
+## [1.10.1] - 2026-09-15
+
+### Send-back kernel
+- `## Send-back` is a TSV (`word`, `card`, `cap`, `andon`) the kernel executes.
+- Overlay a judging battery under `.crucible/skills/<bat>/` to change FAIL cap or MAP-REVISE card without editing `wm.sh`.
+- CI runs `scripts/verify-working-mode-map.sh`.
+
 ## [1.10.0] - 2026-09-15
 
 ### One-kind isolation

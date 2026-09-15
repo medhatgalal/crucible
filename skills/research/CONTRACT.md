@@ -21,6 +21,9 @@
 
 None. Missing RESEARCH.md keeps NEXT RESEARCH.
 
+word	card	cap	andon
+-	-	-	-
+
 ## Andon
 
 None beyond kernel STOP-ASK.

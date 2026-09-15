@@ -1,8 +1,10 @@
 # Working-mode (opt-in)
 
-On **1.10.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.10.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
-swap-out batteries. Install with
+swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
+to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
+`wm.sh`. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
 Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
 or `status`. Runtime is the target repo plus one harness CLI. Skills live
@@ -127,8 +129,8 @@ HOME=$(mktemp -d) scripts/verify-working-mode.sh
 ```
 
 Extra proof that Example A still matches `docs/examples/working-mode/`
-(same extra-proof shape as `scripts/verify-working-mode-map.sh` and
-`scripts/verify-working-mode-blank-home.sh`; not a CI gate):
+(same extra-proof shape as `scripts/verify-working-mode-blank-home.sh`;
+not a CI gate; map CHECKs are `scripts/verify-working-mode-map.sh` on CI):
 
 ```sh
 HOME=$(mktemp -d) scripts/verify-working-mode-quickstart.sh

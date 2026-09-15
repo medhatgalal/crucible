@@ -239,6 +239,10 @@ require_fgrep "$HERE/skills/critique/CONTRACT.md" '/grade' \
   'critique CONTRACT Must-not must skip /grade'
 require_fgrep "$HERE/skills/critique/CONTRACT.md" '/ult' \
   'critique CONTRACT Must-not must skip /ult'
+require_fgrep "$HERE/skills/critique/CONTRACT.md" 'word	card	cap	andon' \
+  'critique CONTRACT Send-back must include word/card/cap/andon TSV'
+require_fgrep "$HERE/skills/review/CONTRACT.md" 'word	card	cap	andon' \
+  'review CONTRACT Send-back must include word/card/cap/andon TSV'
 require_grep "$HERE/skills/critique/SKILL.md" '[Ii]nvert' \
   'critique SKILL.md must include invert'
 require_grep "$HERE/skills/critique/SKILL.md" '[Aa]dversarial' \
@@ -1132,6 +1136,34 @@ else
 fi
 refuses 'MAP-REVISE cannot start maker' 'MAP-ACCEPT' "$WM" run maker-falsify
 
+setup_map_repo t-sendback-revise-overlay
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper sendback overlay' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready sendback overlay' "$WM" map-ready || true
+write_map_return bob MAP-REVISE
+impl_ok 'map-verdict sendback overlay' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+mkdir -p .crucible/skills/critique
+cp "$HERE/skills/critique/SKILL.md" .crucible/skills/critique/SKILL.md
+cp "$HERE/skills/critique/CONTRACT.md" .crucible/skills/critique/CONTRACT.md
+# Rewrite only the TSV data row; keep header.
+awk 'BEGIN{FS=OFS="\t"}
+  $1=="MAP-REVISE" { $2="STOP-ASK"; print; next }
+  { print }
+' .crucible/skills/critique/CONTRACT.md > .crucible/skills/critique/CONTRACT.md.tmp
+mv .crucible/skills/critique/CONTRACT.md.tmp .crucible/skills/critique/CONTRACT.md
+if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q '^STOP-ASK' \
+    && ok || bad "overlay critique Send-back MAP-REVISE must emit STOP-ASK, got $card"
+  printf '%s\n' "$card" | grep -q 'NEXT MAP' \
+    && bad "overlay must not keep hardcoded NEXT MAP, got $card" || ok
+else
+  # STOP-ASK may be printed then exit 0 from next; if next dies, still ok if err matches
+  err=$(cat "$ERR")
+  printf '%s\n' "$err" | grep -q 'STOP-ASK' \
+    && ok || bad "overlay MAP-REVISE next refused without STOP-ASK: $err"
+fi
+
 setup_map_repo t-cadence-stop
 write_architecture_fixture alice LOW no
 impl_ok 'record-mapper STOP-ASK map word' "$WM" record-mapper --from MAP.md || true
@@ -1678,6 +1710,11 @@ if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
   bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'
 else
   ok
+fi
+if grep -q 'sendback_lookup' "$WM"; then
+  ok
+else
+  bad 'wm.sh must define sendback_lookup'
 fi
 
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
