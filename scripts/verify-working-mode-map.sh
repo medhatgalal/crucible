@@ -1535,6 +1535,27 @@ fi
 grep -q 'WM-SLICE-s1' src/widget/api.py && ok || bad 'map loop s1 maker-build did not land'
 grep -q 'WM-SLICE-s2' src/widget/api.py && ok || bad 'map loop s2 maker-build did not land'
 
+# Session: each wm run mints a distinct session line in the brief.
+setup_map_repo t-session-ids
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper session' "$WM" record-mapper --from MAP.md || true
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+b1=$(ls .wm/briefs/specifier.* 2>/dev/null | head -1)
+s1=
+[ -n "$b1" ] && s1=$(awk -F ': ' '$1=="session"{print $2; exit}' "$b1")
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+b2=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+s2=
+[ -n "$b2" ] && s2=$(awk -F ': ' '$1=="session"{print $2; exit}' "$b2")
+if [ -n "$s1" ] && [ -n "$s2" ] && [ "$s1" != "$s2" ]; then
+  ok
+else
+  bad "wm run must mint distinct session ids, got s1=$s1 s2=$s2"
+fi
+printf '%s\n' "$s1" | grep -E -q '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' \
+  && ok || bad "session id must be a UUID, got $s1"
+
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
 if [ -z "$home_leftovers" ]; then

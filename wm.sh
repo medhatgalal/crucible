@@ -308,6 +308,7 @@ write_invoke_log() {
   _wi_agent=$2
   _wi_cmd=$3
   _wi_pid=$4
+  _wi_session=${5:-}
   ensure_wm
   mkdir -p "$WM/invoke"
   _wi_am=
@@ -318,6 +319,9 @@ write_invoke_log() {
   printf 'role: %s\nagent: %s\ncommand: %s\npid: %s\nwhen: %s\nwriter: wm-run\nafter-maker: %s\nISOLATION: %s\n' \
     "$_wi_role" "$_wi_agent" "$_wi_cmd" "$_wi_pid" "$(date +%s)" "$_wi_am" "$_wi_iso" \
     > "$WM/invoke/${_wi_role}.log"
+  if [ -n "$_wi_session" ]; then
+    printf 'session: %s\n' "$_wi_session" >> "$WM/invoke/${_wi_role}.log"
+  fi
 }
 
 reviewer_exec_after_maker() {
@@ -851,15 +855,30 @@ go_consume_backlog() {
   backlog_set_status "$_gn_id" INFLIGHT
 }
 
+session_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr 'A-Z' 'a-z'
+    return 0
+  fi
+  od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' | awk '{
+    if (length($0) < 32) exit 1
+    printf "%s-%s-4%s-a%s-%s\n", substr($0,1,8), substr($0,9,4), substr($0,14,3), substr($0,18,3), substr($0,21,12)
+  }'
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
+  _wb_session=${3:-}
   _wb_wid=$(workid_short)
   ensure_wm
   _wb_path="$WM/briefs/${_wb_role}.${_wb_wid}.md"
   {
     printf 'Read this file and follow it exactly.\n'
     printf 'role: %s\nagent: %s\n' "$_wb_role" "$_wb_agent"
+    if [ -n "$_wb_session" ]; then
+      printf 'session: %s\n' "$_wb_session"
+    fi
     case $_wb_role in
       maker-falsify)
         printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts. If the in-flight module has a test_entrypoint, the FALSIFIER command must include that path.\n'
@@ -2267,7 +2286,8 @@ cmd_run() {
     _ru_judge_snap="$WM/.judge.snap.$$"
     snapshot_judge_artifacts "$_ru_judge_snap"
   fi
-  _ru_brief=$(write_brief "$_ru_role" "$_ru_agent")
+  _ru_session=$(session_uuid)
+  _ru_brief=$(write_brief "$_ru_role" "$_ru_agent" "$_ru_session")
   [ -f "$_ru_brief" ] || die "brief missing"
   printf 'role: %s\nagent: %s\n' "$_ru_role" "$_ru_agent" > "$WM/dispatch"
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
@@ -2289,6 +2309,8 @@ cmd_run() {
   # path splits sh -c. Escape \, ", $, and ` for POSIX double quotes.
   WM_BRIEF=$_ru_absbrief
   export WM_BRIEF
+  WM_SESSION=$_ru_session
+  export WM_SESSION
   _ru_expanded=$(printf '%s\n' "$_ru_command" | awk '
     function quote_dq(s,    i, n, c, out) {
       n = length(s)
@@ -2301,13 +2323,22 @@ cmd_run() {
       }
       return out "\""
     }
-    BEGIN { b = quote_dq(ENVIRON["WM_BRIEF"]) }
+    BEGIN {
+      b = quote_dq(ENVIRON["WM_BRIEF"])
+      sess = quote_dq(ENVIRON["WM_SESSION"])
+    }
     {
       s = $0
       out = ""
       while ((i = index(s, "{BRIEF}")) > 0) {
         out = out substr(s, 1, i - 1) b
         s = substr(s, i + 7)
+      }
+      s = out s
+      out = ""
+      while ((i = index(s, "{SESSION}")) > 0) {
+        out = out substr(s, 1, i - 1) sess
+        s = substr(s, i + 9)
       }
       print out s
     }
@@ -2316,7 +2347,7 @@ cmd_run() {
   BRIEF=$_ru_absbrief
   export BRIEF
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
-    write_invoke_log "$_ru_role" "$_ru_agent" "$_ru_expanded" "$$"
+    write_invoke_log "$_ru_role" "$_ru_agent" "$_ru_expanded" "$$" "$_ru_session"
   fi
   set +e
   sh -c "$_ru_expanded" > "$WM/worker.out" 2>"$WM/worker.err"
