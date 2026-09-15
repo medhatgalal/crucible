@@ -13,6 +13,16 @@ independence fails closed when fewer than two of grok/kiro-cli/codex are on
 PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
 
+## 1.10.0 — one-kind isolation
+
+HIGH proceeds with one of grok/kiro-cli/codex when maker and reviewer
+agent ids differ. FLOOR/CLOSED `independence: SUBAGENT-ISOLATED`. Two
+kinds still split maker/reviewer (`CROSS-FAMILY`). One kind is never
+labelled CROSS-FAMILY. Each `wm run` mints a UUID `session:` (Grok
+`--session-id`). Brief embeds only that station’s ROUTING battery.
+Reviewer/scout that mutate owned product paths are refused. MAP-HUMAN
+still required for HIGH/live.
+
 ## 1.9.0 — factory plants
 
 `go --next` drains `BACKLOG.tsv` one map at a time. Optional `REPO.md`

@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.9.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.10.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
@@ -67,7 +67,8 @@ printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
 
 ### Example B — HIGH next slice needs a sign
 
-A HIGH `MAP.md` row (two harness kinds so 3d does not STOP-ASK):
+A HIGH `MAP.md` row (`MAP-HUMAN` required; two kinds is CROSS-FAMILY,
+one kind is SUBAGENT-ISOLATED — never fake CROSS-FAMILY):
 
 ```
 s1	product	product/hello.txt	-	HIGH
@@ -299,9 +300,13 @@ Without a valid `MAP-HUMAN` on HIGH/live,
 distinct maker and reviewer **agent ids**. When two harnesses are
 cast, maker `kind` ≠ reviewer `kind` and FLOOR/CLOSED record
 `independence: CROSS-FAMILY`. If only one harness is present, HIGH
-still proceeds after `MAP-HUMAN` with isolated sessions and station
-packs; FLOOR/CLOSED record `independence: SUBAGENT-ISOLATED`. Never
-fake CROSS-FAMILY. LOW slices may use the same kind.
+still proceeds after `MAP-HUMAN` with isolated sessions, station
+packs, and an owned-path wall; FLOOR/CLOSED record
+`independence: SUBAGENT-ISOLATED`. Never fake CROSS-FAMILY. LOW
+slices may use the same kind. Each `wm run` mints a UUID `session:`
+(Grok `--session-id {SESSION}`). The brief embeds only that station’s
+ROUTING battery. Reviewer/scout that mutate owned product paths are
+refused. MAP-HUMAN still required for HIGH/live.
 
 ## Operator commands
 
@@ -356,14 +361,15 @@ whose command is the CLI:
 
 ```text
 name	kind	model	effort	command
-alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
+alice	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
 bob	kiro	default	high	kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'
 carol	codex	gpt	high	codex exec -- 'read {BRIEF} and follow it exactly'
-dave	grok	grok-4	high	grok -p --prompt-file {BRIEF}
+dave	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
 ```
 
-`{BRIEF}` is the absolute brief path; the engine quotes the replacement.
-Do not wrap `{BRIEF}` in quotes in the command. Skills resolve from repo-root
-`.grok/skills/`, `.claude/skills/`, `.agents/skills/` — not `$HOME`. Mapper,
-critique, and maker must be distinct agents. Reviewer re-runs the named
-falsifier.
+`{BRIEF}` is the absolute brief path; `{SESSION}` is a fresh UUID per `wm run`.
+The engine quotes both replacements. Do not wrap `{BRIEF}` or `{SESSION}` in
+quotes in the command. One kind is never labelled CROSS-FAMILY. Skills
+resolve from repo-root `.grok/skills/`, `.claude/skills/`, `.agents/skills/`
+— not `$HOME`. Mapper, critique, and maker must be distinct agents.
+Reviewer re-runs the named falsifier.

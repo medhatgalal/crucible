@@ -30,6 +30,9 @@ Non-interactive one-shot: `grok --session-id {SESSION} --no-subagents -p --promp
 (engine quotes the path and session id). Interactive: `grok --cwd .` then
 open `{BRIEF}`. Discover (`wm go`) uses that one-shot line so each station
 gets a distinct Grok session rather than one chat wearing four hats.
+One kind is never labelled CROSS-FAMILY; FLOOR/CLOSED record
+`SUBAGENT-ISOLATED` when maker and reviewer share a kind (distinct agent
+ids). Two kinds is `CROSS-FAMILY`. MAP-HUMAN still required for HIGH/live.
 
 ## Skills
 
