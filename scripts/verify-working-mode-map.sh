@@ -261,6 +261,8 @@ require_grep "$HERE/skills/review/SKILL.md" 're-run' \
   'review SKILL.md must require re-run of the named falsifier'
 require_fgrep "$HERE/skills/review/SKILL.md" 'CLOSED PASS' \
   'review SKILL.md must say map words are not CLOSED PASS'
+require_fgrep "$HERE/skills/review/SKILL.md" 'Do not write owned product paths' \
+  'review SKILL.md Must-not must refuse writing owned product paths'
 
 # Loop-design: craft/audit/debrief only — not the delivery walker
 require_grep "$HERE/skills/loop-design/CONTRACT.md" '[Cc]raft' \
@@ -1624,6 +1626,52 @@ WM_ENGINE= .wm/bin/wm run specifier >/dev/null 2>"$ERR" || true
 kb=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
 [ -n "$kb" ] && grep -q 'RULE 26' "$kb" && grep -q '## Station pack' "$kb" \
   && ok || bad "copied .wm/bin/wm specifier brief must embed station pack (RULE 26), brief=$(cat $kb 2>/dev/null || echo ABSENT)"
+
+# Reviewer/scout that mutate owned product paths are refused (CHECK after exec, no rollback).
+setup_map_repo t-rev-owned-wall
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper wall' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready wall' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict wall' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+mkdir -p tools
+cat > tools/reviewer-mutates.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf '\nMUTATED\n' >> src/widget/api.py
+mkdir -p .wm/return reviews
+printf '## Code\nx\n## Testing\ny\n' > reviews/review.md
+printf 'WORD: FAIL\nEVIDENCE: none\n' > .wm/return/dave.md
+EOF
+chmod +x tools/reviewer-mutates.sh
+"$WM" cast maker carol grok 'true' >/dev/null
+"$WM" cast reviewer dave grok './tools/reviewer-mutates.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm wall >/dev/null
+# Need a last-maker-run? reviewer may run without FALSIFIER for this CHECK — cmd_run reviewer does not require FALSIFIER.
+refuses 'reviewer that writes owned path is refused' 'owned path' \
+  "$WM" run reviewer
+grep -q MUTATED src/widget/api.py && ok || bad 'fixture must have attempted the write (CHECK is after exec)'
+
+setup_map_repo t-scout-owned-wall
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper scout wall' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready scout wall' "$WM" map-ready || true
+write_spec_fit
+mkdir -p tools
+cat > tools/scout-mutates.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf '\nMUTATED\n' >> src/widget/api.py
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
+EOF
+chmod +x tools/scout-mutates.sh
+"$WM" cast scout bob grok './tools/scout-mutates.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm scout-wall >/dev/null
+refuses 'scout that writes owned path is refused' 'owned path' \
+  "$WM" run scout
+grep -q MUTATED src/widget/api.py && ok || bad 'scout fixture must have attempted the write (CHECK is after exec)'
 
 # 11c still holds
 if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then

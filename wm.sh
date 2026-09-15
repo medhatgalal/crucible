@@ -384,6 +384,39 @@ judge_artifacts_changed() {
   return 1
 }
 
+snapshot_owned_product() {
+  _so_out=$1
+  : > "$_so_out"
+  _so_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
+  while IFS= read -r _so_p || [ -n "$_so_p" ]; do
+    [ -n "$_so_p" ] || continue
+    case $_so_p in .wm|.wm/*|reviews|reviews/*) continue ;; esac
+    [ -f "$_so_p" ] || continue
+    printf '%s %s\n' "$_so_p" "$(file_sha256 "$_so_p")" >> "$_so_out"
+  done <<EOF
+$_so_list
+EOF
+}
+
+owned_product_changed() {
+  _oc_snap=$1
+  _oc_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
+  while IFS= read -r _oc_p || [ -n "$_oc_p" ]; do
+    [ -n "$_oc_p" ] || continue
+    case $_oc_p in .wm|.wm/*|reviews|reviews/*) continue ;; esac
+    [ -f "$_oc_p" ] || continue
+    _oc_new=$(file_sha256 "$_oc_p")
+    _oc_old=
+    [ -f "$_oc_snap" ] && _oc_old=$(awk -v p="$_oc_p" '$1==p { print $2; exit }' "$_oc_snap")
+    if [ -z "$_oc_old" ] || [ "$_oc_old" != "$_oc_new" ]; then
+      return 0
+    fi
+  done <<EOF
+$_oc_list
+EOF
+  return 1
+}
+
 role_brief_exists() {
   _rb_role=$1
   for _rb_f in "$WM/briefs/${_rb_role}".*; do
@@ -2423,14 +2456,27 @@ cmd_run() {
   unset WM_BRIEF
   BRIEF=$_ru_absbrief
   export BRIEF
+  _ru_owned_snap=
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
     write_invoke_log "$_ru_role" "$_ru_agent" "$_ru_expanded" "$$" "$_ru_session"
+    _ru_owned_snap="$WM/.owned.snap.$$"
+    snapshot_owned_product "$_ru_owned_snap"
   fi
   set +e
   sh -c "$_ru_expanded" > "$WM/worker.out" 2>"$WM/worker.err"
   _ru_rc=$?
   set -e
   rm -f "$WM/dispatch"
+  if [ -n "$_ru_owned_snap" ]; then
+    if owned_product_changed "$_ru_owned_snap"; then
+      rm -f "$_ru_owned_snap"
+      if [ "$_ru_role" = scout ]; then
+        die "scout wrote owned paths"
+      fi
+      die "reviewer wrote owned paths"
+    fi
+    rm -f "$_ru_owned_snap"
+  fi
   if [ "$_ru_role" = maker-falsify ] || [ "$_ru_role" = maker-build ]; then
     write_last_maker_run "$(date +%s).$$" "$_ru_role" "$(date +%s)"
     if [ -n "$_ru_judge_snap" ] && judge_artifacts_changed "$_ru_judge_snap"; then
