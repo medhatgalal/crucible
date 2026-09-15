@@ -892,6 +892,18 @@ fi
 [ -d src/widget ] && ok || bad 'map-ready must mkdir src/widget'
 [ -f src/widget/.gitkeep ] && ok || bad 'map-ready must touch src/widget/.gitkeep'
 
+setup_map_repo t-greenfield-two-roots
+mkdir -p architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\tsrc/widget\tsrc/widget/api.py\ttests/widget\tsrc/widget/api.py\tno\n' \
+  >> architecture/modules.md
+printf 'gadget\tsrc/gadget\tsrc/gadget/api.py\ttests/gadget\tsrc/gadget/api.py\tno\n' \
+  >> architecture/modules.md
+[ ! -d src/widget ] && [ ! -d src/gadget ] && ok || bad 'two-root greenfield must start empty'
+impl_ok 'greenfield two missing roots still mkdir' "$WM" check-module-fit || true
+[ -d src/widget ] && [ -d src/gadget ] && ok || bad 'greenfield two-root must mkdir both packages'
+
 # Brownfield: existing src/widget, modules invent src/gadget → refuse without QUESTIONS.
 setup_map_repo t-shape-new-pkg-no-q
 write_architecture_fixture alice LOW no

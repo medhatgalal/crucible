@@ -1744,6 +1744,10 @@ $1"
   [ -f architecture/modules.md ] || die "architecture/modules.md missing"
   _cm_roots=$(list_module_roots) || _cm_roots=
   [ -n "$_cm_roots" ] || die "architecture/modules.md names no module roots"
+  _cm_had_pkg=0
+  if existing_product_package; then
+    _cm_had_pkg=1
+  fi
   _cm_r=
   while IFS= read -r _cm_r || [ -n "$_cm_r" ]; do
     [ -n "$_cm_r" ] || continue
@@ -1751,7 +1755,7 @@ $1"
       *..*|/*) die "invalid module root: $_cm_r" ;;
     esac
     if [ ! -d "$_cm_r" ]; then
-      if is_product_package_root "$_cm_r" && existing_product_package; then
+      if is_product_package_root "$_cm_r" && [ "$_cm_had_pkg" -eq 1 ]; then
         [ -s QUESTIONS.md ] || die "new top-level package requires QUESTIONS.md"
         [ -s ANSWERS.md ] || die "QUESTIONS.md without ANSWERS.md"
       fi
