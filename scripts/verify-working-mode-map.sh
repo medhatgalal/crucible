@@ -944,8 +944,10 @@ require_fgrep "$HERE/docs/working-mode.md" 'map-ready' \
   'docs/working-mode.md must name wm map-ready'
 require_fgrep "$HERE/docs/working-mode.md" 'map-verdict' \
   'docs/working-mode.md must name wm map-verdict'
+require_fgrep "$HERE/docs/working-mode.md" 'SUBAGENT-ISOLATED' \
+  'docs/working-mode.md must name SUBAGENT-ISOLATED for one-kind HIGH'
 require_fgrep "$HERE/docs/working-mode.md" 'STOP-ASK' \
-  'docs/working-mode.md must name STOP-ASK for HIGH + one kind (3d)'
+  'docs/working-mode.md must name STOP-ASK'
 if [ -f "$HERE/docs/working-mode.md" ] && grep -q 'fake CROSS-FAMILY' "$HERE/docs/working-mode.md"; then
   ok
 else
@@ -1159,7 +1161,8 @@ impl_ok 'record-mapper for map-ready CHANGES-ARCHITECTURE' "$WM" record-mapper -
 printf '\nCHANGES-ARCHITECTURE\n' >> MAP.md
 refuses 'map-ready CHANGES-ARCHITECTURE is STOP' 'STOP|CHANGES-ARCHITECTURE' "$WM" map-ready
 
-# 3d: HIGH + one kind → STOP-ASK, not fake CROSS-FAMILY; two kinds allowed after MAP-HUMAN.
+# 3d superseded 2026-09-15: HIGH + one kind + distinct agents + MAP-HUMAN proceeds.
+# Label SUBAGENT-ISOLATED. Never fake CROSS-FAMILY.
 setup_map_repo t-high-one-kind
 write_architecture_fixture alice HIGH no
 impl_ok 'record-mapper HIGH one-kind' "$WM" record-mapper --from MAP.md || true
@@ -1169,25 +1172,29 @@ impl_ok 'map-verdict HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
 write_map_human operator MAP.md
 if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
+    && ok || bad "HIGH + one kind with MAP-HUMAN next must emit NEXT SLICE, got $card"
   printf '%s\n' "$card" | grep -q 'STOP-ASK' \
-    && ok || bad "HIGH + one kind next must STOP-ASK, got $card"
+    && bad "HIGH + one kind must not STOP-ASK when agents differ (got $card)" || ok
   printf '%s\n' "$card" | grep -q 'CROSS-FAMILY' \
     && bad "HIGH + one kind must not fake CROSS-FAMILY (got $card)" || ok
 else
   bad "HIGH + one kind next refused: $(cat "$ERR")"
 fi
+"$WM" status >/dev/null 2>"$ERR" || true
+if [ -f .wm/FLOOR.md ] && grep -q '^independence: SUBAGENT-ISOLATED$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH one-kind FLOOR must say independence: SUBAGENT-ISOLATED, got $(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
+fi
+if grep -q 'CROSS-FAMILY' .wm/FLOOR.md 2>/dev/null; then
+  bad 'HIGH one-kind FLOOR must not say CROSS-FAMILY'
+else
+  ok
+fi
 rm -f .wm/FALSIFIER
-refuses 'HIGH + one kind cannot start maker' 'STOP-ASK' "$WM" run maker-falsify
-if [ -f .wm/FALSIFIER ]; then
-  bad 'HIGH + one kind must not exec maker'
-else
-  ok
-fi
-if err=$(cat "$ERR" 2>/dev/null || true); printf '%s\n' "$err" | grep -q 'CROSS-FAMILY'; then
-  bad "HIGH + one kind refuse must not say CROSS-FAMILY: $err"
-else
-  ok
-fi
+impl_ok 'HIGH + one kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
+[ -f .wm/FALSIFIER ] && ok || bad 'HIGH one-kind maker-falsify must write FALSIFIER'
 
 setup_map_repo t-high-two-kind
 write_architecture_fixture alice HIGH no
@@ -1207,6 +1214,12 @@ if card=$("$WM" next 2>"$ERR"); then
     && bad "3d must not print CROSS-FAMILY as a second engine (got $card)" || ok
 else
   bad "HIGH two-kind next refused: $(cat "$ERR")"
+fi
+"$WM" status >/dev/null 2>"$ERR" || true
+if [ -f .wm/FLOOR.md ] && grep -q '^independence: CROSS-FAMILY$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH two-kind FLOOR must say independence: CROSS-FAMILY, got $(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
 fi
 impl_ok 'HIGH two-kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
 [ -f .wm/FALSIFIER ] && ok || bad 'HIGH two-kind maker-falsify must write FALSIFIER'
@@ -1441,22 +1454,37 @@ else
   bad 'scout brief missing after wm run scout'
 fi
 
-# HIGH + one kind: STOP-ASK (3d), terminal.
+# HIGH + one kind + MAP-HUMAN + brick workers → CLOSED PASS, SUBAGENT-ISOLATED.
 setup_map_repo t-loop-high-one-kind
 write_architecture_fixture alice HIGH no
 impl_ok 'record-mapper loop HIGH one-kind' "$WM" record-mapper --from MAP.md || true
 impl_ok 'map-ready loop HIGH one-kind' "$WM" map-ready || true
 write_map_return bob MAP-ACCEPT
 impl_ok 'map-verdict loop HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
-cast_brick_panel carol dave grok grok
 write_map_human operator MAP.md
+write_spec_fit
+write_map_loop_brick
+"$WM" cast maker carol grok './tools/map-loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/map-loop-reviewer.sh {BRIEF}' >/dev/null
+git add -A
+git commit -qm 'HIGH one-kind loop workers' >/dev/null
 run_map_loop
 assert_map_loop_foreground 't-loop-high-one-kind'
-printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
-  && ok || bad "HIGH one-kind loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "HIGH one-kind loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
+fi
+[ "$LOOP_RC" -eq 0 ] && ok || bad "HIGH one-kind loop exit $LOOP_RC err=$(cat "$ERR")"
 printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'CROSS-FAMILY' \
   && bad 'HIGH one-kind loop must not fake CROSS-FAMILY' || ok
-[ "$LOOP_RC" -ne 0 ] && ok || bad 'HIGH one-kind loop must not exit 0'
+if grep -q '^independence: SUBAGENT-ISOLATED$' .wm/CLOSED \
+  && grep -q '^independence: SUBAGENT-ISOLATED$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH one-kind CLOSED/FLOOR must record SUBAGENT-ISOLATED, closed=$(cat .wm/CLOSED) floor=$(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'HIGH one-kind loop did not exec the reviewer CLI'
 
 # Honest LOW map: NEXT SLICE then brick walk to CLOSED PASS (one slice in flight).
 setup_map_repo t-loop-slice-pass

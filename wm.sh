@@ -285,7 +285,17 @@ guard_command() {
   esac
 }
 
-honest_isolation() { printf 'SUBAGENT-ISOLATED\n'; }
+honest_isolation() {
+  _hi_mk=$(panel_kind maker)
+  _hi_rk=$(panel_kind reviewer)
+  if [ -n "$_hi_mk" ] && [ "$_hi_mk" != - ] \
+    && [ -n "$_hi_rk" ] && [ "$_hi_rk" != - ] \
+    && [ "$_hi_mk" != "$_hi_rk" ]; then
+    printf 'CROSS-FAMILY\n'
+    return 0
+  fi
+  printf 'SUBAGENT-ISOLATED\n'
+}
 
 write_last_maker_run() {
   ensure_wm
@@ -304,8 +314,9 @@ write_invoke_log() {
   if [ -f "$WM/last-maker-run" ]; then
     _wi_am=$(kv_get "$WM/last-maker-run" id)
   fi
-  printf 'role: %s\nagent: %s\ncommand: %s\npid: %s\nwhen: %s\nwriter: wm-run\nafter-maker: %s\nISOLATION: SUBAGENT-ISOLATED\n' \
-    "$_wi_role" "$_wi_agent" "$_wi_cmd" "$_wi_pid" "$(date +%s)" "$_wi_am" \
+  _wi_iso=$(honest_isolation)
+  printf 'role: %s\nagent: %s\ncommand: %s\npid: %s\nwhen: %s\nwriter: wm-run\nafter-maker: %s\nISOLATION: %s\n' \
+    "$_wi_role" "$_wi_agent" "$_wi_cmd" "$_wi_pid" "$(date +%s)" "$_wi_am" "$_wi_iso" \
     > "$WM/invoke/${_wi_role}.log"
 }
 
@@ -1212,9 +1223,13 @@ human_sign_present() {
 high_kinds_ok() {
   _hk_mk=$(panel_kind maker)
   _hk_rk=$(panel_kind reviewer)
+  _hk_ma=$(panel_agent maker)
+  _hk_ra=$(panel_agent reviewer)
   [ -n "$_hk_mk" ] && [ "$_hk_mk" != - ] || return 1
   [ -n "$_hk_rk" ] && [ "$_hk_rk" != - ] || return 1
-  [ "$_hk_mk" != "$_hk_rk" ]
+  [ -n "$_hk_ma" ] && [ "$_hk_ma" != - ] || return 1
+  [ -n "$_hk_ra" ] && [ "$_hk_ra" != - ] || return 1
+  [ "$_hk_ma" != "$_hk_ra" ]
 }
 
 slice_risk() {
@@ -1453,7 +1468,7 @@ guard_map_before_maker() {
     _gm_risk=$(emit_map_rows | awk -F '\t' 'NF >= 5 { print $5; exit }')
   fi
   if [ "$_gm_risk" = HIGH ]; then
-    high_kinds_ok || die "STOP-ASK: HIGH requires distinct maker and reviewer kinds"
+    high_kinds_ok || die "STOP-ASK: HIGH requires distinct maker and reviewer agents"
   fi
 }
 
@@ -1910,7 +1925,7 @@ cmd_close() {
   done
   if [ "$_cl_pass" -eq 1 ]; then
     [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || die "PASS path requires green.status=ok"
-    printf 'CLOSED PASS\n' > "$WM/CLOSED"
+    printf 'CLOSED PASS\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED PASS"
     metrics_append "CLOSED PASS" -
     if close_append_lesson "$_cl_lesson"; then
@@ -1919,7 +1934,7 @@ cmd_close() {
     return 1
   fi
   if [ "$_cl_nobuild" -eq 1 ]; then
-    printf 'CLOSED NO-BUILD\n' > "$WM/CLOSED"
+    printf 'CLOSED NO-BUILD\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
     metrics_append "CLOSED NO-BUILD" -
     if close_append_lesson "$_cl_lesson"; then
@@ -2148,6 +2163,7 @@ floor_write() {
     printf 'card: %s\n' "$_fw_card"
     printf 'wip: %s\n' "$_fw_wip"
     printf 'andon: %s\n' "$_fw_andon"
+    printf 'independence: %s\n' "$(honest_isolation)"
     printf 'evidence:\n'
     [ -f "$WM/FALSIFIER" ] && printf '  %s\n' "$WM/FALSIFIER"
     [ -f "$WM/CLOSED" ] && printf '  %s\n' "$WM/CLOSED"

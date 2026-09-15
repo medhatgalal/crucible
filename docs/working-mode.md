@@ -295,11 +295,13 @@ Without a valid `MAP-HUMAN` on HIGH/live,
 
 ## Risk-triggered reviewer (3d)
 
-3d is **label + ROUTING**, not a second engine. HIGH slices require the
-reviewer’s panel `kind` to differ from the maker’s `kind` when two harnesses
-are cast. If only one harness is present,
-`.crucible/<program>/wm.sh next` / `.crucible/<program>/wm.sh run maker-falsify`
-are `STOP-ASK` rather than fake CROSS-FAMILY. LOW slices may use the same kind.
+3d is **label + ROUTING**, not a second engine. HIGH slices require
+distinct maker and reviewer **agent ids**. When two harnesses are
+cast, maker `kind` ≠ reviewer `kind` and FLOOR/CLOSED record
+`independence: CROSS-FAMILY`. If only one harness is present, HIGH
+still proceeds after `MAP-HUMAN` with isolated sessions and station
+packs; FLOOR/CLOSED record `independence: SUBAGENT-ISOLATED`. Never
+fake CROSS-FAMILY. LOW slices may use the same kind.
 
 ## Operator commands
 
