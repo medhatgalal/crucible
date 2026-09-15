@@ -1766,6 +1766,91 @@ refuses 'scout that writes owned path is refused' 'owned path' \
   "$WM" run scout
 grep -q MUTATED src/widget/api.py && ok || bad 'scout fixture must have attempted the write (CHECK is after exec)'
 
+# In-flight slice: maker-falsify runs in a git worktree.
+setup_map_repo t-bet-worktree
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper bet wt' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready bet wt' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict bet wt' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+mkdir -p tools
+cat > tools/bet-falsify.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm src/widget
+printf 'grep -q BET-WT src/widget/api.py && test -d tests/widget\n' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+else
+  h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+fi
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: carol\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+printf '\nBET-WT\n' >> src/widget/api.py
+EOF
+chmod +x tools/bet-falsify.sh
+"$WM" cast maker carol grok './tools/bet-falsify.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm bet-wt >/dev/null
+printf 'id: s1\n' > .wm/slice-in-flight
+impl_ok 'maker-falsify in bet worktree' "$WM" run maker-falsify || true
+[ -f .wm/slice-worktree ] && grep -q '^path: ' .wm/slice-worktree \
+  && ok || bad "slice-worktree missing after maker-falsify, $(cat .wm/slice-worktree 2>/dev/null || echo ABSENT)"
+wt=
+if [ -f .wm/slice-worktree ]; then
+  wt=$(awk -F ': ' '$1=="path"{print $2; exit}' .wm/slice-worktree)
+fi
+[ -n "$wt" ] && [ -e "$wt/.git" ] || [ -f "$wt/.git" ] \
+  && ok || bad "bet worktree path missing: $wt"
+git worktree list | grep -q "worktrees/s1" \
+  && ok || bad "git worktree list must contain worktrees/s1: $(git worktree list)"
+grep -q BET-WT src/widget/api.py \
+  && ok || bad 'product write must sync back to main checkout'
+[ -f .wm/FALSIFIER ] && ok || bad 'FALSIFIER must land in main .wm (symlink)'
+
+# Specifier does not create a bet worktree.
+setup_map_repo t-bet-no-wt-specifier
+write_architecture_fixture alice LOW no
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+if [ -f .wm/slice-worktree ] || ls .wm/worktrees/* >/dev/null 2>&1; then
+  bad 'specifier run must not create a bet worktree'
+else
+  ok
+fi
+
+# Full loop still CLOSED PASS and worktree is gone after.
+setup_map_repo t-bet-loop-cleanup
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper bet loop' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready bet loop' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict bet loop' "$WM" map-verdict .wm/return/bob.md || true
+write_map_human operator MAP.md
+write_spec_fit
+write_map_loop_brick
+"$WM" cast maker carol grok './tools/map-loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/map-loop-reviewer.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm bet-loop >/dev/null
+run_map_loop
+assert_map_loop_foreground 't-bet-loop-cleanup'
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "bet loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+if git worktree list | grep -q worktrees; then
+  bad "bet worktree must be removed after CLOSE, list=$(git worktree list)"
+else
+  ok
+fi
+[ ! -f .wm/slice-worktree ] && ok || bad 'slice-worktree must be gone after CLOSE'
+
 # 11c still holds
 if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
   bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'
