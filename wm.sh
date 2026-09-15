@@ -866,6 +866,62 @@ session_uuid() {
   }'
 }
 
+# ROUTING.tsv column 3 for this station. No pack for maker.
+station_battery() {
+  _stb_role=$1
+  _stb_rf=$(routing_file) || return 0
+  _stb_ph=
+  case $_stb_role in
+    specifier)
+      case $(prebrick_next_card) in
+        "NEXT RESEARCH") _stb_ph=RESEARCH ;;
+        "NEXT REPO") _stb_ph=REPO ;;
+        *) _stb_ph=MAP ;;
+      esac
+      ;;
+    scout) _stb_ph=ATTACK-MAP ;;
+    reviewer) _stb_ph=BRICK ;;
+    *) return 0 ;;
+  esac
+  awk -F '\t' -v p="$_stb_ph" 'NR > 1 && $1 == p { print $3; exit }' "$_stb_rf"
+}
+
+# Resolve $bat under cwd overlay, then ENGINE / WM_ENGINE / $0 sibling.
+skill_dir() {
+  bat=$1
+  [ -n "$bat" ] && [ "$bat" != - ] || return 1
+  if [ -d ".crucible/skills/${bat}" ]; then
+    printf '%s\n' ".crucible/skills/${bat}"
+    return 0
+  fi
+  if [ -d "skills/${bat}" ]; then
+    printf '%s\n' "skills/${bat}"
+    return 0
+  fi
+  _sd_src=
+  if [ -f "$WM/ENGINE" ]; then
+    _sd_src=$(kv_get "$WM/ENGINE" engine)
+  fi
+  [ -n "$_sd_src" ] || _sd_src=${WM_ENGINE:-$0}
+  _sd_root=$(CDPATH= cd "$(dirname "$_sd_src")" && pwd)
+  if [ -d "${_sd_root}/skills/${bat}" ]; then
+    printf '%s\n' "${_sd_root}/skills/${bat}"
+    return 0
+  fi
+  return 1
+}
+
+append_station_pack() {
+  _ap_role=$1
+  bat=$(station_battery "$_ap_role") || return 0
+  [ -n "$bat" ] || return 0
+  _ap_dir=$(skill_dir "$bat") || return 0
+  printf '\n## Station pack (%s)\n' "$bat"
+  [ -f "$_ap_dir/SKILL.md" ] && cat "$_ap_dir/SKILL.md"
+  printf '\n'
+  [ -f "$_ap_dir/CONTRACT.md" ] && cat "$_ap_dir/CONTRACT.md"
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
@@ -873,6 +929,10 @@ write_brief() {
   _wb_wid=$(workid_short)
   ensure_wm
   _wb_path="$WM/briefs/${_wb_role}.${_wb_wid}.md"
+  _wb_pack=$_wb_role
+  case $_wb_role in
+    maker-falsify|maker-build) _wb_pack=maker ;;
+  esac
   {
     printf 'Read this file and follow it exactly.\n'
     printf 'role: %s\nagent: %s\n' "$_wb_role" "$_wb_agent"
@@ -915,6 +975,7 @@ write_brief() {
         fi
         ;;
     esac
+    append_station_pack "$_wb_pack"
   } > "$_wb_path"
   printf '%s\n' "$_wb_path"
 }

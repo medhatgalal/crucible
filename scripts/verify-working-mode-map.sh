@@ -1556,6 +1556,73 @@ fi
 printf '%s\n' "$s1" | grep -E -q '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' \
   && ok || bad "session id must be a UUID, got $s1"
 
+# Per-station skill packs: specifier/scout/reviewer briefs embed ROUTING battery SKILL+CONTRACT.
+setup_map_repo t-pack-specifier
+write_architecture_fixture alice LOW no
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+sb=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+[ -n "$sb" ] && grep -q 'RULE 26' "$sb" \
+  && ok || bad "specifier brief must embed architecture SKILL (RULE 26), brief=$(cat $sb 2>/dev/null || echo ABSENT)"
+[ -n "$sb" ] && grep -q 'You verify; you do not improve' "$sb" \
+  && bad 'specifier brief must not embed review SKILL' || ok
+[ -n "$sb" ] && grep -q '^session: ' "$sb" \
+  && ok || bad 'specifier brief must keep session: line before station pack'
+
+setup_map_repo t-pack-scout
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper pack scout' "$WM" record-mapper --from MAP.md || true
+mkdir -p tools
+printf '#!/bin/sh\nset -eu\nagent=bob\nmkdir -p .wm/return\nprintf "WORD: MAP-ACCEPT\\nAGENT: %s\\nMAP: MAP.md\\n" "$agent" > .wm/return/bob.md\n' > tools/scout-ok.sh
+chmod +x tools/scout-ok.sh
+"$WM" cast scout bob grok './tools/scout-ok.sh {BRIEF}' >/dev/null
+"$WM" run scout >/dev/null 2>"$ERR" || true
+scb=$(ls -t .wm/briefs/scout.* 2>/dev/null | head -1)
+[ -n "$scb" ] && grep -q 'MAP-ACCEPT' "$scb" && grep -qi invert "$scb" \
+  && ok || bad "scout brief must embed critique SKILL, brief=$(cat $scb 2>/dev/null || echo ABSENT)"
+[ -n "$scb" ] && grep -q 'You are the mapper' "$scb" \
+  && bad 'scout brief must not embed architecture mapper job' || ok
+
+setup_map_repo t-pack-reviewer
+write_architecture_fixture alice LOW no
+"$WM" cast maker carol grok 'true' >/dev/null
+"$WM" cast reviewer dave grok 'false' >/dev/null
+"$WM" run reviewer >/dev/null 2>"$ERR" || true
+rb=$(ls -t .wm/briefs/reviewer.* 2>/dev/null | head -1)
+if [ -n "$rb" ] && grep -q 're-run' "$rb" && grep -q 'You verify; you do not improve' "$rb"; then
+  ok
+else
+  bad "reviewer brief must embed review SKILL, brief=$(cat $rb 2>/dev/null || echo ABSENT)"
+fi
+[ -n "$rb" ] && grep -q 'You are the mapper' "$rb" \
+  && bad 'reviewer brief must not embed architecture mapper job' || ok
+
+setup_map_repo t-pack-maker
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper pack maker' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready pack maker' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict pack maker' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+write_maker_falsify_stub
+"$WM" cast maker carol grok './tools/maker-falsify.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok 'false' >/dev/null
+"$WM" run maker-falsify >/dev/null 2>"$ERR" || true
+mb=$(ls -t .wm/briefs/maker-falsify.* 2>/dev/null | head -1)
+[ -n "$mb" ] && grep -q 'You are the mapper' "$mb" \
+  && bad 'maker brief must not embed architecture mapper job' || ok
+[ -n "$mb" ] && grep -q 'You verify; you do not improve' "$mb" \
+  && bad 'maker brief must not embed review judge job' || ok
+[ -n "$mb" ] && grep -q '^session: ' "$mb" \
+  && ok || bad 'maker brief must keep session: line (no station pack)'
+
+# 11c still holds
+if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
+  bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'
+else
+  ok
+fi
+
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
 if [ -z "$home_leftovers" ]; then
