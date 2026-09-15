@@ -285,7 +285,17 @@ guard_command() {
   esac
 }
 
-honest_isolation() { printf 'SUBAGENT-ISOLATED\n'; }
+honest_isolation() {
+  _hi_mk=$(panel_kind maker)
+  _hi_rk=$(panel_kind reviewer)
+  if [ -n "$_hi_mk" ] && [ "$_hi_mk" != - ] \
+    && [ -n "$_hi_rk" ] && [ "$_hi_rk" != - ] \
+    && [ "$_hi_mk" != "$_hi_rk" ]; then
+    printf 'CROSS-FAMILY\n'
+    return 0
+  fi
+  printf 'SUBAGENT-ISOLATED\n'
+}
 
 write_last_maker_run() {
   ensure_wm
@@ -298,15 +308,20 @@ write_invoke_log() {
   _wi_agent=$2
   _wi_cmd=$3
   _wi_pid=$4
+  _wi_session=${5:-}
   ensure_wm
   mkdir -p "$WM/invoke"
   _wi_am=
   if [ -f "$WM/last-maker-run" ]; then
     _wi_am=$(kv_get "$WM/last-maker-run" id)
   fi
-  printf 'role: %s\nagent: %s\ncommand: %s\npid: %s\nwhen: %s\nwriter: wm-run\nafter-maker: %s\nISOLATION: SUBAGENT-ISOLATED\n' \
-    "$_wi_role" "$_wi_agent" "$_wi_cmd" "$_wi_pid" "$(date +%s)" "$_wi_am" \
+  _wi_iso=$(honest_isolation)
+  printf 'role: %s\nagent: %s\ncommand: %s\npid: %s\nwhen: %s\nwriter: wm-run\nafter-maker: %s\nISOLATION: %s\n' \
+    "$_wi_role" "$_wi_agent" "$_wi_cmd" "$_wi_pid" "$(date +%s)" "$_wi_am" "$_wi_iso" \
     > "$WM/invoke/${_wi_role}.log"
+  if [ -n "$_wi_session" ]; then
+    printf 'session: %s\n' "$_wi_session" >> "$WM/invoke/${_wi_role}.log"
+  fi
 }
 
 reviewer_exec_after_maker() {
@@ -366,6 +381,39 @@ judge_artifacts_changed() {
     fi
   done < "$_jc_now"
   rm -f "$_jc_now"
+  return 1
+}
+
+snapshot_owned_product() {
+  _so_out=$1
+  : > "$_so_out"
+  _so_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
+  while IFS= read -r _so_p || [ -n "$_so_p" ]; do
+    [ -n "$_so_p" ] || continue
+    case $_so_p in .wm|.wm/*|reviews|reviews/*) continue ;; esac
+    [ -f "$_so_p" ] || continue
+    printf '%s %s\n' "$_so_p" "$(file_sha256 "$_so_p")" >> "$_so_out"
+  done <<EOF
+$_so_list
+EOF
+}
+
+owned_product_changed() {
+  _oc_snap=$1
+  _oc_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
+  while IFS= read -r _oc_p || [ -n "$_oc_p" ]; do
+    [ -n "$_oc_p" ] || continue
+    case $_oc_p in .wm|.wm/*|reviews|reviews/*) continue ;; esac
+    [ -f "$_oc_p" ] || continue
+    _oc_new=$(file_sha256 "$_oc_p")
+    _oc_old=
+    [ -f "$_oc_snap" ] && _oc_old=$(awk -v p="$_oc_p" '$1==p { print $2; exit }' "$_oc_snap")
+    if [ -z "$_oc_old" ] || [ "$_oc_old" != "$_oc_new" ]; then
+      return 0
+    fi
+  done <<EOF
+$_oc_list
+EOF
   return 1
 }
 
@@ -620,13 +668,29 @@ research_skill_present() {
   [ -f .crucible/skills/research/SKILL.md ] || [ -f skills/research/SKILL.md ]
 }
 
-# Cwd ROUTING.tsv wins (reorder without editing wm.sh). Else beside this engine.
+# Cwd ROUTING.tsv wins (reorder without editing wm.sh). Else .crucible overlay,
+# then beside ENGINE / WM_ENGINE / this engine (copied .wm/bin/wm has no sibling table).
 routing_file() {
   if [ -f ROUTING.tsv ]; then
     printf '%s\n' ROUTING.tsv
     return 0
   fi
-  _rf=$(CDPATH= cd "$(dirname "$0")" && pwd)/ROUTING.tsv
+  if [ -f .crucible/ROUTING.tsv ]; then
+    printf '%s\n' .crucible/ROUTING.tsv
+    return 0
+  fi
+  for _rf in .crucible/*/ROUTING.tsv; do
+    if [ -f "$_rf" ]; then
+      printf '%s\n' "$_rf"
+      return 0
+    fi
+  done
+  _rf_src=
+  if [ -f "$WM/ENGINE" ]; then
+    _rf_src=$(kv_get "$WM/ENGINE" engine)
+  fi
+  [ -n "$_rf_src" ] || _rf_src=${WM_ENGINE:-$0}
+  _rf=$(CDPATH= cd "$(dirname "$_rf_src")" && pwd)/ROUTING.tsv
   if [ -f "$_rf" ]; then
     printf '%s\n' "$_rf"
     return 0
@@ -840,15 +904,90 @@ go_consume_backlog() {
   backlog_set_status "$_gn_id" INFLIGHT
 }
 
+session_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr 'A-Z' 'a-z'
+    return 0
+  fi
+  od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n' | awk '{
+    if (length($0) < 32) exit 1
+    printf "%s-%s-4%s-a%s-%s\n", substr($0,1,8), substr($0,9,4), substr($0,14,3), substr($0,18,3), substr($0,21,12)
+  }'
+}
+
+# ROUTING.tsv column 3 for this station. No pack for maker.
+station_battery() {
+  _stb_role=$1
+  _stb_rf=$(routing_file) || return 0
+  _stb_ph=
+  case $_stb_role in
+    specifier)
+      case $(prebrick_next_card) in
+        "NEXT RESEARCH") _stb_ph=RESEARCH ;;
+        "NEXT REPO") _stb_ph=REPO ;;
+        *) _stb_ph=MAP ;;
+      esac
+      ;;
+    scout) _stb_ph=ATTACK-MAP ;;
+    reviewer) _stb_ph=BRICK ;;
+    *) return 0 ;;
+  esac
+  awk -F '\t' -v p="$_stb_ph" 'NR > 1 && $1 == p { print $3; exit }' "$_stb_rf"
+}
+
+# Resolve $bat under cwd overlay, then ENGINE / WM_ENGINE / $0 sibling.
+skill_dir() {
+  bat=$1
+  [ -n "$bat" ] && [ "$bat" != - ] || return 1
+  if [ -d ".crucible/skills/${bat}" ]; then
+    printf '%s\n' ".crucible/skills/${bat}"
+    return 0
+  fi
+  if [ -d "skills/${bat}" ]; then
+    printf '%s\n' "skills/${bat}"
+    return 0
+  fi
+  _sd_src=
+  if [ -f "$WM/ENGINE" ]; then
+    _sd_src=$(kv_get "$WM/ENGINE" engine)
+  fi
+  [ -n "$_sd_src" ] || _sd_src=${WM_ENGINE:-$0}
+  _sd_root=$(CDPATH= cd "$(dirname "$_sd_src")" && pwd)
+  if [ -d "${_sd_root}/skills/${bat}" ]; then
+    printf '%s\n' "${_sd_root}/skills/${bat}"
+    return 0
+  fi
+  return 1
+}
+
+append_station_pack() {
+  _ap_role=$1
+  bat=$(station_battery "$_ap_role") || return 0
+  [ -n "$bat" ] || return 0
+  _ap_dir=$(skill_dir "$bat") || return 0
+  printf '\n## Station pack (%s)\n' "$bat"
+  [ -f "$_ap_dir/SKILL.md" ] && cat "$_ap_dir/SKILL.md"
+  printf '\n'
+  [ -f "$_ap_dir/CONTRACT.md" ] && cat "$_ap_dir/CONTRACT.md"
+}
+
 write_brief() {
   _wb_role=$1
   _wb_agent=$2
+  _wb_session=${3:-}
   _wb_wid=$(workid_short)
   ensure_wm
   _wb_path="$WM/briefs/${_wb_role}.${_wb_wid}.md"
+  _wb_pack=$_wb_role
+  case $_wb_role in
+    maker-falsify|maker-build) _wb_pack=maker ;;
+  esac
   {
     printf 'Read this file and follow it exactly.\n'
     printf 'role: %s\nagent: %s\n' "$_wb_role" "$_wb_agent"
+    if [ -n "$_wb_session" ]; then
+      printf 'session: %s\n' "$_wb_session"
+    fi
     case $_wb_role in
       maker-falsify)
         printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts. If the in-flight module has a test_entrypoint, the FALSIFIER command must include that path.\n'
@@ -885,6 +1024,7 @@ write_brief() {
         fi
         ;;
     esac
+    append_station_pack "$_wb_pack"
   } > "$_wb_path"
   printf '%s\n' "$_wb_path"
 }
@@ -1212,9 +1352,13 @@ human_sign_present() {
 high_kinds_ok() {
   _hk_mk=$(panel_kind maker)
   _hk_rk=$(panel_kind reviewer)
+  _hk_ma=$(panel_agent maker)
+  _hk_ra=$(panel_agent reviewer)
   [ -n "$_hk_mk" ] && [ "$_hk_mk" != - ] || return 1
   [ -n "$_hk_rk" ] && [ "$_hk_rk" != - ] || return 1
-  [ "$_hk_mk" != "$_hk_rk" ]
+  [ -n "$_hk_ma" ] && [ "$_hk_ma" != - ] || return 1
+  [ -n "$_hk_ra" ] && [ "$_hk_ra" != - ] || return 1
+  [ "$_hk_ma" != "$_hk_ra" ]
 }
 
 slice_risk() {
@@ -1453,7 +1597,7 @@ guard_map_before_maker() {
     _gm_risk=$(emit_map_rows | awk -F '\t' 'NF >= 5 { print $5; exit }')
   fi
   if [ "$_gm_risk" = HIGH ]; then
-    high_kinds_ok || die "STOP-ASK: HIGH requires distinct maker and reviewer kinds"
+    high_kinds_ok || die "STOP-ASK: HIGH requires distinct maker and reviewer agents"
   fi
 }
 
@@ -1910,7 +2054,7 @@ cmd_close() {
   done
   if [ "$_cl_pass" -eq 1 ]; then
     [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || die "PASS path requires green.status=ok"
-    printf 'CLOSED PASS\n' > "$WM/CLOSED"
+    printf 'CLOSED PASS\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED PASS"
     metrics_append "CLOSED PASS" -
     if close_append_lesson "$_cl_lesson"; then
@@ -1919,7 +2063,7 @@ cmd_close() {
     return 1
   fi
   if [ "$_cl_nobuild" -eq 1 ]; then
-    printf 'CLOSED NO-BUILD\n' > "$WM/CLOSED"
+    printf 'CLOSED NO-BUILD\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
     metrics_append "CLOSED NO-BUILD" -
     if close_append_lesson "$_cl_lesson"; then
@@ -2148,6 +2292,7 @@ floor_write() {
     printf 'card: %s\n' "$_fw_card"
     printf 'wip: %s\n' "$_fw_wip"
     printf 'andon: %s\n' "$_fw_andon"
+    printf 'independence: %s\n' "$(honest_isolation)"
     printf 'evidence:\n'
     [ -f "$WM/FALSIFIER" ] && printf '  %s\n' "$WM/FALSIFIER"
     [ -f "$WM/CLOSED" ] && printf '  %s\n' "$WM/CLOSED"
@@ -2251,7 +2396,8 @@ cmd_run() {
     _ru_judge_snap="$WM/.judge.snap.$$"
     snapshot_judge_artifacts "$_ru_judge_snap"
   fi
-  _ru_brief=$(write_brief "$_ru_role" "$_ru_agent")
+  _ru_session=$(session_uuid)
+  _ru_brief=$(write_brief "$_ru_role" "$_ru_agent" "$_ru_session")
   [ -f "$_ru_brief" ] || die "brief missing"
   printf 'role: %s\nagent: %s\n' "$_ru_role" "$_ru_agent" > "$WM/dispatch"
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
@@ -2273,6 +2419,8 @@ cmd_run() {
   # path splits sh -c. Escape \, ", $, and ` for POSIX double quotes.
   WM_BRIEF=$_ru_absbrief
   export WM_BRIEF
+  WM_SESSION=$_ru_session
+  export WM_SESSION
   _ru_expanded=$(printf '%s\n' "$_ru_command" | awk '
     function quote_dq(s,    i, n, c, out) {
       n = length(s)
@@ -2285,7 +2433,10 @@ cmd_run() {
       }
       return out "\""
     }
-    BEGIN { b = quote_dq(ENVIRON["WM_BRIEF"]) }
+    BEGIN {
+      b = quote_dq(ENVIRON["WM_BRIEF"])
+      sess = quote_dq(ENVIRON["WM_SESSION"])
+    }
     {
       s = $0
       out = ""
@@ -2293,20 +2444,39 @@ cmd_run() {
         out = out substr(s, 1, i - 1) b
         s = substr(s, i + 7)
       }
+      s = out s
+      out = ""
+      while ((i = index(s, "{SESSION}")) > 0) {
+        out = out substr(s, 1, i - 1) sess
+        s = substr(s, i + 9)
+      }
       print out s
     }
   ')
   unset WM_BRIEF
   BRIEF=$_ru_absbrief
   export BRIEF
+  _ru_owned_snap=
   if [ "$_ru_role" = reviewer ] || [ "$_ru_role" = scout ]; then
-    write_invoke_log "$_ru_role" "$_ru_agent" "$_ru_expanded" "$$"
+    write_invoke_log "$_ru_role" "$_ru_agent" "$_ru_expanded" "$$" "$_ru_session"
+    _ru_owned_snap="$WM/.owned.snap.$$"
+    snapshot_owned_product "$_ru_owned_snap"
   fi
   set +e
   sh -c "$_ru_expanded" > "$WM/worker.out" 2>"$WM/worker.err"
   _ru_rc=$?
   set -e
   rm -f "$WM/dispatch"
+  if [ -n "$_ru_owned_snap" ]; then
+    if owned_product_changed "$_ru_owned_snap"; then
+      rm -f "$_ru_owned_snap"
+      if [ "$_ru_role" = scout ]; then
+        die "scout wrote owned paths"
+      fi
+      die "reviewer wrote owned paths"
+    fi
+    rm -f "$_ru_owned_snap"
+  fi
   if [ "$_ru_role" = maker-falsify ] || [ "$_ru_role" = maker-build ]; then
     write_last_maker_run "$(date +%s).$$" "$_ru_role" "$(date +%s)"
     if [ -n "$_ru_judge_snap" ] && judge_artifacts_changed "$_ru_judge_snap"; then

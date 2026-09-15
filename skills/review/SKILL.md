@@ -46,3 +46,4 @@ EVIDENCE: <path recorded by wm evidence>
 - Skip the falsifier, apply fixes, or rewrite SPEC to match the diff.
 - Load host skill trees. This battery is the review procedure.
 - Edit `wm.sh`. Replacing this directory must not require that.
+- Do not write owned product paths.

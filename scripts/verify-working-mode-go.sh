@@ -54,6 +54,13 @@ else
   sh -n "$WM" && ok || bad 'wm.sh is not valid POSIX sh'
 fi
 
+if grep -q '{SESSION}' "$HERE/wm-go.sh" \
+  && grep -q -- '--session-id' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh grok command must pass --session-id {SESSION}'
+fi
+
 # No-args help: exit 0 and required tokens.
 help_dir="$BASE/help"
 init_git_repo "$help_dir"

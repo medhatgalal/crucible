@@ -32,6 +32,13 @@ Greenfield (README / adopt only) skips.
 
 Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Specifier `spec0` is not maker
 `make0`. Two CLIs: maker kind is not reviewer kind.
+One CLI: HIGH still runs after MAP-HUMAN. Isolation is
+SUBAGENT-ISOLATED (fresh session, station pack, owned-path wall).
+Never labelled CROSS-FAMILY.
+Each `wm run` mints a UUID `session:` (Grok `--session-id {SESSION}`).
+The brief embeds only that station’s ROUTING battery (SKILL + CONTRACT).
+Reviewer/scout that mutate owned product paths are refused.
+MAP-HUMAN still required for HIGH/live.
 
 ## STOP-ASK
 

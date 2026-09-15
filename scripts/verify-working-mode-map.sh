@@ -261,6 +261,8 @@ require_grep "$HERE/skills/review/SKILL.md" 're-run' \
   'review SKILL.md must require re-run of the named falsifier'
 require_fgrep "$HERE/skills/review/SKILL.md" 'CLOSED PASS' \
   'review SKILL.md must say map words are not CLOSED PASS'
+require_fgrep "$HERE/skills/review/SKILL.md" 'Do not write owned product paths' \
+  'review SKILL.md Must-not must refuse writing owned product paths'
 
 # Loop-design: craft/audit/debrief only — not the delivery walker
 require_grep "$HERE/skills/loop-design/CONTRACT.md" '[Cc]raft' \
@@ -944,8 +946,10 @@ require_fgrep "$HERE/docs/working-mode.md" 'map-ready' \
   'docs/working-mode.md must name wm map-ready'
 require_fgrep "$HERE/docs/working-mode.md" 'map-verdict' \
   'docs/working-mode.md must name wm map-verdict'
+require_fgrep "$HERE/docs/working-mode.md" 'SUBAGENT-ISOLATED' \
+  'docs/working-mode.md must name SUBAGENT-ISOLATED for one-kind HIGH'
 require_fgrep "$HERE/docs/working-mode.md" 'STOP-ASK' \
-  'docs/working-mode.md must name STOP-ASK for HIGH + one kind (3d)'
+  'docs/working-mode.md must name STOP-ASK'
 if [ -f "$HERE/docs/working-mode.md" ] && grep -q 'fake CROSS-FAMILY' "$HERE/docs/working-mode.md"; then
   ok
 else
@@ -1159,7 +1163,8 @@ impl_ok 'record-mapper for map-ready CHANGES-ARCHITECTURE' "$WM" record-mapper -
 printf '\nCHANGES-ARCHITECTURE\n' >> MAP.md
 refuses 'map-ready CHANGES-ARCHITECTURE is STOP' 'STOP|CHANGES-ARCHITECTURE' "$WM" map-ready
 
-# 3d: HIGH + one kind → STOP-ASK, not fake CROSS-FAMILY; two kinds allowed after MAP-HUMAN.
+# 3d superseded 2026-09-15: HIGH + one kind + distinct agents + MAP-HUMAN proceeds.
+# Label SUBAGENT-ISOLATED. Never fake CROSS-FAMILY.
 setup_map_repo t-high-one-kind
 write_architecture_fixture alice HIGH no
 impl_ok 'record-mapper HIGH one-kind' "$WM" record-mapper --from MAP.md || true
@@ -1169,25 +1174,29 @@ impl_ok 'map-verdict HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
 cast_brick_panel carol dave grok grok
 write_map_human operator MAP.md
 if card=$("$WM" next 2>"$ERR"); then
+  printf '%s\n' "$card" | grep -E -q 'NEXT SLICE s1' \
+    && ok || bad "HIGH + one kind with MAP-HUMAN next must emit NEXT SLICE, got $card"
   printf '%s\n' "$card" | grep -q 'STOP-ASK' \
-    && ok || bad "HIGH + one kind next must STOP-ASK, got $card"
+    && bad "HIGH + one kind must not STOP-ASK when agents differ (got $card)" || ok
   printf '%s\n' "$card" | grep -q 'CROSS-FAMILY' \
     && bad "HIGH + one kind must not fake CROSS-FAMILY (got $card)" || ok
 else
   bad "HIGH + one kind next refused: $(cat "$ERR")"
 fi
+"$WM" status >/dev/null 2>"$ERR" || true
+if [ -f .wm/FLOOR.md ] && grep -q '^independence: SUBAGENT-ISOLATED$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH one-kind FLOOR must say independence: SUBAGENT-ISOLATED, got $(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
+fi
+if grep -q 'CROSS-FAMILY' .wm/FLOOR.md 2>/dev/null; then
+  bad 'HIGH one-kind FLOOR must not say CROSS-FAMILY'
+else
+  ok
+fi
 rm -f .wm/FALSIFIER
-refuses 'HIGH + one kind cannot start maker' 'STOP-ASK' "$WM" run maker-falsify
-if [ -f .wm/FALSIFIER ]; then
-  bad 'HIGH + one kind must not exec maker'
-else
-  ok
-fi
-if err=$(cat "$ERR" 2>/dev/null || true); printf '%s\n' "$err" | grep -q 'CROSS-FAMILY'; then
-  bad "HIGH + one kind refuse must not say CROSS-FAMILY: $err"
-else
-  ok
-fi
+impl_ok 'HIGH + one kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
+[ -f .wm/FALSIFIER ] && ok || bad 'HIGH one-kind maker-falsify must write FALSIFIER'
 
 setup_map_repo t-high-two-kind
 write_architecture_fixture alice HIGH no
@@ -1207,6 +1216,12 @@ if card=$("$WM" next 2>"$ERR"); then
     && bad "3d must not print CROSS-FAMILY as a second engine (got $card)" || ok
 else
   bad "HIGH two-kind next refused: $(cat "$ERR")"
+fi
+"$WM" status >/dev/null 2>"$ERR" || true
+if [ -f .wm/FLOOR.md ] && grep -q '^independence: CROSS-FAMILY$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH two-kind FLOOR must say independence: CROSS-FAMILY, got $(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
 fi
 impl_ok 'HIGH two-kind with MAP-HUMAN can start maker' "$WM" run maker-falsify || true
 [ -f .wm/FALSIFIER ] && ok || bad 'HIGH two-kind maker-falsify must write FALSIFIER'
@@ -1441,22 +1456,37 @@ else
   bad 'scout brief missing after wm run scout'
 fi
 
-# HIGH + one kind: STOP-ASK (3d), terminal.
+# HIGH + one kind + MAP-HUMAN + brick workers → CLOSED PASS, SUBAGENT-ISOLATED.
 setup_map_repo t-loop-high-one-kind
 write_architecture_fixture alice HIGH no
 impl_ok 'record-mapper loop HIGH one-kind' "$WM" record-mapper --from MAP.md || true
 impl_ok 'map-ready loop HIGH one-kind' "$WM" map-ready || true
 write_map_return bob MAP-ACCEPT
 impl_ok 'map-verdict loop HIGH one-kind' "$WM" map-verdict .wm/return/bob.md || true
-cast_brick_panel carol dave grok grok
 write_map_human operator MAP.md
+write_spec_fit
+write_map_loop_brick
+"$WM" cast maker carol grok './tools/map-loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/map-loop-reviewer.sh {BRIEF}' >/dev/null
+git add -A
+git commit -qm 'HIGH one-kind loop workers' >/dev/null
 run_map_loop
 assert_map_loop_foreground 't-loop-high-one-kind'
-printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'STOP-ASK' \
-  && ok || bad "HIGH one-kind loop wanted STOP-ASK, got out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "HIGH one-kind loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
+fi
+[ "$LOOP_RC" -eq 0 ] && ok || bad "HIGH one-kind loop exit $LOOP_RC err=$(cat "$ERR")"
 printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'CROSS-FAMILY' \
   && bad 'HIGH one-kind loop must not fake CROSS-FAMILY' || ok
-[ "$LOOP_RC" -ne 0 ] && ok || bad 'HIGH one-kind loop must not exit 0'
+if grep -q '^independence: SUBAGENT-ISOLATED$' .wm/CLOSED \
+  && grep -q '^independence: SUBAGENT-ISOLATED$' .wm/FLOOR.md; then
+  ok
+else
+  bad "HIGH one-kind CLOSED/FLOOR must record SUBAGENT-ISOLATED, closed=$(cat .wm/CLOSED) floor=$(cat .wm/FLOOR.md 2>/dev/null || echo ABSENT)"
+fi
+[ -f .wm/reviewer-ran ] && ok || bad 'HIGH one-kind loop did not exec the reviewer CLI'
 
 # Honest LOW map: NEXT SLICE then brick walk to CLOSED PASS (one slice in flight).
 setup_map_repo t-loop-slice-pass
@@ -1506,6 +1536,149 @@ else
 fi
 grep -q 'WM-SLICE-s1' src/widget/api.py && ok || bad 'map loop s1 maker-build did not land'
 grep -q 'WM-SLICE-s2' src/widget/api.py && ok || bad 'map loop s2 maker-build did not land'
+
+# Session: each wm run mints a distinct session line in the brief.
+setup_map_repo t-session-ids
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper session' "$WM" record-mapper --from MAP.md || true
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+b1=$(ls .wm/briefs/specifier.* 2>/dev/null | head -1)
+s1=
+[ -n "$b1" ] && s1=$(awk -F ': ' '$1=="session"{print $2; exit}' "$b1")
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+b2=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+s2=
+[ -n "$b2" ] && s2=$(awk -F ': ' '$1=="session"{print $2; exit}' "$b2")
+if [ -n "$s1" ] && [ -n "$s2" ] && [ "$s1" != "$s2" ]; then
+  ok
+else
+  bad "wm run must mint distinct session ids, got s1=$s1 s2=$s2"
+fi
+printf '%s\n' "$s1" | grep -E -q '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' \
+  && ok || bad "session id must be a UUID, got $s1"
+
+# Per-station skill packs: specifier/scout/reviewer briefs embed ROUTING battery SKILL+CONTRACT.
+setup_map_repo t-pack-specifier
+write_architecture_fixture alice LOW no
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+"$WM" run specifier >/dev/null 2>"$ERR" || true
+sb=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+[ -n "$sb" ] && grep -q 'RULE 26' "$sb" \
+  && ok || bad "specifier brief must embed architecture SKILL (RULE 26), brief=$(cat $sb 2>/dev/null || echo ABSENT)"
+[ -n "$sb" ] && grep -q 'You verify; you do not improve' "$sb" \
+  && bad 'specifier brief must not embed review SKILL' || ok
+[ -n "$sb" ] && grep -q '^session: ' "$sb" \
+  && ok || bad 'specifier brief must keep session: line before station pack'
+
+setup_map_repo t-pack-scout
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper pack scout' "$WM" record-mapper --from MAP.md || true
+mkdir -p tools
+printf '#!/bin/sh\nset -eu\nagent=bob\nmkdir -p .wm/return\nprintf "WORD: MAP-ACCEPT\\nAGENT: %s\\nMAP: MAP.md\\n" "$agent" > .wm/return/bob.md\n' > tools/scout-ok.sh
+chmod +x tools/scout-ok.sh
+"$WM" cast scout bob grok './tools/scout-ok.sh {BRIEF}' >/dev/null
+"$WM" run scout >/dev/null 2>"$ERR" || true
+scb=$(ls -t .wm/briefs/scout.* 2>/dev/null | head -1)
+[ -n "$scb" ] && grep -q 'MAP-ACCEPT' "$scb" && grep -qi invert "$scb" \
+  && ok || bad "scout brief must embed critique SKILL, brief=$(cat $scb 2>/dev/null || echo ABSENT)"
+[ -n "$scb" ] && grep -q 'You are the mapper' "$scb" \
+  && bad 'scout brief must not embed architecture mapper job' || ok
+
+setup_map_repo t-pack-reviewer
+write_architecture_fixture alice LOW no
+"$WM" cast maker carol grok 'true' >/dev/null
+"$WM" cast reviewer dave grok 'false' >/dev/null
+"$WM" run reviewer >/dev/null 2>"$ERR" || true
+rb=$(ls -t .wm/briefs/reviewer.* 2>/dev/null | head -1)
+if [ -n "$rb" ] && grep -q 're-run' "$rb" && grep -q 'You verify; you do not improve' "$rb"; then
+  ok
+else
+  bad "reviewer brief must embed review SKILL, brief=$(cat $rb 2>/dev/null || echo ABSENT)"
+fi
+[ -n "$rb" ] && grep -q 'You are the mapper' "$rb" \
+  && bad 'reviewer brief must not embed architecture mapper job' || ok
+
+setup_map_repo t-pack-maker
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper pack maker' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready pack maker' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict pack maker' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+write_maker_falsify_stub
+"$WM" cast maker carol grok './tools/maker-falsify.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok 'false' >/dev/null
+"$WM" run maker-falsify >/dev/null 2>"$ERR" || true
+mb=$(ls -t .wm/briefs/maker-falsify.* 2>/dev/null | head -1)
+[ -n "$mb" ] && grep -q 'You are the mapper' "$mb" \
+  && bad 'maker brief must not embed architecture mapper job' || ok
+[ -n "$mb" ] && grep -q 'You verify; you do not improve' "$mb" \
+  && bad 'maker brief must not embed review judge job' || ok
+[ -n "$mb" ] && grep -q '^session: ' "$mb" \
+  && ok || bad 'maker brief must keep session: line (no station pack)'
+
+# Walker copy (.wm/bin/wm / wm loop) must embed the pack, not only package wm.sh.
+setup_map_repo t-pack-copied-kernel
+write_architecture_fixture alice LOW no
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+WM_ENGINE= .wm/bin/wm run specifier >/dev/null 2>"$ERR" || true
+kb=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+[ -n "$kb" ] && grep -q 'RULE 26' "$kb" && grep -q '## Station pack' "$kb" \
+  && ok || bad "copied .wm/bin/wm specifier brief must embed station pack (RULE 26), brief=$(cat $kb 2>/dev/null || echo ABSENT)"
+
+# Reviewer/scout that mutate owned product paths are refused (CHECK after exec, no rollback).
+setup_map_repo t-rev-owned-wall
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper wall' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready wall' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict wall' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+mkdir -p tools
+cat > tools/reviewer-mutates.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf '\nMUTATED\n' >> src/widget/api.py
+mkdir -p .wm/return reviews
+printf '## Code\nx\n## Testing\ny\n' > reviews/review.md
+printf 'WORD: FAIL\nEVIDENCE: none\n' > .wm/return/dave.md
+EOF
+chmod +x tools/reviewer-mutates.sh
+"$WM" cast maker carol grok 'true' >/dev/null
+"$WM" cast reviewer dave grok './tools/reviewer-mutates.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm wall >/dev/null
+# Need a last-maker-run? reviewer may run without FALSIFIER for this CHECK — cmd_run reviewer does not require FALSIFIER.
+refuses 'reviewer that writes owned path is refused' 'owned path' \
+  "$WM" run reviewer
+grep -q MUTATED src/widget/api.py && ok || bad 'fixture must have attempted the write (CHECK is after exec)'
+
+setup_map_repo t-scout-owned-wall
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper scout wall' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready scout wall' "$WM" map-ready || true
+write_spec_fit
+mkdir -p tools
+cat > tools/scout-mutates.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf '\nMUTATED\n' >> src/widget/api.py
+mkdir -p .wm/return
+printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
+EOF
+chmod +x tools/scout-mutates.sh
+"$WM" cast scout bob grok './tools/scout-mutates.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm scout-wall >/dev/null
+refuses 'scout that writes owned path is refused' 'owned path' \
+  "$WM" run scout
+grep -q MUTATED src/widget/api.py && ok || bad 'scout fixture must have attempted the write (CHECK is after exec)'
+
+# 11c still holds
+if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
+  bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'
+else
+  ok
+fi
 
 # Home leak: empty HOME must stay empty of skills (git may write nothing; we used GIT_CONFIG_*)
 home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)

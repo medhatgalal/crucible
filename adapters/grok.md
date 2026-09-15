@@ -13,20 +13,26 @@ you point `--agent` at a file there.
 `.crucible/<program>/wm.sh` does not spawn `grok` by name. Put the CLI on a
 machine-local `agents.tsv` row (gitignored) and
 `.crucible/<program>/wm.sh cast` that agent. `{BRIEF}` is replaced with the
-absolute brief path. The engine quotes the replacement (POSIX double quotes;
-any `"` in the path is escaped). Do not wrap `{BRIEF}` in quotes in the
-command — that would double-quote.
+absolute brief path. `{SESSION}` is a fresh UUID minted per `wm run`. The
+engine quotes both replacements (POSIX double quotes; any `"` in the value
+is escaped). Do not wrap `{BRIEF}` or `{SESSION}` in quotes in the command
+— that would double-quote.
 
 ```text
 name	kind	model	effort	command
-alice	grok	grok-4	high	grok -p --prompt-file {BRIEF}
+alice	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
 ```
 
 Guided-cycle `agents.tsv` uses the same columns. Auth stays in the operator
 environment (never in this file, never in skills, never committed).
 
-Non-interactive one-shot: `grok -p --prompt-file {BRIEF}` (engine quotes the
-path). Interactive: `grok --cwd .` then open `{BRIEF}`.
+Non-interactive one-shot: `grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}`
+(engine quotes the path and session id). Interactive: `grok --cwd .` then
+open `{BRIEF}`. Discover (`wm go`) uses that one-shot line so each station
+gets a distinct Grok session rather than one chat wearing four hats.
+One kind is never labelled CROSS-FAMILY; FLOOR/CLOSED record
+`SUBAGENT-ISOLATED` when maker and reviewer share a kind (distinct agent
+ids). Two kinds is `CROSS-FAMILY`. MAP-HUMAN still required for HIGH/live.
 
 ## Skills
 

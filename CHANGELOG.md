@@ -28,6 +28,18 @@ All notable changes to this project are documented here. This project follows
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
 
+## [1.10.0] - 2026-09-15
+
+### One-kind isolation
+- HIGH proceeds with one of grok/kiro-cli/codex when maker and reviewer
+  agent ids differ. FLOOR/CLOSED `independence: SUBAGENT-ISOLATED`.
+- Two kinds still split maker/reviewer; that case is `CROSS-FAMILY`.
+  One kind is never labelled CROSS-FAMILY.
+- Each `wm run` mints a UUID `session:` (Grok `--session-id`).
+- Brief embeds only that station’s ROUTING battery (SKILL + CONTRACT).
+- Reviewer/scout that mutate owned product paths are refused.
+- MAP-HUMAN still required for HIGH/live.
+
 ## [1.9.0] - 2026-09-13
 
 ### Factory plants

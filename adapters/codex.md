@@ -13,6 +13,10 @@ uses repo-root `.agents/skills/` (views of canonical `.crucible/skills/`). Neste
 machine-local `agents.tsv` row (gitignored) and
 `.crucible/<program>/wm.sh cast` that agent. `{BRIEF}` is replaced with the
 absolute brief path.
+Each `wm run` mints a fresh UUID `session:` in the brief (`{SESSION}` if the
+command uses it). One kind is never labelled CROSS-FAMILY; FLOOR/CLOSED
+record `SUBAGENT-ISOLATED` when maker and reviewer share a kind (distinct
+agent ids). Two kinds is `CROSS-FAMILY`. MAP-HUMAN still required for HIGH/live.
 
 ```text
 name	kind	model	effort	command
