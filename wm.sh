@@ -960,6 +960,43 @@ skill_dir() {
   return 1
 }
 
+sendback_battery_for_word() {
+  _sbw=$1
+  _sbw_rf=$(routing_file) || return 1
+  _sbw_ph=
+  case $_sbw in
+    MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK) _sbw_ph=ATTACK-MAP ;;
+    PASS|FAIL|BLOCKED|NO-BUILD) _sbw_ph=BRICK ;;
+    *) return 1 ;;
+  esac
+  _sbw_bat=$(awk -F '\t' -v p="$_sbw_ph" 'NR > 1 && $1 == p { print $3; exit }' "$_sbw_rf")
+  [ -n "$_sbw_bat" ] && [ "$_sbw_bat" != - ] || return 1
+  printf '%s\n' "$_sbw_bat"
+}
+
+sendback_lookup() {
+  _sbl_bat=$1
+  _sbl_word=$2
+  [ -n "$_sbl_bat" ] && [ -n "$_sbl_word" ] || return 1
+  _sbl_dir=$(skill_dir "$_sbl_bat") || return 1
+  _sbl_c="${_sbl_dir}/CONTRACT.md"
+  [ -f "$_sbl_c" ] || return 1
+  _sbl_row=$(awk -v word="$_sbl_word" '
+    $0 == "## Send-back" { p=1; next }
+    p && /^## / { exit }
+    p && $0 == "word\tcard\tcap\tandon" { hdr=1; next }
+    hdr && NF {
+      split($0, a, "\t")
+      if (a[1] == word) {
+        print a[2] "\t" a[3] "\t" a[4]
+        exit
+      }
+    }
+  ' "$_sbl_c")
+  [ -n "$_sbl_row" ] || return 1
+  printf '%s\n' "$_sbl_row"
+}
+
 append_station_pack() {
   _ap_role=$1
   bat=$(station_battery "$_ap_role") || return 0
@@ -2139,7 +2176,11 @@ cmd_next() {
       return 0
     fi
     if [ "$_nx_mw" = MAP-REVISE ]; then
-      say "NEXT MAP"
+      _nx_bat=$(sendback_battery_for_word MAP-REVISE) || die "Send-back battery missing for MAP-REVISE"
+      _nx_row=$(sendback_lookup "$_nx_bat" MAP-REVISE) || die "Send-back missing MAP-REVISE"
+      _nx_card=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $1 }')
+      [ -n "$_nx_card" ] && [ "$_nx_card" != - ] || die "Send-back MAP-REVISE card empty"
+      say "$_nx_card"
       return 0
     fi
     if [ "$_nx_mw" = MAP-STOP-ASK ]; then
@@ -2237,12 +2278,20 @@ cmd_next() {
   fi
   if [ "$_nx_gs" = ok ]; then
     if green_reviewer_fail; then
+      _nx_bat=$(sendback_battery_for_word FAIL) || die "Send-back battery missing for FAIL"
+      _nx_row=$(sendback_lookup "$_nx_bat" FAIL) || die "Send-back missing FAIL"
+      _nx_card=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $1 }')
+      _nx_cap=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $2 }')
+      _nx_andon=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $3 }')
+      case $_nx_cap in ''|*[!0-9]*) die "Send-back FAIL cap must be a number" ;; esac
       _nx_rfc=$(review_fail_count)
-      if [ "$_nx_rfc" -ge 2 ]; then
-        say "ESCALATE REVIEW_FAIL"
+      if [ "$_nx_rfc" -ge "$_nx_cap" ]; then
+        [ -n "$_nx_andon" ] && [ "$_nx_andon" != - ] || die "Send-back FAIL andon empty"
+        say "$_nx_andon"
         return 0
       fi
-      say "NEXT RUN maker-build"
+      [ -n "$_nx_card" ] || die "Send-back FAIL card empty"
+      say "$_nx_card"
       return 0
     fi
     say "NEXT RUN reviewer"
@@ -2693,8 +2742,14 @@ cmd_loop() {
           _lp_rfc=$(review_fail_count)
           _lp_rfc=$((_lp_rfc + 1))
           printf '%s\n' "$_lp_rfc" > "$WM/review-fail-count"
-          if [ "$_lp_rfc" -ge 2 ]; then
-            loop_halt "ESCALATE REVIEW_FAIL"
+          _lp_bat=$(sendback_battery_for_word FAIL) || die "Send-back battery missing for FAIL"
+          _lp_row=$(sendback_lookup "$_lp_bat" FAIL) || die "Send-back missing FAIL"
+          _lp_cap=$(printf '%s\n' "$_lp_row" | awk -F '\t' '{ print $2 }')
+          _lp_andon=$(printf '%s\n' "$_lp_row" | awk -F '\t' '{ print $3 }')
+          case $_lp_cap in ''|*[!0-9]*) die "Send-back FAIL cap must be a number" ;; esac
+          if [ "$_lp_rfc" -ge "$_lp_cap" ]; then
+            [ -n "$_lp_andon" ] && [ "$_lp_andon" != - ] || die "Send-back FAIL andon empty"
+            loop_halt "$_lp_andon"
           fi
           rm -f "$WM/green.status" "$WM/built.status"
         fi

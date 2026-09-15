@@ -24,6 +24,9 @@ IDEA.md, the target tree (packages, `src/`, tests, existing DESIGN.md / ADRs), a
 
 MAP-REVISE → MAP (specifier rewrites MAP.md, then critique again).
 
+word	card	cap	andon
+-	-	-	-
+
 ## Andon
 
 CHANGES-ARCHITECTURE → STOP-ASK ARCH. Two packagings → QUESTIONS.

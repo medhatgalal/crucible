@@ -23,6 +23,9 @@ A frozen delivery unit: `SPEC.md` (owned files, MAKER-WRITES falsifier slot), th
 
 FAIL → BRICK maker-build (cap then ESCALATE REVIEW_FAIL).
 
+word	card	cap	andon
+FAIL	NEXT RUN maker-build	2	ESCALATE REVIEW_FAIL
+
 ## Andon
 
 ESCALATE REVIEW_FAIL → floor manager / owner.

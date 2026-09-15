@@ -2645,6 +2645,40 @@ fi
 rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
 [ "$rfc" = 2 ] && ok || bad "two FAILs review-fail-count wanted 2, got $rfc"
 
+# Send-back overlay: review CONTRACT cap=1 → loop ESCALATE on first FAIL consume.
+setup_repo t-sendback-fail-cap1
+write_loop_maker_pass
+write_loop_reviewer_fail
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer-fail.sh {BRIEF}' >/dev/null
+mkdir -p .crucible/skills/review
+cp "$HERE/skills/review/SKILL.md" .crucible/skills/review/SKILL.md
+cp "$HERE/skills/review/CONTRACT.md" .crucible/skills/review/CONTRACT.md
+awk 'BEGIN{FS=OFS="\t"}
+  $1=="FAIL" { $3=1; print; next }
+  { print }
+' .crucible/skills/review/CONTRACT.md > .crucible/skills/review/CONTRACT.md.tmp
+mv .crucible/skills/review/CONTRACT.md.tmp .crucible/skills/review/CONTRACT.md
+commit_msg 'sendback cap1 overlay'
+run_wm_loop
+assert_loop_foreground 't-sendback-fail-cap1'
+printf '%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" | grep -q 'ESCALATE REVIEW_FAIL' \
+  && ok || bad "cap=1 overlay wanted ESCALATE REVIEW_FAIL, got out=$(cat "$OUT") err=$(cat "$ERR")"
+[ "$LOOP_RC" -ne 0 ] && ok || bad 'cap=1 overlay loop must not exit 0'
+rfc=$(cat .wm/review-fail-count 2>/dev/null || echo ABSENT)
+[ "$rfc" = 1 ] && ok || bad "cap=1 overlay review-fail-count wanted 1, got $rfc"
+
+if grep -q 'sendback_lookup' "$HERE/wm.sh"; then
+  ok
+else
+  bad 'wm.sh must define sendback_lookup'
+fi
+if grep -E -q 'skills/(critique|review)' "$HERE/wm.sh"; then
+  bad 'wm.sh must not write a literal skills/critique or skills/review path'
+else
+  ok
+fi
+
 # Q4: tautological FALSIFIER line 1 (true / : / exit 0) refused.
 write_taut_falsify() {
   cmd=$1
