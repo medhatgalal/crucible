@@ -223,6 +223,10 @@ require_fgrep "$HERE/skills/architecture/SKILL.md" 'greenfield' \
   'architecture SKILL.md must allow greenfield empty packages then fit'
 require_fgrep "$HERE/skills/architecture/SKILL.md" 'QUESTIONS.md' \
   'architecture SKILL.md must send two packagings to QUESTIONS.md'
+require_fgrep "$HERE/skills/architecture/SKILL.md" 'brownfield' \
+  'architecture SKILL.md must refuse brownfield silent mkdir of a new package'
+require_fgrep "$HERE/skills/architecture/CONTRACT.md" 'silent new top-level package' \
+  'architecture CONTRACT must refuse silent new top-level package without QUESTIONS'
 
 # Critique: invert + adversarial + simple only; map words; no self-ACCEPT (8b)
 require_fgrep "$HERE/skills/critique/CONTRACT.md" 'MAP-ACCEPT' \
@@ -887,6 +891,51 @@ if impl_ok 'map-ready greenfield creates missing root' "$WM" map-ready; then
 fi
 [ -d src/widget ] && ok || bad 'map-ready must mkdir src/widget'
 [ -f src/widget/.gitkeep ] && ok || bad 'map-ready must touch src/widget/.gitkeep'
+
+# Brownfield: existing src/widget, modules invent src/gadget → refuse without QUESTIONS.
+setup_map_repo t-shape-new-pkg-no-q
+write_architecture_fixture alice LOW no
+printf 'gadget\tsrc/gadget\tsrc/gadget/api.py\ttests/gadget\tsrc/gadget/api.py\tno\n' \
+  >> architecture/modules.md
+[ -d src/widget ] && ok || bad 'brownfield fixture must already have src/widget'
+[ ! -d src/gadget ] && ok || bad 'brownfield fixture must start without src/gadget'
+refuses 'new top-level package without QUESTIONS.md' 'QUESTIONS.md' \
+  "$WM" check-module-fit
+if [ -d src/gadget ]; then
+  bad 'must not mkdir src/gadget without QUESTIONS.md'
+else
+  ok
+fi
+
+# QUESTIONS.md without ANSWERS.md still refuses; no mkdir.
+setup_map_repo t-shape-new-pkg-q-no-a
+write_architecture_fixture alice LOW no
+printf 'gadget\tsrc/gadget\tsrc/gadget/api.py\ttests/gadget\tsrc/gadget/api.py\tno\n' \
+  >> architecture/modules.md
+printf 'Should gadget be a new package or live under widget?\n' > QUESTIONS.md
+refuses 'new package QUESTIONS without ANSWERS' 'ANSWERS.md' \
+  "$WM" check-module-fit
+if [ -d src/gadget ]; then
+  bad 'must not mkdir src/gadget without ANSWERS.md'
+else
+  ok
+fi
+
+# QUESTIONS + ANSWERS: mkdir allowed (human chose the packaging).
+setup_map_repo t-shape-new-pkg-answered
+write_architecture_fixture alice LOW no
+printf 'gadget\tsrc/gadget\tsrc/gadget/api.py\ttests/gadget\tsrc/gadget/api.py\tno\n' \
+  >> architecture/modules.md
+printf 'Should gadget be a new package or live under widget?\n' > QUESTIONS.md
+printf 'New package src/gadget.\n' > ANSWERS.md
+impl_ok 'new package with QUESTIONS+ANSWERS fits' "$WM" check-module-fit || true
+[ -d src/gadget ] && ok || bad 'answered QUESTIONS must allow mkdir src/gadget'
+[ -f src/gadget/.gitkeep ] && ok || bad 'answered QUESTIONS mkdir must touch .gitkeep'
+
+# Existing module only (src/widget already there): no QUESTIONS required.
+setup_map_repo t-shape-existing-pkg
+write_architecture_fixture alice LOW no
+impl_ok 'existing package fit without QUESTIONS' "$WM" check-module-fit || true
 
 setup_map_repo t-map-ready-no-intent
 write_architecture_fixture alice LOW no
