@@ -1597,18 +1597,30 @@ mark_slice_status() {
   mv "$_mss_tmp" slices.tsv
 }
 
+# Kernel-owned bet path is only $PWD/.wm/worktrees/<id>. `.` / `..` / empty
+# pass [A-Za-z0-9._-] but must not be used as a path component.
+bet_slice_id_ok() {
+  [ -n "$1" ] || return 1
+  case $1 in
+    .|..) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+bet_worktree_path() {
+  printf '%s\n' "$PWD/$WM/worktrees/$1"
+}
+
 # One git worktree per in-flight slice. <wt>/.wm is a symlink to the main
 # .wm so FALSIFIER/verdicts stay in one place.
 ensure_bet_worktree() {
   [ -f "$WM/slice-in-flight" ] || return 0
   _bw_id=$(kv_get "$WM/slice-in-flight" id)
-  [ -n "$_bw_id" ] || return 0
-  case $_bw_id in
-    *[!A-Za-z0-9._-]*) die "invalid slice id: $_bw_id" ;;
-  esac
+  bet_slice_id_ok "$_bw_id" || die "invalid slice id: $_bw_id"
   ensure_wm
   mkdir -p "$WM/worktrees"
-  _bw_path="$PWD/$WM/worktrees/$_bw_id"
+  _bw_path=$(bet_worktree_path "$_bw_id")
   if [ -f "$_bw_path/.git" ] || [ -d "$_bw_path/.git" ]; then
     _bw_new=0
   else
@@ -1685,27 +1697,20 @@ EOF
 }
 
 remove_bet_worktree() {
-  _rw_path=
   _rw_slice=
-  if [ -f "$WM/slice-worktree" ]; then
-    _rw_path=$(kv_get "$WM/slice-worktree" path)
-    _rw_slice=$(kv_get "$WM/slice-worktree" slice)
-  fi
-  if [ -z "$_rw_slice" ] && [ -f "$WM/slice-in-flight" ]; then
+  if [ -f "$WM/slice-in-flight" ]; then
     _rw_slice=$(kv_get "$WM/slice-in-flight" id)
   fi
-  if [ -z "$_rw_path" ] && [ -n "$_rw_slice" ]; then
-    _rw_path="$PWD/$WM/worktrees/$_rw_slice"
-  fi
-  if [ -n "$_rw_path" ]; then
-    git worktree remove --force "$_rw_path" >/dev/null 2>&1 || true
-  fi
-  git worktree prune >/dev/null 2>&1 || true
-  if [ -n "$_rw_slice" ]; then
-    git branch -D "wm/$_rw_slice" >/dev/null 2>&1 || true
-    rm -rf "$PWD/$WM/worktrees/$_rw_slice"
+  if ! bet_slice_id_ok "$_rw_slice" && [ -f "$WM/slice-worktree" ]; then
+    _rw_slice=$(kv_get "$WM/slice-worktree" slice)
   fi
   rm -f "$WM/slice-worktree"
+  bet_slice_id_ok "$_rw_slice" || return 0
+  _rw_path=$(bet_worktree_path "$_rw_slice")
+  git worktree remove --force "$_rw_path" >/dev/null 2>&1 || true
+  git worktree prune >/dev/null 2>&1 || true
+  git branch -D "wm/$_rw_slice" >/dev/null 2>&1 || true
+  rm -rf "$_rw_path"
 }
 
 # Clear one brick's receipts so the next READY slice can start. Same set as
