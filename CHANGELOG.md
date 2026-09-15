@@ -5,6 +5,160 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Three-verb floor
+
+- `wm go` discovers grok, kiro-cli (kind **kiro**), and codex only. Claude Code
+  is not on the discover list. Two kinds = any two of grok/kiro/codex.
+- First-class verbs: no-args help, `go`, `status`. `cast` / `loop` / `next` are
+  debug, not the start path.
+- `go` with no flags: missing `IDEA.md` plus a READY `BACKLOG.tsv` row is the
+  same as `go --next`; missing `IDEA.md` and no backlog is `STOP-ASK INTAKE`;
+  a closeable CLOSED plus another READY row archives and takes the next idea.
+  `go --next` remains an alias.
+- `go` and `status` write `.wm/FLOOR.md` (station SHAPE|DESIGN|BUILD|INSPECT|ANDON|DONE,
+  card, wip slice, andon, evidence paths). `.wm/TRACE.tsv` appends one line per
+  `go` / `status` / `loop` card transition. `status` does not increment FAIL count.
+- Pre-brick `next` follows cwd/`ROUTING.tsv` order (reorder RESEARCH/REPO without
+  editing `wm.sh`). Specifier brief matches that station. CONTRACT `## Send-back`
+  / `## Andon` on architecture, critique, review, research.
+- Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
+  fewer than two of grok/kiro-cli/codex are on PATH or cannot auth. Missing
+  `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
+- Adapter: `adapters/kiro.md`. Headless:
+  `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
+  as a `wm run` argv.
+
+## [1.9.0] - 2026-09-13
+
+### Factory plants
+
+- `BACKLOG.tsv` (`id	size	risk	idea_path	status`) and
+  `go --next`: copy a READY `idea_path` onto `IDEA.md` (overwrite), mark
+  INFLIGHT. One map in flight — `MAP.md` without closeable CLOSED dies
+  `finish current map first`. After CLOSED, archive MAP/SPEC/slices into
+  `history/maps/<prev-id>/`. `go` without `--next` is unchanged.
+- Optional `repo-scout` battery (`ROUTING` REPO, required=no) writes
+  `REPO.md` (layout, test command, CI, modules, hotspots) before SPEC.
+  Greenfield README/adopt-only trees skip. Hello fixture trees skip.
+- After maker-build, `git diff --name-only` `pre-build-wid`..HEAD must sit
+  in `owned_paths` or wm meta files, else `unowned path in maker-build`.
+- FALSIFIER line 1 may not be exactly `true`, `:`, or `exit 0` (trimmed):
+  `tautological falsifier`.
+- Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
+  `map-ready` dies if missing. Reviewer PASS does not require it (not a
+  CLOSE word).
+- Close / STOP-ASK / ESCALATE append `.wm/METRICS.tsv`
+  (`when	outcome	slices	bound	note`). No secrets.
+
+## [1.8.1] - 2026-09-13
+
+### Honesty
+
+- Owned-path dirty/commit checks walk newline lists (`while IFS= read -r`),
+  so `product/my file.txt` cannot false NO-BUILD/PASS.
+- `LOOP_BOUND` is recomputed each `loop` tick after `slices.tsv` lands.
+- `next` / `status` / `help` do not increment FAIL retries or rm green/built.
+  `loop` retries maker-build once, then `ESCALATE REVIEW_FAIL`.
+- `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`; non-empty
+  `ANSWERS.md` re-runs specifier. Kernel does not invent answers.
+- `go` POSIX: resolve sidecar from `$0`, `WM_GO_LOADED`, refuse `-` idea
+  paths, quoted Claude/Codex prompts, discover specifier/scout when maker
+  and reviewer already valid, help program from `.crucible/<prog>/wm.sh`.
+- CI runs `scripts/verify-working-mode-go.sh` on Linux.
+
+## [1.8.0] - 2026-09-12
+
+### CLI `go` and quality loop
+
+- `.crucible/<program>/wm.sh` with no args prints help (`run: … go`).
+  `go [IDEA.md]` discovers grok/claude/codex, casts distinct ids, and `loop`s.
+- Specifier reads `IDEA.md` or writes `QUESTIONS.md` (`STOP-ASK QUESTIONS`).
+- Optional `research` battery writes `RESEARCH.md` before SPEC (`required=no`).
+- Greenfield: missing relative module roots are created then fit.
+  `MAP-REVISE` re-runs specifier then scout.
+- Reviewer `PASS` requires `reviews/review.md` (`## Code`, `## Testing`).
+  FALSIFIER must cite the module `test_entrypoint`. `FAIL` retries maker-build
+  twice, then `ESCALATE REVIEW_FAIL`.
+- `LOOP_BOUND` is max(40, min(240, 16+12×slices)).
+- Live proof IDEA is a health-check app, not hello (fail-closed if CLIs cannot auth).
+- Forgot the command: run `.crucible/work/wm.sh` then `go`. Travelling
+  `WORKING-MODE.md` and skill `working-mode`.
+
+## [1.7.1] - 2026-09-10
+
+### Unattended multi-slice and live gate
+
+- One foreground `wm loop` walks remaining READY slices whose `depends_on`
+  parents are CLOSED, then resets brick receipts and continues. Work-level
+  `.wm/CLOSED` and exit 0 only when no READY slice remains. Planted CLOSED
+  still refuses (5c). HIGH unsigned next slice is `STOP-ASK MAP-HUMAN`.
+- `scripts/verify-working-mode-live.sh` fails closed with
+  `INDEPENDENCE_UNAVAILABLE` when grok/claude/codex are missing, and walks a
+  throwaway LOW map when they exist.
+- `START.md` and `BOOTSTRAP.md` point at opt-in working-mode
+  (`docs/working-mode.md`). Guided adopt stays `adopt work --managed` without
+  `--working-mode`. Operator commands use `.crucible/<program>/wm.sh` from the
+  target repo root.
+- `wm run` returns the worker exit status after judge/WORD checks. A
+  `false` maker-build is non-zero and does not CLOSED PASS. Maker-falsify/build
+  that `die`, and reviewer missing WORD, still die.
+- `wm loop` runs `specifier` then map-judge `scout` when those CLIs are
+  cast (IDEA→SPEC→MAP without a hand-written map). Uncast stays STOP-ASK.
+  A `no-build` red cannot ingest reviewer PASS (must be NO-BUILD).
+- MAP-HUMAN binds `SHA256:` (or `MAP-SHA256:`) to the named MAP file bytes;
+  a rewrite after sign is not a sign (8c). Travelling copy is next-slice
+  scoped: sign when the next READY slice is HIGH or `live_write=yes`.
+- `wm run` substitutes `{BRIEF}` as a POSIX-quoted absolute path. Quoting
+  happens inside awk from `ENVIRON` (`WM_BRIEF`) and escapes `\`, `"`, `$`,
+  and backticks. `awk -v` is not used (it unescapes `\"`).
+- Working-mode verifies `pgrep` leftover-loop against this `$WM` binary,
+  not any tree's `wm.sh loop`.
+- Operator quickstart in `docs/working-mode.md` (target-root
+  `.crucible/work/wm.sh` after `adopt work --managed --working-mode`).
+- Worked LOW example in `docs/examples/working-mode/` (copy-paste Quickstart);
+  `scripts/verify-working-mode-quickstart.sh` proves it (empty HOME; extra
+  proof, not a CI gate). HIGH unsigned loop is `STOP-ASK MAP-HUMAN`.
+- Live independence probes grok/claude/codex auth under empty HOME and
+  fails closed (`cannot auth`) instead of a grok-only fixture PASS.
+  Probes copy host grok `auth.json` and `config.toml` (yolo / always-approve
+  overlay, other keys kept), `~/.claude.json` and `settings.json`, and
+  codex `auth.json` + `config.toml`. Harness skill trees are not copied.
+- `wm close` refuses when `.wm/CLOSED` is already closeable (`already
+  closed`) and does not append another LESSONS.md line. After slice
+  `reset_brick`, a new close is allowed.
+- `wm loop` runs specifier on `NEXT SPEC` and map-ready + scout map-judge
+  on `NEXT MAP` when those roles are cast with a real CLI (not `-`).
+  Without those CLIs, `NEXT SPEC` / `NEXT MAP` stay `STOP-ASK`. Specifier
+  writes `SPEC.md` / `architecture/modules.md` / `MAP.md` (not a brick
+  WORD). Scout `MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK` ingest is `map-verdict`,
+  not brick `verdict`. Specifier cannot be maker; scout cannot `MAP-ACCEPT`
+  a map it authored. `LOOP_BOUND` stays 40. Quickstart Example C is a
+  vague-IDEA copy-paste.
+
+## [1.7.0] - 2026-09-10
+
+### Opt-in self-contained working-mode
+
+- `crucible adopt PROGRAM --managed --working-mode` copies `wm.sh`, four swap-out
+  batteries (`architecture`, `critique`, `review`, `loop-design`), harness views
+  under `.crucible/.{grok,claude,agents}/skills/` and repo-root
+  `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, `ENGINE-SOURCE`, and
+  `adapters/{grok,claude,codex}.md`. Default adopt (no `--working-mode`) still
+  matches 1.6.6: no wm, no skills, no projections.
+- Working-mode runtime is the target repo plus one harness CLI. Skills resolve
+  from the target tree. `$HOME` skill trees are not a runtime dependency.
+  Refresh refuses `src == dst`; KEEP batteries survive `--refresh` unless
+  `--overwrite-batteries`.
+- `wm.sh` enforces maker ≠ judge, observed-red, NO-BUILD, live/push-main/rm -rf
+  STOP-ASK, reviewer exec before `CLOSED PASS`, foreground `wm loop`, map
+  cadence (`map-ready` / `map-verdict` / `MAP-HUMAN` on HIGH/live), LESSONS.md
+  (one line or `NONE`) and an `ARCH:` fence.
+- Adapters document how to point ignored `agents.tsv` at grok / claude / codex.
+  They carry no credentials. `scripts/verify-working-mode-blank-home.sh` proves
+  tarball adopt on an empty HOME, grok/claude/codex views in the target, and a
+  three-slice fixture walk (two modules + seam falsifier).
+- Guided `scripts/verify-agent-cycle.sh` is unchanged.
+
 ## [1.6.6] - 2026-08-24
 
 ### Guided investigation and travelling operator limits

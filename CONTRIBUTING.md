@@ -15,6 +15,7 @@ multi-agent independence stronger than the CHECKs in RULES.md and the guided cyc
 ./scripts/verify-coldstart-independence.sh # a cold start needs nothing but the repository
 ./scripts/verify-quickstart.sh             # the quickstart a reader is given actually works
 ./scripts/verify-package.sh                # reproducible release archive
+./scripts/verify-working-mode.sh            # working-mode kernel CHECKs (empty HOME)
 /bin/sh -n crucible                        # it must stay POSIX sh
 ```
 
@@ -27,6 +28,13 @@ broken invariant without anyone opening the log. Until then only `selftest.sh` a
 against the packaged tree; two of them were red on `main` for as long as nobody ran them by
 hand. An unrun suite rots, and a rotted suite is indistinguishable from a suite that never
 asserted anything.
+
+`scripts/verify-working-mode-live.sh` is fail-closed (`INDEPENDENCE_UNAVAILABLE`
+when fewer than two of grok/kiro-cli/codex are on PATH) and is **not** a required CI gate.
+
+`scripts/verify-working-mode-map.sh`, `scripts/verify-working-mode-blank-home.sh`,
+and `scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs
+(empty HOME; Example A copy-paste). They are not required CI steps.
 
 `scripts/verify-demand.sh` is the exception to read carefully. It is a recorded RED
 contract, not a gate. Its three assertions pass on the current engine because they document

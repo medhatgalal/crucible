@@ -1,0 +1,1 @@
+These files are the LOW one-slice hello-world used in docs/working-mode.md Quickstart. From the Crucible source tree run `scripts/verify-working-mode-quickstart.sh` (empty HOME) to prove the copy-paste still closes.

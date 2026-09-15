@@ -24,7 +24,8 @@ Need a Crucible source (clone or `crucible-<version>.tar.gz` from the GitHub rel
 
 That copies the engine into `.crucible/work/` (`VERSION`, `START.md`, roles, docs) and
 seeds `PROGRAM`, `STATE.tsv`, `CLAIMS.md`, template `PROBLEM.md`. It does **not**
-approve a panel or bind a problem.
+approve a panel or bind a problem. It does **not** copy `wm.sh`, skills, or harness
+projections — working-mode is opt-in (below).
 
 A second name is a second cycle (`adopt prkey --managed`). Reusing a name refuses.
 When leftover DONE still occupies `SRC` and real work must start without
@@ -65,19 +66,58 @@ Human gates after that: `WAIT APPROVAL`, `ESCALATE`, `DONE`, live write envelope
 parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 [CONFIGURE.md](../CONFIGURE.md) for what it must do if you use the ACP path.
 
+## Opt-in working-mode
+
+On **1.8.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. To also install the working-mode runner and
+batteries into the **target** (no `$HOME` skill trees):
+
+```sh
+<path-to-crucible>/crucible adopt work --managed --working-mode
+```
+
+That copies `wm.sh` into `.crucible/work/`, canonical skills into `.crucible/skills/`,
+harness views under `.crucible/.{grok,claude,agents}/skills/` and repo-root
+`.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
+of the installing tree). Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
+Worked examples are in the [working-mode.md](working-mode.md) Quickstart. Adapters are copied when the source tree has `adapters/`;
+missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
+`*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
+
+`--refresh` refreshes working-mode if it is already installed (`wm.sh` present or
+`PROGRAM` has `working-mode: yes`). `adopt PROGRAM --refresh --working-mode` can
+add working-mode onto a guided install. Refresh from a **versioned tarball** (or
+another checkout), never from the installed binary:
+
+```sh
+<path-to-newer-crucible>/crucible adopt work --refresh
+<path-to-newer-crucible>/crucible adopt work --refresh --working-mode
+```
+
+`--refresh` refuses when resolved `src` equals `dst` (`src == dst`). Operator-patched
+batteries with a `.keep` file or a name in `.crucible/skills/KEEP` survive refresh
+unless you pass `--overwrite-batteries`.
+
 ## Commit the program directory
 
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
-produced it if it is in Git, so commit `.crucible/` in the target repository:
+produced it if it is in Git, so commit `.crucible/` in the target repository.
+After `--working-mode`, also commit the repo-root harness views — Grok discovers
+`./.grok/skills` (then `$HOME`) and does **not** scan `.crucible/.grok/skills`:
 
 ```sh
-git add .crucible && git commit -m "chore: record program state"
+git add .crucible
+[ -d .grok/skills ] && git add .grok/skills
+[ -d .claude/skills ] && git add .claude/skills
+[ -d .agents/skills ] && git add .agents/skills
+git commit -m "chore: record program state"
 ```
 
 `adopt` generates `.crucible/.gitignore` with `*/agents.tsv` and `*/worktrees/`, so
 machine-local agent invocations and isolated worktrees stay out of the commit. Everything
 else under `.crucible/<program>/` — `PROBLEM.md`, `CLAIMS.md`, `PROPOSAL.md`, `APPROVAL`,
-`PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record. Commit
+`PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record, plus
+working-mode's repo-root `.{grok,claude,agents}/skills` views. Commit
 again after each human gate; `cycle clean` preserves these files but nothing restores them
 if they were never committed.
 
@@ -101,7 +141,9 @@ directory: `drive stop` releases it with `rmdir` and prints `released …/.drive
 regular file at the same path is not a lock — `drive stop` prints `no .drive.lock` and
 leaves it alone.
 
-Then run from the **newer** source (this checkout or a newer tarball):
+Then run from the **newer** source (this checkout or a newer tarball). Do not run
+`--refresh` with the already-installed `.crucible/<program>/crucible` (`src == dst`
+is refused):
 
 ```sh
 <path-to-newer-crucible>/crucible adopt work --refresh
@@ -121,11 +163,14 @@ wrote until the next `cycle` rewrites it. What proves the refresh landed is `ado
 
 **Overwrites:** `crucible`, `VERSION`, `START.md`, `BOOTSTRAP.md`, `RULES.md`,
 `LOOP.md`, `CONFIGURE.md`, `roles/*.md`, `scripts/*.sh` (except release packagers),
-top-level `docs/*.md`.
+top-level `docs/*.md`. On a working-mode install (already installed, or
+`--refresh --working-mode`): `wm.sh`, `ROUTING.tsv`, `adapters/`, and skill
+views (KEEP batteries already documented below).
 
 **Keeps:** `PROGRAM`, `PANEL*`, `agents.tsv`, `PROBLEM.md`, `CLAIMS.md`,
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
-`history/`, `LESSONS.md`, and any operator-written adapter at
+`history/`, `LESSONS.md`, working-mode batteries with a `.keep` file or a name in
+`.crucible/skills/KEEP` (unless `--overwrite-batteries`), and any operator-written adapter at
 `.crucible/<program>/scripts/acp-brief.py` — inside the program directory, which is
 where `--refresh` looks and what it reports as `kept local adapter: scripts/acp-brief.py`.
 An adapter at the repository's own `scripts/acp-brief.py` is outside the program directory
@@ -204,6 +249,7 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 | Coordinator | `cycle`, dispatch, transport, `contract-audit` — never start ACP after seal |
 | Drive parent | Sealed worker `agents.tsv` command, `attempt start` / finish. One worker per `drive tick`. Does not invoke the coordinator while a sealed worker exists. |
 | Maker / reviewer / auditor | only their contract |
+| Working-mode (if `PROGRAM` has `working-mode: yes`) | `.crucible/<program>/wm.sh` from the target root — [working-mode.md](working-mode.md) |
 
 `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` stop drive. Conversational
 “keep looping” is not implement.

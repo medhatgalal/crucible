@@ -69,13 +69,28 @@ CONTENTS=$(tar -tzf "$TMP/one/$NAME")
 for REQUIRED in \
   BOOTSTRAP.md \
   crucible \
+  wm.sh \
+  wm-go.sh \
+  WORKING-MODE.md \
+  ROUTING.tsv \
+  scripts/project-skills.sh \
   scripts/verify-agent-cycle.sh \
   scripts/verify-coldstart-independence.sh \
   roles/contract-auditor.md \
   docs/drive.md \
   docs/install.md \
   docs/whats-new.md \
-  scripts/verify-drive.sh
+  scripts/verify-drive.sh \
+  skills/architecture/SKILL.md \
+  skills/critique/SKILL.md \
+  skills/review/SKILL.md \
+  skills/loop-design/SKILL.md \
+  skills/research/SKILL.md \
+  skills/working-mode/SKILL.md \
+  adapters/grok.md \
+  adapters/claude.md \
+  adapters/codex.md \
+  adapters/kiro.md
 do
   printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/$REQUIRED\$" \
     || { echo "verify-package: package is missing crucible-$VERSION/$REQUIRED" >&2; exit 1; }
