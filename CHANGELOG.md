@@ -28,6 +28,13 @@ All notable changes to this project are documented here. This project follows
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
 
+## [1.11.0] - 2026-09-15
+
+### Shape
+- Brownfield `check-module-fit` / `map-ready` will not mkdir a new
+  `src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md`
+  and `ANSWERS.md` are both non-empty. Greenfield still mkdir.
+
 ## [1.10.1] - 2026-09-15
 
 ### Send-back kernel

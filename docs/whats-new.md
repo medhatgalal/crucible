@@ -13,6 +13,12 @@ independence fails closed when fewer than two of grok/kiro-cli/codex are on
 PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
 
+## 1.11.0 — shape QUESTIONS gate
+
+Brownfield `check-module-fit` / `map-ready` will not mkdir a new
+`src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md`
+and `ANSWERS.md` are both non-empty. Greenfield still mkdir.
+
 ## 1.10.1 — send-back kernel
 
 `## Send-back` is a TSV (`word`, `card`, `cap`, `andon`) the kernel
