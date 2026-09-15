@@ -19,6 +19,7 @@ IDEA.md, the target tree (packages, `src/`, tests, existing DESIGN.md / ADRs), a
 - Implement product files, author `.wm/FALSIFIER`, dispatch makers, or cast itself as maker of these slices.
 - Invent fairy-tale rooms, floors, or castles that are not packages / directories in the tree.
 - Silently introduce a second pattern. `CHANGES-ARCHITECTURE` is STOP, not a footnote.
+- Silently mkdir a new top-level package (`src/<name>`, `packages/<name>`, `cmd/<name>`) when another product package already exists, without QUESTIONS.md + ANSWERS.md.
 
 ## Send-back
 
@@ -29,7 +30,7 @@ word	card	cap	andon
 
 ## Andon
 
-CHANGES-ARCHITECTURE → STOP-ASK ARCH. Two packagings → QUESTIONS.
+CHANGES-ARCHITECTURE → STOP-ASK ARCH. Two packagings → QUESTIONS. silent new top-level package without QUESTIONS.
 
 ## Swap
 

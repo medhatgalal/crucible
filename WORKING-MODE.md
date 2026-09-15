@@ -27,6 +27,9 @@ evidence). `status` does not increment FAIL retries.
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if it is missing. Reviewer PASS does not require it.
+Brownfield `check-module-fit` / `map-ready` will not mkdir a new
+`src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md`
+and `ANSWERS.md` are both non-empty. Greenfield still mkdir.
 Existing-repo inventory may write `REPO.md` (`NEXT REPO`) before SPEC.
 Greenfield (README / adopt only) skips.
 

@@ -1,10 +1,12 @@
 # Working-mode (opt-in)
 
-On **1.10.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.11.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
-`wm.sh`. Install with
+`wm.sh`. Brownfield `check-module-fit` / `map-ready` will not mkdir a new
+`src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md` and
+`ANSWERS.md` are both non-empty; greenfield still mkdir. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
 Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
 or `status`. Runtime is the target repo plus one harness CLI. Skills live
@@ -235,6 +237,9 @@ stateDiagram-v2
 Architecture names Plane A (`architecture/modules.md`) and cuts Plane B slices
 that fit those module roots (`MAP.md`). Critique attacks the map. The kernel
 materializes `slices.tsv` and will not start a maker until the map is accepted.
+Brownfield `check-module-fit` / `map-ready` will not mkdir a new `src/<name>`,
+`packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md` and `ANSWERS.md` are
+both non-empty. Greenfield still mkdir.
 
 ```
 id	module	owned_paths	depends_on	risk	status

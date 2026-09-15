@@ -1247,6 +1247,32 @@ EOF
   return 1
 }
 
+existing_product_package() {
+  _epp=
+  for _epp in src packages cmd; do
+    [ -d "$_epp" ] || continue
+    for _epp_p in "$_epp"/*; do
+      [ -d "$_epp_p" ] || continue
+      return 0
+    done
+  done
+  return 1
+}
+
+# PATH is src|packages|cmd / name (NF==2). Do not glob: * matches slashes.
+is_product_package_root() {
+  _ipr=$1
+  [ -n "$_ipr" ] || return 1
+  printf '%s\n' "$_ipr" | awk -F '/' '
+    $0 ~ /\.\./ { exit 1 }
+    $0 ~ /^\// { exit 1 }
+    NF == 2 && ($1 == "src" || $1 == "packages" || $1 == "cmd") && $2 != "" && $2 != "." {
+      exit 0
+    }
+    { exit 1 }
+  '
+}
+
 emit_map_owned() {
   [ -f MAP.md ] || return 0
   awk -F '\t' '
@@ -1718,6 +1744,10 @@ $1"
   [ -f architecture/modules.md ] || die "architecture/modules.md missing"
   _cm_roots=$(list_module_roots) || _cm_roots=
   [ -n "$_cm_roots" ] || die "architecture/modules.md names no module roots"
+  _cm_had_pkg=0
+  if existing_product_package; then
+    _cm_had_pkg=1
+  fi
   _cm_r=
   while IFS= read -r _cm_r || [ -n "$_cm_r" ]; do
     [ -n "$_cm_r" ] || continue
@@ -1725,6 +1755,10 @@ $1"
       *..*|/*) die "invalid module root: $_cm_r" ;;
     esac
     if [ ! -d "$_cm_r" ]; then
+      if is_product_package_root "$_cm_r" && [ "$_cm_had_pkg" -eq 1 ]; then
+        [ -s QUESTIONS.md ] || die "new top-level package requires QUESTIONS.md"
+        [ -s ANSWERS.md ] || die "QUESTIONS.md without ANSWERS.md"
+      fi
       mkdir -p "$_cm_r"
       touch "$_cm_r/.gitkeep"
     fi
