@@ -1616,6 +1616,15 @@ mb=$(ls -t .wm/briefs/maker-falsify.* 2>/dev/null | head -1)
 [ -n "$mb" ] && grep -q '^session: ' "$mb" \
   && ok || bad 'maker brief must keep session: line (no station pack)'
 
+# Walker copy (.wm/bin/wm / wm loop) must embed the pack, not only package wm.sh.
+setup_map_repo t-pack-copied-kernel
+write_architecture_fixture alice LOW no
+"$WM" cast specifier spec0 grok 'true' >/dev/null
+WM_ENGINE= .wm/bin/wm run specifier >/dev/null 2>"$ERR" || true
+kb=$(ls -t .wm/briefs/specifier.* 2>/dev/null | head -1)
+[ -n "$kb" ] && grep -q 'RULE 26' "$kb" && grep -q '## Station pack' "$kb" \
+  && ok || bad "copied .wm/bin/wm specifier brief must embed station pack (RULE 26), brief=$(cat $kb 2>/dev/null || echo ABSENT)"
+
 # 11c still holds
 if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
   bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'

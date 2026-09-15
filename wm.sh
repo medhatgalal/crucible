@@ -635,13 +635,29 @@ research_skill_present() {
   [ -f .crucible/skills/research/SKILL.md ] || [ -f skills/research/SKILL.md ]
 }
 
-# Cwd ROUTING.tsv wins (reorder without editing wm.sh). Else beside this engine.
+# Cwd ROUTING.tsv wins (reorder without editing wm.sh). Else .crucible overlay,
+# then beside ENGINE / WM_ENGINE / this engine (copied .wm/bin/wm has no sibling table).
 routing_file() {
   if [ -f ROUTING.tsv ]; then
     printf '%s\n' ROUTING.tsv
     return 0
   fi
-  _rf=$(CDPATH= cd "$(dirname "$0")" && pwd)/ROUTING.tsv
+  if [ -f .crucible/ROUTING.tsv ]; then
+    printf '%s\n' .crucible/ROUTING.tsv
+    return 0
+  fi
+  for _rf in .crucible/*/ROUTING.tsv; do
+    if [ -f "$_rf" ]; then
+      printf '%s\n' "$_rf"
+      return 0
+    fi
+  done
+  _rf_src=
+  if [ -f "$WM/ENGINE" ]; then
+    _rf_src=$(kv_get "$WM/ENGINE" engine)
+  fi
+  [ -n "$_rf_src" ] || _rf_src=${WM_ENGINE:-$0}
+  _rf=$(CDPATH= cd "$(dirname "$_rf_src")" && pwd)/ROUTING.tsv
   if [ -f "$_rf" ]; then
     printf '%s\n' "$_rf"
     return 0
