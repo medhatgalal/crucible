@@ -39,6 +39,8 @@ Each `wm run` mints a UUID `session:` (Grok `--session-id {SESSION}`).
 The brief embeds only that station’s ROUTING battery (SKILL + CONTRACT).
 Reviewer/scout that mutate owned product paths are refused.
 MAP-HUMAN still required for HIGH/live.
+Judging batteries ship a `## Send-back` TSV (`word`, `card`, `cap`, `andon`).
+Overlay `.crucible/skills/<bat>/` to change FAIL cap or MAP-REVISE card.
 
 ## STOP-ASK
 
