@@ -5,7 +5,7 @@
 
 _go_cli_cmd() {
   case $1 in
-    grok) printf '%s\n' 'grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}' ;;
+    grok) printf '%s\n' 'grok --session-id {SESSION} --always-approve --no-subagents --disable-web-search --prompt-file {BRIEF}' ;;
     kiro) printf '%s\n' "kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'" ;;
     codex) printf '%s\n' "codex exec -- 'read {BRIEF} and follow it exactly'" ;;
     *) die "INDEPENDENCE_UNAVAILABLE: no CLI worker" ;;

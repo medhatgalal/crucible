@@ -2785,6 +2785,55 @@ chmod +x tools/extra-maker.sh
 "$WM" cast maker alice grok './tools/extra-maker.sh {BRIEF}' >/dev/null
 refuses 'unowned extra.txt in maker-build' 'unowned path in maker-build' "$WM" run maker-build
 
+# ./owned_paths in SPEC must match git name-only (no ./).
+setup_repo t-q3-dot-slash-owned
+cat > SPEC.md <<'EOF'
+## Goal
+tiny throwaway product file
+## Non-goals
+live systems
+## Owned files
+- ./product.txt
+## Test files
+- (none)
+## Acceptance criteria
+- product.txt exists
+## Focused falsifier
+MAKER-WRITES
+## Stop conditions
+stop-ask on live write
+## Risk
+LOW
+SPEC-AUTHOR: operator
+EOF
+commit_msg 'q3 dot-slash spec'
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'test -f product.txt' alice
+commit_msg 'q3 dot-slash falsifier'
+if ! "$WM" red >"$OUT" 2>"$ERR"; then
+  printf 'FIXTURE BROKEN: q3 dot-slash red\n%s\n%s\n' "$(cat "$OUT")" "$(cat "$ERR")" >&2
+  exit 1
+fi
+mkdir -p tools
+cat > tools/dot-slash-maker.sh <<'EOF'
+#!/bin/sh
+set -eu
+printf 'built\n' > product.txt
+git add product.txt
+git commit -qm 'maker-build product'
+EOF
+chmod +x tools/dot-slash-maker.sh
+"$WM" cast maker alice grok './tools/dot-slash-maker.sh {BRIEF}' >/dev/null
+set +e
+"$WM" run maker-build >"$OUT" 2>"$ERR"
+_ds_rc=$?
+set -e
+if [ "$_ds_rc" -eq 0 ]; then
+  ok
+else
+  bad "maker-build ./product.txt owned matches product.txt: rc=$_ds_rc out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+
 # Q2: existing product tree follows ROUTING.tsv (RESEARCH then REPO).
 setup_idea_only t-q2-repo-scout
 install_greet_unattended_workers

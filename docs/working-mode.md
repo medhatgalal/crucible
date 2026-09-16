@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.14.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.14.2**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
@@ -383,10 +383,10 @@ whose command is the CLI:
 
 ```text
 name	kind	model	effort	command
-alice	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
+alice	grok	grok-4	high	grok --session-id {SESSION} --always-approve --no-subagents --disable-web-search --prompt-file {BRIEF}
 bob	kiro	default	high	kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'
 carol	codex	gpt	high	codex exec -- 'read {BRIEF} and follow it exactly'
-dave	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
+dave	grok	grok-4	high	grok --session-id {SESSION} --always-approve --no-subagents --disable-web-search --prompt-file {BRIEF}
 ```
 
 `{BRIEF}` is the absolute brief path; `{SESSION}` is a fresh UUID per `wm run`.
