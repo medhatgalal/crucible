@@ -28,6 +28,17 @@ All notable changes to this project are documented here. This project follows
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
 
+## [1.13.0] - 2026-09-16
+
+### Entrypoint taste
+- `map-ready` requires `INTENT.md` headings `## User` / `## Job` /
+  `## Non-goals`, not only that the file exists.
+- Named `test_entrypoint` must exist. After green FALSIFIER success,
+  extra-proof hides that path; the command must fail (`falsifier does
+  not discriminate`). Restore even if the hidden run fails.
+- CLOSE writes `reviews/taste.md` (`## Taste` plus the lesson) for
+  PASS and NO-BUILD.
+
 ## [1.12.0] - 2026-09-15
 
 ### Bet worktree

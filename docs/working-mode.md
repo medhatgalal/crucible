@@ -1,12 +1,15 @@
 # Working-mode (opt-in)
 
-On **1.12.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.13.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
 `wm.sh`. Brownfield `check-module-fit` / `map-ready` will not mkdir a new
 `src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md` and
-`ANSWERS.md` are both non-empty; greenfield still mkdir. Install with
+`ANSWERS.md` are both non-empty; greenfield still mkdir. `map-ready`
+requires `INTENT.md` headings `## User` / `## Job` / `## Non-goals`.
+Named `test_entrypoint` must exist; `wm green` extra-proof hides it and
+requires the FALSIFIER to fail. CLOSE writes `reviews/taste.md`. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
 Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
 or `status`. Runtime is the target repo plus one harness CLI. Skills live
@@ -322,7 +325,8 @@ advanced fixture walks. Non-empty `QUESTIONS.md` without `ANSWERS.md` is
 `STOP-ASK QUESTIONS` (write `ANSWERS.md` then `go` again). Optional
 research writes `RESEARCH.md` before SPEC (`NEXT RESEARCH`). Optional
 `repo-scout` writes `REPO.md` (`NEXT REPO`) when the tree already has
-product files. Specifier SPEC pass writes `INTENT.md`. `LOOP_BOUND`
+product files. Specifier SPEC pass writes `INTENT.md` (`## User` /
+`## Job` / `## Non-goals`). `LOOP_BOUND`
 is max(40, min(240, 16+12×slices)), not a fixed 40.
 
 `BACKLOG.tsv` header is `id	size	risk	idea_path	status`.
@@ -347,7 +351,7 @@ Debug (internal verbs; not the start path):
 
 ```sh
 .crucible/<program>/wm.sh loop            # remaining READY slices; brick reset between
-.crucible/<program>/wm.sh map-ready       # INTENT.md + fit + slices.tsv PENDING
+.crucible/<program>/wm.sh map-ready       # INTENT headings + fit + slices.tsv PENDING
 .crucible/<program>/wm.sh map-verdict RETURNFILE
 .crucible/<program>/wm.sh next
 .crucible/<program>/wm.sh run maker-falsify
