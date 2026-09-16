@@ -308,6 +308,10 @@ EOF
   : > pkg/beta/__init__.py
   printf 'def ping():\n    raise NotImplementedError\n' > pkg/alpha/api.py
   printf 'def pong():\n    raise NotImplementedError\n' > pkg/beta/api.py
+  # te paths must exist at maker-falsify (1.13 CHECK). Maker-build overwrites.
+  printf 'import sys; sys.exit(1)\n' > tools/check_alpha.py
+  printf 'import sys; sys.exit(1)\n' > tools/check_beta.py
+  printf 'import sys; sys.exit(1)\n' > tests/test_seam.py
 
   cat > SPEC.md <<'EOF'
 ## Goal
