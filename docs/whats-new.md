@@ -121,5 +121,5 @@ CLI; do not put credentials in those files.
 - Rollback after a bad `--refresh`: the refreshed old engine is gone. Recovery is refreshing the same program from an older known-good tag; its evidence and approved panel remain untouched.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
 - Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
-- Working-mode skills live in the target tree. `$HOME` skill trees are not a runtime. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation.
-- Live grok/kiro-cli/codex independence is unavailable when none of those CLIs are on `PATH` or cannot auth under empty HOME. One kind is `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY`. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.
+- Working-mode skills live in the target tree. Engine runtime is not `$HOME`. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation. Live kiro inherits host HOME (keychain); that CLI may also read `~/.kiro/skills`.
+- Live grok/kiro-cli/codex independence is unavailable when none of those CLIs are on `PATH` or cannot auth. grok/codex probe under empty HOME with copied auth files. kiro probe/exec inherit host HOME (keychain OIDC); empty HOME hang is not logout. One kind is `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY`. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.

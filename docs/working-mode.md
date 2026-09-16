@@ -387,5 +387,7 @@ dave	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-fil
 The engine quotes both replacements. Do not wrap `{BRIEF}` or `{SESSION}` in
 quotes in the command. One kind is never labelled CROSS-FAMILY. Skills
 resolve from repo-root `.grok/skills/`, `.claude/skills/`, `.agents/skills/`
-— not `$HOME`. Mapper, critique, and maker must be distinct agents.
+— the engine does not read `$HOME` skill trees. Live kiro inherits host
+HOME (keychain) and may also load `~/.kiro/skills`; that is not
+CROSS-FAMILY isolation. Mapper, critique, and maker must be distinct agents.
 Reviewer re-runs the named falsifier.

@@ -228,6 +228,7 @@ default_skills_installs_purged = true
 EOF
   chmod 600 "$HOME/.grok/config.toml"
 fi
+# kiro probe/exec restore HOST_HOME; these copies are unused by kiro chat.
 copy_if_file "$HOST_HOME/.kiro/settings/cli.json" "$HOME/.kiro/settings/cli.json"
 copy_if_file "$HOST_HOME/.kiro/settings/permissions.yaml" "$HOME/.kiro/settings/permissions.yaml"
 copy_if_file "$HOST_HOME/.codex/auth.json" "$HOME/.codex/auth.json"
@@ -528,7 +529,7 @@ case $kind in
   kiro)
     [ -n "${KIRO_BIN:-}" ] || KIRO_BIN=$(command -v kiro-cli)
     if [ -n "${HOST_HOME:-}" ]; then
-      HOME=$HOST_HOME
+      HOME="$HOST_HOME"
       export HOME
     fi
     exec "$KIRO_BIN" chat --no-interactive --trust-all-tools "$(cat "$prompt")"

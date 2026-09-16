@@ -95,13 +95,18 @@ if [ -f "$LIVE_SH" ] && grep -q 'die_unavail "kiro-cli cannot auth"' "$LIVE_SH";
 else
   ok
 fi
+_hh_n=0
+if [ -f "$LIVE_SH" ]; then
+  _hh_n=$(grep -cF 'HOME="$HOST_HOME"' "$LIVE_SH" || true)
+fi
 if [ -f "$LIVE_SH" ] && grep -q '^export HOST_HOME$' "$LIVE_SH" \
   && grep -F -q 'HOME="$HOST_HOME"; export HOME' "$LIVE_SH" \
-  && grep -F -q 'HOME=$HOST_HOME' "$LIVE_SH"; then
+  && [ "$_hh_n" -ge 2 ]; then
   ok
 else
   bad 'live kiro probe/exec must use HOST_HOME (keychain ACP credentials)'
 fi
+unset _hh_n
 if [ -f "$LIVE_SH" ] && grep -E -q 'exec ("\$KIRO_BIN"|kiro-cli) acp' "$LIVE_SH"; then
   bad 'live kiro must not exec kiro-cli acp (JSON-RPC server)'
 else
