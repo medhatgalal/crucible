@@ -608,6 +608,8 @@ cast_multi_panel() {
 # (1) SPEC ## Focused falsifier must be exactly MAKER-WRITES
 # ---------------------------------------------------------------------------
 setup_repo t01-spec
+grep -qxF '.wm/' .gitignore \
+  && ok || bad 'wm init must append .wm/ to .gitignore'
 expect 'ready with MAKER-WRITES' '^READY$' "$WM" ready
 
 cat > SPEC.md <<'EOF'

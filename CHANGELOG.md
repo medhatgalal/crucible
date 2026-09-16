@@ -5,6 +5,15 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.15.1] - 2026-09-16
+
+### Hello te at map-ready
+- `map-ready` / `check-module-fit` plant a missing `test_entrypoint`
+  (empty file or directory) so extra-proof can hide it. Hello may use
+  `product/hello.txt`; an empty placeholder is RED until maker-build.
+- Specifier SPEC brief states that. Maker-falsify brief: do not git add `.wm/`.
+- `wm init` appends `.wm/` to `.gitignore`.
+
 ## [1.15.0] - 2026-09-16
 
 ### Smooth `go`

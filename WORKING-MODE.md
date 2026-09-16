@@ -27,9 +27,9 @@ and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`. It commits shape
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if those headings are missing. Reviewer PASS does not require it.
-Named `test_entrypoint` must exist. After green FALSIFIER success,
-hiding that path must make the command fail. CLOSE writes
-`reviews/taste.md` (`## Taste` plus the lesson).
+Named `test_entrypoint` must exist at map-ready (a directory or failing
+test, not the maker's output file). Extra-proof hides it after green.
+CLOSE writes `reviews/taste.md` (`## Taste` plus the lesson).
 Brownfield `check-module-fit` / `map-ready` will not mkdir a new
 `src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md`
 and `ANSWERS.md` are both non-empty. Greenfield still mkdir.

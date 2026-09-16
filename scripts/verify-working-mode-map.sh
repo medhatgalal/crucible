@@ -1302,6 +1302,17 @@ impl_ok 'record-mapper for map-ready CHANGES-ARCHITECTURE' "$WM" record-mapper -
 printf '\nCHANGES-ARCHITECTURE\n' >> MAP.md
 refuses 'map-ready CHANGES-ARCHITECTURE is STOP' 'STOP|CHANGES-ARCHITECTURE' "$WM" map-ready
 
+# te missing at map-ready: plant an empty file so extra-proof can hide it.
+setup_map_repo t-map-ready-te-missing
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper te-missing' "$WM" record-mapper --from MAP.md || true
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'widget\tsrc/widget\tsrc/widget/api.py\tsrc/widget/missing_te.py\tsrc/widget/api.py\tno\n' \
+  >> architecture/modules.md
+impl_ok 'map-ready plants missing test_entrypoint file' "$WM" map-ready || true
+[ -f src/widget/missing_te.py ] && ok || bad 'map-ready must plant src/widget/missing_te.py'
+
 # 3d superseded 2026-09-15: HIGH + one kind + distinct agents + MAP-HUMAN proceeds.
 # Label SUBAGENT-ISOLATED. Never fake CROSS-FAMILY.
 setup_map_repo t-high-one-kind
