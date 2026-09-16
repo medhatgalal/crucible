@@ -141,7 +141,13 @@ not a CI gate; map CHECKs are `scripts/verify-working-mode-map.sh` on CI):
 
 ```sh
 HOME=$(mktemp -d) scripts/verify-working-mode-quickstart.sh
+HOME=$(mktemp -d) scripts/verify-working-mode-blank-home.sh
+scripts/verify-working-mode-live.sh
 ```
+
+Quickstart is Example A plus unsigned HIGH (Example B). Blank-home is
+tarball adopt plus a 3-slice fixture. Live is host grok/kiro-cli/codex
+(not a CI gate). Results: `docs/examples/working-mode/EXPERIMENTS.md`.
 
 Brick CHECKs (maker ≠ judge, observed-red, NO-BUILD, live fence) live in
 `wm.sh` and `scripts/verify-working-mode.sh`. Refresh the engine only from

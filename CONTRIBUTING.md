@@ -35,7 +35,9 @@ when none of grok/kiro-cli/codex are on PATH; one kind is SUBAGENT-ISOLATED) and
 
 `scripts/verify-working-mode-blank-home.sh` and
 `scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs
-(empty HOME; Example A copy-paste). They are not required CI steps.
+(empty HOME; Example A copy-paste and unsigned HIGH). They are not required CI steps.
+Re-run them with live before a working-mode tag. Results go in
+`docs/examples/working-mode/EXPERIMENTS.md`.
 `scripts/verify-working-mode-map.sh` is a required Linux CI step.
 
 `scripts/verify-demand.sh` is the exception to read carefully. It is a recorded RED
