@@ -36,7 +36,8 @@ and `ANSWERS.md` are both non-empty. Greenfield still mkdir.
 Existing-repo inventory may write `REPO.md` (`NEXT REPO`) before SPEC.
 Greenfield (README / adopt only) skips.
 
-Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Specifier `spec0` is not maker
+Zero CLIs is `INDEPENDENCE_UNAVAILABLE`. Live kiro uses host HOME
+(keychain); empty HOME hang is not logout. Specifier `spec0` is not maker
 `make0`. Two kinds: maker kind is not reviewer kind (`CROSS-FAMILY`).
 One kind: HIGH/live still runs after MAP-HUMAN. Isolation is
 SUBAGENT-ISOLATED (fresh session, station pack, owned-path wall).

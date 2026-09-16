@@ -12,7 +12,14 @@ an alias. `.wm/FLOOR.md` and `.wm/TRACE.tsv` on `go` / `status`. Live
 independence fails closed when none of grok/kiro-cli/codex are on
 PATH or cannot auth. One kind is SUBAGENT-ISOLATED; two kinds
 CROSS-FAMILY. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
-`wm run` argv. Adapter: `adapters/kiro.md`.
+`wm run` argv. Live kiro probe/exec inherit host HOME (keychain OIDC);
+empty HOME hang is not logout. Adapter: `adapters/kiro.md`.
+
+## 1.14.1 — kiro host auth
+
+Live kiro probe and exec inherit host `HOME` so keychain OIDC applies.
+Empty HOME plus copied `cli.json` hangs; that is not logout.
+`kiro-cli acp` remains a JSON-RPC server, not a `wm run` argv.
 
 ## 1.14.0 — live one-kind
 
