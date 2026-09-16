@@ -1597,9 +1597,126 @@ mark_slice_status() {
   mv "$_mss_tmp" slices.tsv
 }
 
+# Kernel-owned bet path is only $PWD/.wm/worktrees/<id>. `.` / `..` / empty
+# pass [A-Za-z0-9._-] but must not be used as a path component.
+bet_slice_id_ok() {
+  [ -n "$1" ] || return 1
+  case $1 in
+    .|..) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+  return 0
+}
+
+bet_worktree_path() {
+  printf '%s\n' "$PWD/$WM/worktrees/$1"
+}
+
+# One git worktree per in-flight slice. <wt>/.wm is a symlink to the main
+# .wm so FALSIFIER/verdicts stay in one place.
+ensure_bet_worktree() {
+  [ -f "$WM/slice-in-flight" ] || return 0
+  _bw_id=$(kv_get "$WM/slice-in-flight" id)
+  bet_slice_id_ok "$_bw_id" || die "invalid slice id: $_bw_id"
+  ensure_wm
+  mkdir -p "$WM/worktrees"
+  _bw_path=$(bet_worktree_path "$_bw_id")
+  if [ -f "$_bw_path/.git" ] || [ -d "$_bw_path/.git" ]; then
+    _bw_new=0
+  else
+    if [ -e "$_bw_path" ]; then
+      rm -rf "$_bw_path"
+    fi
+    git worktree add -q -B "wm/$_bw_id" "$_bw_path" HEAD || die "bet worktree add failed"
+    _bw_new=1
+  fi
+  rm -rf "$_bw_path/.wm"
+  ln -sfn "$PWD/.wm" "$_bw_path/.wm"
+  if [ "$_bw_new" -eq 1 ]; then
+    overlay_main_to_bet "$_bw_path"
+  fi
+  printf 'path: %s\nslice: %s\n' "$_bw_path" "$_bw_id" > "$WM/slice-worktree"
+}
+
+# HEAD checkout misses uncommitted tools/product; copy them once at create.
+overlay_main_to_bet() {
+  _ov_wt=$1
+  [ -n "$_ov_wt" ] && [ -d "$_ov_wt" ] || return 0
+  _ov_files=$(git ls-files -c -o --exclude-standard 2>/dev/null) || return 0
+  [ -n "$_ov_files" ] || return 0
+  while IFS= read -r _ov_p || [ -n "$_ov_p" ]; do
+    [ -n "$_ov_p" ] || continue
+    case $_ov_p in
+      .wm|.wm/*|.git|.git/*) continue ;;
+    esac
+    [ -f "./$_ov_p" ] || continue
+    _ov_dir=$(dirname "$_ov_p")
+    if [ "$_ov_dir" != . ]; then
+      mkdir -p "$_ov_wt/$_ov_dir"
+    fi
+    cp "./$_ov_p" "$_ov_wt/$_ov_p"
+  done <<EOF
+$_ov_files
+EOF
+}
+
+# Copy owned product + reviews/ back to the main checkout. Fast-forward
+# worktree commits so maker-build still moves HEAD for cmd_built.
+sync_bet_to_main() {
+  _sm_wt=$1
+  [ -n "$_sm_wt" ] && [ -d "$_sm_wt" ] || return 0
+  _sm_wh=$(git -C "$_sm_wt" rev-parse --verify HEAD 2>/dev/null) || _sm_wh=
+  _sm_mh=$(git rev-parse --verify HEAD 2>/dev/null) || _sm_mh=
+  if [ -n "$_sm_wh" ] && [ -n "$_sm_mh" ] && [ "$_sm_wh" != "$_sm_mh" ]; then
+    git merge --ff-only -q "$_sm_wh" >/dev/null 2>&1 || true
+  fi
+  _sm_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
+  while IFS= read -r _sm_p || [ -n "$_sm_p" ]; do
+    [ -n "$_sm_p" ] || continue
+    [ -f "$_sm_wt/$_sm_p" ] || continue
+    _sm_dir=$(dirname "$_sm_p")
+    if [ "$_sm_dir" != . ]; then
+      mkdir -p "$_sm_dir"
+    fi
+    cp "$_sm_wt/$_sm_p" "$_sm_p"
+  done <<EOF
+$_sm_list
+EOF
+  if [ -d "$_sm_wt/reviews" ]; then
+    mkdir -p reviews
+    for _sm_f in "$_sm_wt/reviews"/*; do
+      [ -e "$_sm_f" ] || continue
+      _sm_base=${_sm_f##*/}
+      if [ -d "$_sm_f" ]; then
+        cp -R "$_sm_f" "reviews/$_sm_base"
+      else
+        cp "$_sm_f" "reviews/$_sm_base"
+      fi
+    done
+  fi
+}
+
+remove_bet_worktree() {
+  _rw_slice=
+  if [ -f "$WM/slice-in-flight" ]; then
+    _rw_slice=$(kv_get "$WM/slice-in-flight" id)
+  fi
+  if ! bet_slice_id_ok "$_rw_slice" && [ -f "$WM/slice-worktree" ]; then
+    _rw_slice=$(kv_get "$WM/slice-worktree" slice)
+  fi
+  rm -f "$WM/slice-worktree"
+  bet_slice_id_ok "$_rw_slice" || return 0
+  _rw_path=$(bet_worktree_path "$_rw_slice")
+  git worktree remove --force "$_rw_path" >/dev/null 2>&1 || true
+  git worktree prune >/dev/null 2>&1 || true
+  git branch -D "wm/$_rw_slice" >/dev/null 2>&1 || true
+  rm -rf "$_rw_path"
+}
+
 # Clear one brick's receipts so the next READY slice can start. Same set as
 # the 1.7.0 blank-home harness reset; slice-close is not work-close.
 reset_brick() {
+  remove_bet_worktree
   ensure_wm
   rm -f "$WM/CLOSED" "$WM/FALSIFIER" "$WM/FALSIFIER.meta" "$WM/FALSIFIER.sha256" \
     "$WM/red.status" "$WM/red.out" "$WM/built.status" "$WM/built.reason" \
@@ -2128,6 +2245,7 @@ cmd_close() {
     printf 'CLOSED PASS\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED PASS"
     metrics_append "CLOSED PASS" -
+    remove_bet_worktree
     if close_append_lesson "$_cl_lesson"; then
       return 0
     fi
@@ -2137,6 +2255,7 @@ cmd_close() {
     printf 'CLOSED NO-BUILD\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
     metrics_append "CLOSED NO-BUILD" -
+    remove_bet_worktree
     if close_append_lesson "$_cl_lesson"; then
       return 0
     fi
@@ -2545,9 +2664,26 @@ cmd_run() {
     _ru_owned_snap="$WM/.owned.snap.$$"
     snapshot_owned_product "$_ru_owned_snap"
   fi
+  _ru_wt=
+  if [ -f "$WM/slice-in-flight" ]; then
+    case $_ru_role in
+      maker-falsify|maker-build|reviewer)
+        ensure_bet_worktree
+        _ru_sid=$(kv_get "$WM/slice-in-flight" id)
+        bet_slice_id_ok "$_ru_sid" || die "invalid slice id: $_ru_sid"
+        _ru_wt=$(bet_worktree_path "$_ru_sid")
+        ;;
+    esac
+  fi
   set +e
-  sh -c "$_ru_expanded" > "$WM/worker.out" 2>"$WM/worker.err"
-  _ru_rc=$?
+  if [ -n "$_ru_wt" ] && [ -d "$_ru_wt" ]; then
+    ( cd "$_ru_wt" && sh -c "$_ru_expanded" ) > "$WM/worker.out" 2>"$WM/worker.err"
+    _ru_rc=$?
+    sync_bet_to_main "$_ru_wt"
+  else
+    sh -c "$_ru_expanded" > "$WM/worker.out" 2>"$WM/worker.err"
+    _ru_rc=$?
+  fi
   set -e
   rm -f "$WM/dispatch"
   if [ -n "$_ru_owned_snap" ]; then
@@ -2736,6 +2872,7 @@ cmd_loop() {
         _lp_slice=$_lp_sid
         ensure_wm
         printf 'id: %s\n' "$_lp_sid" > "$WM/slice-in-flight"
+        ensure_bet_worktree
         if [ ! -f SPEC.md ]; then
           loop_halt "STOP-ASK SPEC incomplete"
         fi

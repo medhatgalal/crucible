@@ -44,6 +44,7 @@ Reviewer/scout that mutate owned product paths are refused.
 MAP-HUMAN still required for HIGH/live.
 Judging batteries ship a `## Send-back` TSV (`word`, `card`, `cap`, `andon`).
 Overlay `.crucible/skills/<bat>/` to change FAIL cap or MAP-REVISE card.
+An in-flight slice runs maker/reviewer in `.wm/worktrees/<id>`; CLOSE removes it.
 
 ## STOP-ASK
 
