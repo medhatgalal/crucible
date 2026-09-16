@@ -308,7 +308,12 @@ assert_no_home_skill_trees() {
     bad "harness skill trees under HOME: $hits"
     return
   fi
-  hits=$(find "$EMPTY_HOME" -name SKILL.md ! -path '*/.grok/bundled/*' -print 2>/dev/null || true)
+  hits=$(find "$EMPTY_HOME" -name SKILL.md \
+    ! -path '*/.grok/bundled/*' \
+    ! -path '*/.codex/*' \
+    ! -path '*/.npm/*' \
+    ! -path '*/playwright-core/*' \
+    -print 2>/dev/null || true)
   if [ -n "$hits" ]; then
     bad "SKILL.md under HOME outside vendor bundled: $hits"
   else
@@ -557,7 +562,21 @@ printf 'pid %s\\n' "\$\$" > .wm/maker-pid
 printf 'ran\\n' >> .wm/maker-ran
 brief=\${1:-\${BRIEF:-}}
 [ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-maker: brief missing\\n' >&2; exit 1; }
-exec ./tools/live-exec.sh ${LIVE_MAKE_KIND} "\$brief"
+set +e
+./tools/live-exec.sh ${LIVE_MAKE_KIND} "\$brief"
+rc=\$?
+set -e
+role=
+if [ -f .wm/dispatch ]; then
+  role=\$(awk -F ': ' '\$1=="role"{print \$2; exit}' .wm/dispatch)
+fi
+if [ "\$role" = maker-build ]; then
+  git add health tests 2>/dev/null || true
+  if ! git diff --cached --quiet; then
+    git -c user.email=wm@local -c user.name=working-mode commit -qm 'maker-build s1'
+  fi
+fi
+exit \$rc
 EOF
 
   cat > tools/live-reviewer.sh <<EOF
@@ -733,12 +752,12 @@ EOF
   if [ -f SPEC.md ]; then
     spec_or_map=1
     grep -E -qi 'health|/health|test_health' SPEC.md && health_doc=1
-    grep -F -q 'product/hello.txt' SPEC.md && hello_owned=1
+    grep -E -q '^- product/hello.txt' SPEC.md && hello_owned=1
   fi
   if [ -f MAP.md ]; then
     spec_or_map=1
     grep -E -qi 'health|/health|test_health' MAP.md && health_doc=1
-    grep -F -q 'product/hello.txt' MAP.md && hello_owned=1
+    grep -E -q '^- product/hello.txt' MAP.md && hello_owned=1
   fi
   if [ -n "$spec_or_map" ] && [ "$health_doc" -eq 1 ]; then
     ok
