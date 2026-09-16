@@ -28,6 +28,13 @@ All notable changes to this project are documented here. This project follows
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
 
+## [1.12.0] - 2026-09-15
+
+### Bet worktree
+- An in-flight slice gets `.wm/worktrees/<id>` (git worktree). Maker and
+  reviewer `wm run` execute there. Product/`reviews/` sync back. CLOSE
+  removes the worktree. Specifier/scout stay in the main checkout.
+
 ## [1.11.0] - 2026-09-15
 
 ### Shape

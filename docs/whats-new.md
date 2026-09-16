@@ -13,6 +13,12 @@ independence fails closed when fewer than two of grok/kiro-cli/codex are on
 PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
 
+## 1.12.0 — bet worktree
+
+An in-flight slice gets `.wm/worktrees/<id>`. Maker and reviewer `wm run`
+execute there; product/`reviews/` sync back; CLOSE removes the worktree.
+Specifier/scout stay in the main checkout.
+
 ## 1.11.0 — shape QUESTIONS gate
 
 Brownfield `check-module-fit` / `map-ready` will not mkdir a new
