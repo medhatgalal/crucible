@@ -9,9 +9,17 @@ First-class verbs: no-args help, `go`, `status`. No-flag `go` drains a READY
 backlog row when `IDEA.md` is missing, `STOP-ASK INTAKE` when there is no
 backlog, and archives plus next after a closeable CLOSED. `go --next` remains
 an alias. `.wm/FLOOR.md` and `.wm/TRACE.tsv` on `go` / `status`. Live
-independence fails closed when fewer than two of grok/kiro-cli/codex are on
-PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
+independence fails closed when none of grok/kiro-cli/codex are on
+PATH or cannot auth. One kind is SUBAGENT-ISOLATED; two kinds
+CROSS-FAMILY. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
+
+## 1.14.0 — live one-kind
+
+Live walk proceeds with one of grok/kiro-cli/codex as
+`SUBAGENT-ISOLATED` (distinct agent ids). Two kinds still split
+maker/reviewer (`CROSS-FAMILY`). Zero of those CLIs is still
+`INDEPENDENCE_UNAVAILABLE`. One kind is never labelled CROSS-FAMILY.
 
 ## 1.13.0 — entrypoint taste
 
@@ -107,4 +115,4 @@ CLI; do not put credentials in those files.
 - Single-user authorship is unprovable: files written under one operating-system user cannot establish independent identity.
 - Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
 - Working-mode skills live in the target tree. `$HOME` skill trees are not a runtime. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation.
-- Live grok/kiro-cli/codex independence is unavailable when fewer than two of those CLIs are on `PATH` or cannot auth under empty HOME. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.
+- Live grok/kiro-cli/codex independence is unavailable when none of those CLIs are on `PATH` or cannot auth under empty HOME. One kind is `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY`. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.
