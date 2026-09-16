@@ -2,14 +2,22 @@
 
 How this machine launches Kiro CLI. Not a battery. Not the engine. No secrets.
 
-Working-mode does **not** read `$HOME/.kiro/skills`. After
+Working-mode engine does **not** read `$HOME/.kiro/skills`. After
 `crucible adopt PROGRAM --managed --working-mode`, repo skill views are
 `.grok/skills/`, `.claude/skills/`, and `.agents/skills/` (views of canonical
 `.crucible/skills/`). Nested `.crucible/.agents/skills/` is a projection copy.
 
 ACP (`kiro-cli acp`) is a JSON-RPC **server** for the guided-cycle hop.
-Do not pass `kiro-cli acp` as a `wm run` command. Working-mode uses headless
-chat.
+`--auth-method cli` reads the Kiro CLI credential store (macOS keychain
+`kirocli:odic:token`). Do not pass `kiro-cli acp` as a `wm run` command.
+Working-mode uses headless chat.
+
+Headless `kiro-cli chat --no-interactive` uses that same store when `HOME`
+is the operator home. An empty `HOME` plus copied
+`~/.kiro/settings/cli.json` (UI keys, not OIDC) hangs; that is not logout.
+Live independence therefore probes and execs kiro under the host `HOME`.
+Do not copy ACP sqlite. Using host HOME may let kiro read
+`~/.kiro/skills`; working-mode still does not install batteries there.
 
 ## Invoke
 
@@ -32,6 +40,7 @@ environment (never in this file, never in skills, never committed).
 
 Non-interactive: `kiro-cli chat --no-interactive --trust-all-tools 'read {BRIEF} and follow it exactly'`.
 Do not pass tokens on the command line. Do not use `kiro-cli acp`.
+Keep `HOME` as the operator home so keychain credentials apply.
 
 ## Skills
 

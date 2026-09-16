@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.14.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.14.1**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
@@ -158,7 +158,7 @@ a **newer** tree (`adopt work --refresh`); `src == dst` is refused.
 | Product already matches the falsifier | Example A files + existing hello | `CLOSED NO-BUILD` | Reviewer PASS on a no-build red |
 | HIGH slice | Example B + `MAP-HUMAN` | Stops until you sign; then walks | Unattended HIGH/live (8c) |
 | Several modules | `MAP.md` with `depends_on` | One `loop` walks READY parents-CLOSED | Parallel in-slice TASKS |
-| Live Grok/Kiro/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if none of grok/kiro-cli/codex can auth; one kind `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY` | Claiming independence when those CLIs are missing |
+| Live Grok/Kiro/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if none of grok/kiro-cli/codex can auth; kiro uses host HOME (keychain); one kind `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY` | Empty-HOME kiro hang labelled unauthenticated; claiming independence when those CLIs are missing |
 | Guided stall (`WAIT APPROVAL`) | Stay on `crucible drive` | Unchanged 1.6.6 gates | Working-mode will not clear those gates |
 
 ## Visuals
@@ -368,6 +368,9 @@ has them (optional extra: `adapters/claude.md`). Each file says how to invoke
 that CLI and how to point ignored `agents.tsv` at it. They are not batteries
 and they carry no credentials. Kind `kiro` is the `kiro-cli` binary.
 `kiro-cli acp` is a guided-cycle JSON-RPC server, not a `wm run` argv.
+Kiro OIDC lives in the host keychain (`kirocli:odic:token`; ACP
+`--auth-method cli`). Live probe/exec inherit host `HOME`. Empty HOME
+plus copied `cli.json` hangs; that is not logout.
 
 `.crucible/<program>/wm.sh` does not spawn a harness by name. Cast a worker
 whose command is the CLI:
@@ -384,5 +387,7 @@ dave	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-fil
 The engine quotes both replacements. Do not wrap `{BRIEF}` or `{SESSION}` in
 quotes in the command. One kind is never labelled CROSS-FAMILY. Skills
 resolve from repo-root `.grok/skills/`, `.claude/skills/`, `.agents/skills/`
-— not `$HOME`. Mapper, critique, and maker must be distinct agents.
+— the engine does not read `$HOME` skill trees. Live kiro inherits host
+HOME (keychain) and may also load `~/.kiro/skills`; that is not
+CROSS-FAMILY isolation. Mapper, critique, and maker must be distinct agents.
 Reviewer re-runs the named falsifier.

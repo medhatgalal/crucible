@@ -31,7 +31,7 @@ hand. An unrun suite rots, and a rotted suite is indistinguishable from a suite 
 asserted anything.
 
 `scripts/verify-working-mode-live.sh` is fail-closed (`INDEPENDENCE_UNAVAILABLE`
-when none of grok/kiro-cli/codex are on PATH; one kind is SUBAGENT-ISOLATED) and is **not** a required CI gate.
+when none of grok/kiro-cli/codex are on PATH; one kind is SUBAGENT-ISOLATED) and is **not** a required CI gate. Kiro live probe/exec inherit host HOME (keychain OIDC); empty HOME hang is not logout.
 
 `scripts/verify-working-mode-blank-home.sh` and
 `scripts/verify-working-mode-quickstart.sh` are extra working-mode proofs

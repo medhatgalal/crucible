@@ -62,6 +62,8 @@ else
 fi
 
 # 1.14 live walk source contract (no live CLIs).
+# 1.14.1: kiro probe/exec inherit HOST_HOME (keychain OIDC). Empty HOME hang
+# is not logout. Do not exec kiro-cli acp as wm argv.
 LIVE_SH="$HERE/scripts/verify-working-mode-live.sh"
 if [ -f "$LIVE_SH" ] && grep -F -q 'need >=1' "$LIVE_SH"; then
   ok
@@ -90,6 +92,23 @@ else
 fi
 if [ -f "$LIVE_SH" ] && grep -q 'die_unavail "kiro-cli cannot auth"' "$LIVE_SH"; then
   bad 'one CLI auth failure must not abort the live walk'
+else
+  ok
+fi
+_hh_n=0
+if [ -f "$LIVE_SH" ]; then
+  _hh_n=$(grep -cF 'HOME="$HOST_HOME"' "$LIVE_SH" || true)
+fi
+if [ -f "$LIVE_SH" ] && grep -q '^export HOST_HOME$' "$LIVE_SH" \
+  && grep -F -q 'HOME="$HOST_HOME"; export HOME' "$LIVE_SH" \
+  && [ "$_hh_n" -ge 2 ]; then
+  ok
+else
+  bad 'live kiro probe/exec must use HOST_HOME (keychain ACP credentials)'
+fi
+unset _hh_n
+if [ -f "$LIVE_SH" ] && grep -E -q 'exec ("\$KIRO_BIN"|kiro-cli) acp' "$LIVE_SH"; then
+  bad 'live kiro must not exec kiro-cli acp (JSON-RPC server)'
 else
   ok
 fi

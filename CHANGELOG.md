@@ -27,7 +27,18 @@ All notable changes to this project are documented here. This project follows
   `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
 - Adapter: `adapters/kiro.md`. Headless:
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
-  as a `wm run` argv.
+  as a `wm run` argv. Live kiro probe/exec inherit host `HOME` so keychain
+  OIDC applies; empty HOME hang is not logout.
+
+## [1.14.1] - 2026-09-16
+
+### Kiro live auth
+- Live kiro probe and `tools/live-exec.sh` inherit host `HOME` so macOS
+  keychain OIDC (`kirocli:odic:token`; ACP `--auth-method cli`) applies.
+- Empty HOME plus copied `~/.kiro/settings/cli.json` (UI keys only) hangs;
+  that is not logout. Do not copy ACP sqlite.
+- Headless remains `kiro-cli chat --no-interactive --trust-all-tools`.
+  `kiro-cli acp` is still a JSON-RPC server, not a `wm run` argv.
 
 ## [1.14.0] - 2026-09-16
 

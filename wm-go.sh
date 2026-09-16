@@ -1,6 +1,7 @@
 # wm-go.sh — sourced by wm.sh (same directory). Not a standalone entrypoint.
 # go discovers grok/kiro-cli/codex, casts distinct ids, then cmd_loop.
 # kiro-cli binary → kind kiro. Do not use `kiro-cli acp` as a wm run argv.
+# Live kiro auth uses host HOME (keychain); empty HOME hang is not logout.
 
 _go_cli_cmd() {
   case $1 in

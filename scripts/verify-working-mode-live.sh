@@ -4,10 +4,12 @@
 # One kind proceeds SUBAGENT-ISOLATED (k2=k1; distinct agent ids).
 # Two kinds split maker/reviewer CROSS-FAMILY. Never fake CROSS-FAMILY.
 # Claude Code is not required.
-# Fail closed: those present binaries cannot auth under empty HOME →
-# INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
-# Host auth/config is copied (grok auth.json+config.toml, kiro settings/cli.json,
-# codex auth.json+config.toml). Skills/bundled/sessions are not copied.
+# Fail closed: drop a present binary that cannot auth; zero usable →
+# INDEPENDENCE_UNAVAILABLE. Do not grok-only PASS.
+# grok/codex: copy auth files into empty HOME and probe there.
+# kiro: OIDC lives in the host keychain (ACP --auth-method cli /
+# kirocli:odic:token). Empty HOME + copied cli.json hangs; that is not
+# logout. Probe and live-exec restore HOST_HOME. Do not copy ACP sqlite.
 # Do not use kiro-cli acp (JSON-RPC server) as wm run argv.
 # One-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
 # live CLIs (not architecture-agent.sh / critique-agent.sh); prefer wm go;
@@ -18,6 +20,7 @@ set -eu
 
 HERE=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 HOST_HOME=${HOME:-}
+export HOST_HOME
 PASS=0
 FAIL=0
 
@@ -140,8 +143,9 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
 # Auth/config only (no harness skill trees). Do not invent secrets; do not print them.
 # Copy host grok auth.json + config.toml; overlay yolo/always-approve without
-# dropping other keys. Copy kiro settings/cli.json; codex auth + config.
-# Never copy skills/, bundled/, sessions/, or kiro-cli acp state.
+# dropping other keys. Copy kiro settings/cli.json (UI only, not OIDC) and
+# codex auth + config. Never copy skills/, bundled/, sessions/, or kiro-cli
+# ACP sqlite. kiro chat uses HOST_HOME for the keychain credential store.
 copy_if_file() {
   src=$1
   dst=$2
@@ -224,6 +228,7 @@ default_skills_installs_purged = true
 EOF
   chmod 600 "$HOME/.grok/config.toml"
 fi
+# kiro probe/exec restore HOST_HOME; these copies are unused by kiro chat.
 copy_if_file "$HOST_HOME/.kiro/settings/cli.json" "$HOME/.kiro/settings/cli.json"
 copy_if_file "$HOST_HOME/.kiro/settings/permissions.yaml" "$HOME/.kiro/settings/permissions.yaml"
 copy_if_file "$HOST_HOME/.codex/auth.json" "$HOME/.codex/auth.json"
@@ -242,8 +247,9 @@ printf 'probe\n' > "$PROBE_DIR/README"
   git -c user.email=wm@local -c user.name=working-mode commit -qm probe
 ) >/dev/null 2>"$ERR" || true
 
-# One-shot ping under empty HOME. Discard output (do not print secrets).
-# Probe PATH CLIs; drop any that cannot auth. Zero usable → unavailable.
+# grok/codex: one-shot ping under empty HOME (copied auth files).
+# kiro: ping under HOST_HOME (keychain). Discard output (do not print secrets).
+# Drop any that cannot auth. Zero usable → unavailable.
 # Do not die because claude is missing. Do not die because one of three fails.
 printf 'reply with pong only\n' > "$PROBE_DIR/ping.txt"
 if [ "$LIVE_GROK" -eq 1 ]; then
@@ -256,7 +262,7 @@ if [ "$LIVE_GROK" -eq 1 ]; then
   fi
 fi
 if [ "$LIVE_KIRO" -eq 1 ]; then
-  if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
+  if ( HOME="$HOST_HOME"; export HOME; CDPATH=; cd "$PROBE_DIR" && run_timeout 40 \
     "$KIRO_BIN" chat --no-interactive --trust-all-tools pong ); then
     ok
   else
@@ -522,6 +528,10 @@ case $kind in
     ;;
   kiro)
     [ -n "${KIRO_BIN:-}" ] || KIRO_BIN=$(command -v kiro-cli)
+    if [ -n "${HOST_HOME:-}" ]; then
+      HOME="$HOST_HOME"
+      export HOME
+    fi
     exec "$KIRO_BIN" chat --no-interactive --trust-all-tools "$(cat "$prompt")"
     ;;
   codex)
