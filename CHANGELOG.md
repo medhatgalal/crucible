@@ -5,31 +5,6 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-### Three-verb floor
-
-- `wm go` discovers grok, kiro-cli (kind **kiro**), and codex only. Claude Code
-  is not on the discover list. Two kinds = any two of grok/kiro/codex.
-- First-class verbs: no-args help, `go`, `status`. `cast` / `loop` / `next` are
-  debug, not the start path.
-- `go` with no flags: missing `IDEA.md` plus a READY `BACKLOG.tsv` row is the
-  same as `go --next`; missing `IDEA.md` and no backlog is `STOP-ASK INTAKE`;
-  a closeable CLOSED plus another READY row archives and takes the next idea.
-  `go --next` remains an alias.
-- `go` and `status` write `.wm/FLOOR.md` (station SHAPE|DESIGN|BUILD|INSPECT|ANDON|DONE,
-  card, wip slice, andon, evidence paths). `.wm/TRACE.tsv` appends one line per
-  `go` / `status` / `loop` card transition. `status` does not increment FAIL count.
-- Pre-brick `next` follows cwd/`ROUTING.tsv` order (reorder RESEARCH/REPO without
-  editing `wm.sh`). Specifier brief matches that station. CONTRACT `## Send-back`
-  / `## Andon` on architecture, critique, review, research.
-- Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
-  none of grok/kiro-cli/codex are on PATH or cannot auth. One kind is
-  `SUBAGENT-ISOLATED`; two kinds are `CROSS-FAMILY`. Missing
-  `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
-- Adapter: `adapters/kiro.md`. Headless:
-  `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
-  as a `wm run` argv. Live kiro probe/exec inherit host `HOME` so keychain
-  OIDC applies; empty HOME hang is not logout.
-
 ## [1.14.1] - 2026-09-16
 
 ### Kiro live auth

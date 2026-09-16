@@ -4,16 +4,7 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
-`go` discovers grok, kiro-cli (kind kiro), and codex only (not Claude Code).
-First-class verbs: no-args help, `go`, `status`. No-flag `go` drains a READY
-backlog row when `IDEA.md` is missing, `STOP-ASK INTAKE` when there is no
-backlog, and archives plus next after a closeable CLOSED. `go --next` remains
-an alias. `.wm/FLOOR.md` and `.wm/TRACE.tsv` on `go` / `status`. Live
-independence fails closed when none of grok/kiro-cli/codex are on
-PATH or cannot auth. One kind is SUBAGENT-ISOLATED; two kinds
-CROSS-FAMILY. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
-`wm run` argv. Live kiro probe/exec inherit host HOME (keychain OIDC);
-empty HOME hang is not logout. Adapter: `adapters/kiro.md`.
+No working-mode changes past 1.14.1.
 
 ## 1.14.1 — kiro host auth
 
