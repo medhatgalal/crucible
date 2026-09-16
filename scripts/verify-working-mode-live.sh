@@ -433,25 +433,26 @@ python test in tests/test_health.py. If underspecified, write QUESTIONS.md
 (operator; GET /health 200; no network/auth/billing). Write SPEC.md with
 required headings (Goal, Non-goals, Owned files, Test files, Acceptance
 criteria, Focused falsifier MAKER-WRITES, Stop conditions, Risk LOW).
-Owned files: health/app.py. Test files: tests/test_health.py. Do not
-author the falsifier command (MAKER-WRITES only).
-mkdir -p tests. Plant tests/test_health.py as exactly:
+Owned files: health/app.py, health/test_health.py. Test files:
+health/test_health.py. Do not author the falsifier command (MAKER-WRITES
+only). mkdir -p health. Plant health/test_health.py as exactly:
 import sys; sys.exit(1)
 so the test_entrypoint exists at maker-falsify. Maker-build overwrites
-this file. Keep te path tests/test_health.py.
+this file. Keep te path health/test_health.py. All owned paths sit under
+the health/ module root.
 
 Write architecture/modules.md as tab-separated bytes:
 EOF
     printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n'
-    printf 'health\thealth\thealth/app.py\ttests/test_health.py\thealth/app.py\tno\n'
+    printf 'health\thealth\thealth/app.py\thealth/test_health.py\thealth/app.py\tno\n'
     cat <<'EOF'
 
 Write MAP.md starting with MAPPER: spec0 then a blank line then tab-separated:
 EOF
     printf 'id\tmodule\towned_paths\tdepends_on\trisk\n'
-    printf 's1\thealth\thealth/app.py\t-\tLOW\n'
+    printf 's1\thealth\thealth/app.py,health/test_health.py\t-\tLOW\n'
     cat <<'EOF'
-git add INTENT.md SPEC.md architecture/modules.md MAP.md tests/test_health.py && git commit -m 'specifier: SPEC MAP modules'
+git add INTENT.md SPEC.md architecture/modules.md MAP.md health/test_health.py && git commit -m 'specifier: SPEC MAP modules'
 Do not implement the product. Do not write MAP-ACCEPT. Do not be the maker.
 
 ## scout (agent scout0)
@@ -466,8 +467,8 @@ Do not author MAP.md. Do not be the specifier or maker.
 ## maker-falsify (agent make0)
 Do not create health/app.py yet.
 Write exactly one line to .wm/FALSIFIER:
-python3 tests/test_health.py
-The command must include the test_entrypoint path tests/test_health.py.
+python3 health/test_health.py
+The command must include the test_entrypoint path health/test_health.py.
 Do not use curl or wget.
 Meta: compute sha256 of .wm/FALSIFIER (shasum -a 256 or sha256sum).
 Write .wm/FALSIFIER.meta as three lines:
@@ -479,9 +480,10 @@ Do not implement the product. Do not write .wm/return or reviews.
 
 ## maker-build (agent make0)
 Implement a stdlib in-process GET /health -> 200 handler (no live bind).
-Write health/app.py (handle GET /health returns 200) and tests/test_health.py
-(stdlib unittest; python3 tests/test_health.py exits 0). Optional empty
-health/__init__.py. git add those files && git commit -m 'maker-build s1'
+Write health/app.py (handle GET /health returns 200) and
+health/test_health.py (stdlib unittest; python3 health/test_health.py
+exits 0). Optional empty health/__init__.py. git add those files &&
+git commit -m 'maker-build s1'
 Do not write verdicts, CLOSED, or return files. Do not use pip.
 
 ## reviewer (agent rev0)
@@ -571,7 +573,7 @@ if [ -f .wm/dispatch ]; then
   role=\$(awk -F ': ' '\$1=="role"{print \$2; exit}' .wm/dispatch)
 fi
 if [ "\$role" = maker-build ]; then
-  git add health tests 2>/dev/null || true
+  git add health 2>/dev/null || true
   if ! git diff --cached --quiet; then
     git -c user.email=wm@local -c user.name=working-mode commit -qm 'maker-build s1'
   fi
@@ -770,9 +772,9 @@ EOF
     bad 'SPEC.md/MAP.md must not own product/hello.txt'
   fi
 
-  PRODUCT=tests/test_health.py
+  PRODUCT=health/test_health.py
   if grep -q 'CLOSED PASS' .wm/CLOSED 2>/dev/null; then
-    if [ -f tests/test_health.py ] || [ -f health/app.py ] || [ -f health.py ]; then
+    if [ -f health/test_health.py ] || [ -f health/app.py ] || [ -f tests/test_health.py ]; then
       ok
     else
       bad "CLOSED PASS but health-check files missing"
