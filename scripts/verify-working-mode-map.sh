@@ -1928,6 +1928,53 @@ else
   bad "tampered slice-worktree path must not remove sibling, rc=$close_rc list=$(git worktree list) keep=$(ls "$sib/KEEP" 2>/dev/null || echo ABSENT) err=$(cat "$ERR")"
 fi
 
+# cmd_run must reconstruct $PWD/.wm/worktrees/<id>, not cd via slice-worktree path:.
+if extract_fn cmd_run | grep -q 'slice-worktree" path'; then
+  bad 'cmd_run must not cd/sync via slice-worktree path:'
+else
+  ok
+fi
+if extract_fn cmd_run | grep -q 'bet_worktree_path'; then
+  ok
+else
+  bad 'cmd_run must reconstruct bet worktree path from slice id'
+fi
+
+# After ensure, a tampered path: must not make maker-build run in a sibling dir.
+setup_map_repo t-bet-tamper-cd
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper tamper-cd' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready tamper-cd' "$WM" map-ready || true
+write_map_return bob MAP-ACCEPT
+impl_ok 'map-verdict tamper-cd' "$WM" map-verdict .wm/return/bob.md || true
+write_spec_fit
+write_map_loop_brick
+"$WM" cast maker carol grok './tools/map-loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer dave grok './tools/map-loop-reviewer.sh {BRIEF}' >/dev/null
+git add -A && git commit -qm tamper-cd >/dev/null
+sib="$BASE/t-bet-tamper-cd-sib"
+mkdir -p "$sib/src/widget"
+printf 'SIB\n' > "$sib/KEEP"
+printf '# widget api\nprint("widget")\n' > "$sib/src/widget/api.py"
+printf 'id: s1\n' > .wm/slice-in-flight
+impl_ok 'record-pre-falsify tamper-cd' "$WM" record-pre-falsify || true
+impl_ok 'maker-falsify tamper-cd' "$WM" run maker-falsify || true
+impl_ok 'red tamper-cd' "$WM" red || true
+printf 'path: %s\nslice: s1\n' "$sib" > .wm/slice-worktree
+impl_ok 'maker-build tamper-cd' "$WM" run maker-build || true
+if grep -q WM-SLICE-s1 "$sib/src/widget/api.py" 2>/dev/null; then
+  bad 'maker-build must not run in tampered sibling path'
+else
+  ok
+fi
+if grep -q WM-SLICE-s1 src/widget/api.py; then
+  ok
+else
+  bad 'maker-build must still land in reconstructed worktree/main'
+fi
+[ -f "$sib/KEEP" ] && grep -q SIB "$sib/KEEP" \
+  && ok || bad 'tampered sibling dir must be left intact'
+
 # 11c still holds
 if grep -E -q 'skills/(architecture|critique|review|loop-design)' "$WM"; then
   bad 'wm.sh hardcodes battery paths; replacing a directory would require editing wm.sh'

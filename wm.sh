@@ -2669,7 +2669,9 @@ cmd_run() {
     case $_ru_role in
       maker-falsify|maker-build|reviewer)
         ensure_bet_worktree
-        _ru_wt=$(kv_get "$WM/slice-worktree" path)
+        _ru_sid=$(kv_get "$WM/slice-in-flight" id)
+        bet_slice_id_ok "$_ru_sid" || die "invalid slice id: $_ru_sid"
+        _ru_wt=$(bet_worktree_path "$_ru_sid")
         ;;
     esac
   fi
