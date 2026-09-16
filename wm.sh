@@ -1077,7 +1077,7 @@ write_brief() {
     fi
     case $_wb_role in
       maker-falsify)
-        printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Commit. Do not implement product owned files. Do not write verdicts. If the in-flight module has a test_entrypoint, the FALSIFIER command must include that path.\n'
+        printf 'Write .wm/FALSIFIER (one command) and .wm/FALSIFIER.meta. Do not git add .wm/. Do not implement product owned files. Do not write verdicts. If the in-flight module has a test_entrypoint, the FALSIFIER command must include that path.\n'
         emit_lessons_section
         ;;
       maker-build)
@@ -1098,7 +1098,7 @@ write_brief() {
             ;;
           *)
             printf 'Read IDEA.md. Read ANSWERS.md if present. Read the architecture SKILL.md if present. If the idea is underspecified, write QUESTIONS.md (at most 7 questions, one topic each) and stop. Do not invent answers. Do not implement product. Do not stamp PASS.\n'
-            printf 'When specified, write INTENT.md with ## User, ## Job, and ## Non-goals; SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH); architecture/modules.md TSV; and MAP.md. MAPPER is this agent (%s). Do not write MAP-ACCEPT. Do not stamp PASS.\n' "$_wb_agent"
+            printf 'When specified, write INTENT.md with ## User, ## Job, and ## Non-goals; SPEC.md (required headings, MAKER-WRITES, owned files, LOW|MEDIUM|HIGH); architecture/modules.md TSV; and MAP.md. MAPPER is this agent (%s). Prefer test_entrypoint a directory or failing test that exists now. If you name a file the maker will create, map-ready plants an empty placeholder. Do not write MAP-ACCEPT. Do not stamp PASS.\n' "$_wb_agent"
             ;;
         esac
         ;;
@@ -1137,6 +1137,9 @@ cmd_init() {
   fi
   if [ ! -d .git ]; then
     git init -q
+  fi
+  if [ ! -f .gitignore ] || ! grep -qxF '.wm/' .gitignore 2>/dev/null; then
+    printf '.wm/\n' >> .gitignore
   fi
   _in_em=$(git config user.email 2>/dev/null || true)
   if [ -z "$_in_em" ]; then
@@ -1268,6 +1271,24 @@ list_module_roots() {
     {
       r = trim($2)
       if (r != "") print r
+    }
+  ' architecture/modules.md
+}
+
+list_module_test_entrypoints() {
+  [ -f architecture/modules.md ] || return 1
+  awk -F '\t' '
+    function trim(s) {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", s)
+      return s
+    }
+    /^#/ { next }
+    /^[[:space:]]*$/ { next }
+    NF < 2 { next }
+    trim($1) == "module_id" { next }
+    {
+      t = (NF >= 4) ? trim($4) : ""
+      if (t != "" && t != "-") print t
     }
   ' architecture/modules.md
 }
@@ -1939,6 +1960,32 @@ $1"
     [ -d "$_cm_r" ] || die "module root does not exist: $_cm_r"
   done <<EOF
 $_cm_roots
+EOF
+  _cm_te=
+  while IFS= read -r _cm_te || [ -n "$_cm_te" ]; do
+    [ -n "$_cm_te" ] || continue
+    [ "$_cm_te" != - ] || continue
+    case $_cm_te in
+      *..*|/*) die "invalid test_entrypoint: $_cm_te" ;;
+    esac
+    if [ ! -e "$_cm_te" ]; then
+      _cm_base=${_cm_te##*/}
+      case $_cm_base in
+        *.*)
+          _cm_dir=$(dirname "$_cm_te")
+          if [ "$_cm_dir" != . ]; then
+            mkdir -p "$_cm_dir"
+          fi
+          : > "$_cm_te"
+          ;;
+        *)
+          mkdir -p "$_cm_te"
+          ;;
+      esac
+    fi
+    [ -e "$_cm_te" ] || die "test_entrypoint missing"
+  done <<EOF
+$(list_module_test_entrypoints)
 EOF
   ensure_wm
   _cm_list="$WM/.fit-paths.$$"

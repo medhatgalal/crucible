@@ -4,6 +4,11 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.15.1 — te exists at map-ready
+
+`map-ready` plants a missing `test_entrypoint` (empty file or directory).
+`wm init` gitignores `.wm/`.
+
 ## 1.15.0 — smooth go
 
 `go` commits shape files before pre-falsify. MAP-REVISE cap runs in the
