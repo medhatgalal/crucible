@@ -13,6 +13,14 @@ independence fails closed when fewer than two of grok/kiro-cli/codex are on
 PATH or cannot auth. `kiro-cli acp` is a guided-cycle JSON-RPC server, not a
 `wm run` argv. Adapter: `adapters/kiro.md`.
 
+## 1.13.0 — entrypoint taste
+
+`map-ready` requires `INTENT.md` headings `## User` / `## Job` /
+`## Non-goals`. Named `test_entrypoint` must exist. After green
+FALSIFIER success, extra-proof hides that path and the command
+must fail. CLOSE writes `reviews/taste.md` (`## Taste` plus the
+lesson) for PASS and NO-BUILD.
+
 ## 1.12.0 — bet worktree
 
 An in-flight slice gets `.wm/worktrees/<id>`. Maker and reviewer `wm run`

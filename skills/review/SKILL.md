@@ -17,7 +17,7 @@ Read the actual diff on owned paths. Scope (only what SPEC owns), simplicity (no
 
 ### Testing
 
-Does the named falsifier assert the behaviour, or a proxy? Edge cases, absence, boundaries. You are not the author of `.wm/FALSIFIER`. You **re-run** the command that is already there.
+Does the named falsifier assert the behaviour, or a proxy? Edge cases, absence, boundaries. You are not the author of `.wm/FALSIFIER`. You **re-run** the command that is already there. Kernel extra-proof: hiding the module `test_entrypoint` must make the named FALSIFIER fail (`falsifier does not discriminate`).
 
 ## Re-run the named falsifier
 

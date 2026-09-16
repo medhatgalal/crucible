@@ -271,6 +271,8 @@ require_fgrep "$HERE/skills/review/SKILL.md" 'CLOSED PASS' \
   'review SKILL.md must say map words are not CLOSED PASS'
 require_fgrep "$HERE/skills/review/SKILL.md" 'Do not write owned product paths' \
   'review SKILL.md Must-not must refuse writing owned product paths'
+require_fgrep "$HERE/skills/review/SKILL.md" 'extra-proof' \
+  'review SKILL.md must name extra-proof'
 
 # Loop-design: craft/audit/debrief only — not the delivery walker
 require_grep "$HERE/skills/loop-design/CONTRACT.md" '[Cc]raft' \
@@ -955,6 +957,37 @@ impl_ok 'record-mapper for INTENT.md missing' "$WM" record-mapper --from MAP.md 
 rm -f INTENT.md
 refuses 'map-ready without INTENT.md' 'INTENT.md missing' "$WM" map-ready
 
+setup_map_repo t-intent-headings
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper intent headings' "$WM" record-mapper --from MAP.md || true
+printf 'no headings\n' > INTENT.md
+refuses 'map-ready INTENT without headings' 'INTENT.md' "$WM" map-ready
+
+# Cheat FALSIFIER cites tests/widget but does not use it. Extra-proof must refuse.
+setup_map_repo t-extra-proof-cheat
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper extra-proof cheat' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready extra-proof cheat' "$WM" map-ready || true
+write_spec_fit
+: > src/widget/api.py
+git add -A
+git commit -qm 'extra-proof cheat spec' >/dev/null
+printf 'id: s1\n' > .wm/slice-in-flight
+impl_ok 'record-pre-falsify extra-proof cheat' "$WM" record-pre-falsify || true
+printf 'test -s src/widget/api.py # tests/widget\n' > .wm/FALSIFIER
+_ep_h=$(sha256_file .wm/FALSIFIER)
+_ep_wid=$(git rev-parse --short=12 HEAD)
+printf 'agent: carol\nwork-id: %s\nsha256: %s\n' "$_ep_wid" "$_ep_h" > .wm/FALSIFIER.meta
+if impl_ok 'red extra-proof cheat' "$WM" red; then
+  grep -q '^RED$' "$OUT" && ok || bad "extra-proof cheat red wanted RED, got $(cat "$OUT")"
+fi
+printf 'widget\n' > src/widget/api.py
+git add src/widget/api.py
+git commit -qm 'extra-proof cheat build' >/dev/null
+refuses 'green extra-proof cheat' 'falsifier does not discriminate' "$WM" green
+[ -d tests/widget ] && ok || bad 'extra-proof must restore tests/widget after cheat refuse'
+[ -f tests/widget/test_api.py ] && ok || bad 'extra-proof must restore tests/widget contents'
+
 setup_map_repo t-fairy-abs-root
 mkdir -p architecture
 _abs_root="$BASE/must-not-create-abs"
@@ -991,8 +1024,19 @@ kernel_fn_calls cmd_map_verdict cmd_check_map_word \
   'map-verdict must call check-map-word (not reimplement identity)'
 kernel_fn_calls cmd_map_ready cmd_check_module_fit \
   'map-ready must call check-module-fit (not reimplement fit)'
+kernel_fn_calls cmd_map_ready intent_ok \
+  'map-ready must call intent_ok'
 kernel_fn_calls cmd_map_verdict cmd_check_module_fit \
   'map-verdict must call check-module-fit (not reimplement fit)'
+kernel_fn_calls cmd_green falsifier_extra_proof \
+  'green must call falsifier_extra_proof'
+kernel_fn_calls cmd_close reviews/taste.md \
+  'close must write reviews/taste.md'
+if extract_fn check_falsifier_test_entrypoint | grep -q 'test_entrypoint missing'; then
+  ok
+else
+  bad 'check_falsifier_test_entrypoint must die test_entrypoint missing'
+fi
 
 require_file "$HERE/docs/working-mode.md" 'docs/working-mode.md missing'
 require_fgrep "$HERE/docs/working-mode.md" 'MAP-HUMAN' \
@@ -1629,6 +1673,13 @@ else
 fi
 grep -q 'WM-SLICE-s1' src/widget/api.py && ok || bad 'map loop s1 maker-build did not land'
 grep -q 'WM-SLICE-s2' src/widget/api.py && ok || bad 'map loop s2 maker-build did not land'
+[ -d tests/widget ] && ok || bad 'honest extra-proof must restore tests/widget'
+[ -f reviews/taste.md ] && ok || bad 'map loop close must write reviews/taste.md'
+if grep -q '^## Taste' reviews/taste.md && grep -q 'NONE' reviews/taste.md; then
+  ok
+else
+  bad "taste.md wanted ## Taste + lesson, got $(cat reviews/taste.md 2>/dev/null || echo ABSENT)"
+fi
 
 # Session: each wm run mints a distinct session line in the brief.
 setup_map_repo t-session-ids

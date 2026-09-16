@@ -602,10 +602,43 @@ check_falsifier_test_entrypoint() {
   [ -n "$_te_mod" ] || return 0
   _te_path=$(module_test_entrypoint "$_te_mod")
   [ -n "$_te_path" ] && [ "$_te_path" != - ] || return 0
+  [ -e "$_te_path" ] || die "test_entrypoint missing"
   _te_fals=$(awk 'NF{print; exit}' "$WM/FALSIFIER")
   [ -n "$_te_fals" ] || die "falsifier must invoke test_entrypoint"
   printf '%s\n' "$_te_fals" | grep -F -- "$_te_path" >/dev/null \
     || die "falsifier must invoke test_entrypoint"
+}
+
+# Hide the module test_entrypoint; the FALSIFIER must then fail. Never .wm/**.
+falsifier_extra_proof() {
+  _ep_cmd=${1:-}
+  [ -n "$_ep_cmd" ] || return 0
+  [ -f "$WM/FALSIFIER" ] || return 0
+  [ -f architecture/modules.md ] || return 0
+  [ -f "$WM/slice-in-flight" ] || return 0
+  _ep_sid=$(kv_get "$WM/slice-in-flight" id)
+  [ -n "$_ep_sid" ] || return 0
+  _ep_mod=$(slice_module "$_ep_sid")
+  [ -n "$_ep_mod" ] || return 0
+  _ep_path=$(module_test_entrypoint "$_ep_mod")
+  [ -n "$_ep_path" ] && [ "$_ep_path" != - ] || return 0
+  case $_ep_path in
+    .wm|.wm/*|*/.wm|/*/.wm/*)
+      return 0
+      ;;
+  esac
+  [ -e "$_ep_path" ] || return 0
+  ensure_wm
+  _ep_stash="$WM/.te-mut.$$"
+  mv "$_ep_path" "$_ep_stash" || die "cannot hide test_entrypoint"
+  set +e
+  sh -c "$_ep_cmd" >/dev/null 2>&1
+  _ep_st=$?
+  mv "$_ep_stash" "$_ep_path"
+  _ep_rst=$?
+  set -e
+  [ "$_ep_rst" -eq 0 ] || die "cannot restore test_entrypoint"
+  [ "$_ep_st" -ne 0 ] || die "falsifier does not discriminate"
 }
 
 # Cycle logbook. Adopted programs: .crucible/<prog>/LESSONS.md.
@@ -1946,9 +1979,17 @@ cmd_check_map_word() {
   say "MAP-WORD $_mw_word author=$_mw_who"
 }
 
+intent_ok() {
+  [ -f INTENT.md ] || return 1
+  grep -q '^## User$' INTENT.md || grep -q '^## User' INTENT.md || return 1
+  grep -q '^## Job' INTENT.md || return 1
+  grep -q '^## Non-goals' INTENT.md || return 1
+}
+
 cmd_map_ready() {
   [ -f MAP.md ] || die "MAP.md missing"
   [ -f INTENT.md ] || die "INTENT.md missing"
+  intent_ok || die "INTENT.md missing ## User / ## Job / ## Non-goals"
   _mr_mapper=$(mapper_id)
   [ -n "$_mr_mapper" ] || die "mapper id not recorded"
   cmd_check_module_fit
@@ -2072,6 +2113,7 @@ cmd_green() {
     printf 'fail\n' > "$WM/green.status"
     die "falsifier still failing after build"
   fi
+  falsifier_extra_proof "$_gr_fals"
   printf 'ok\n' > "$WM/green.status"
   say GREEN
 }
@@ -2245,6 +2287,8 @@ cmd_close() {
     printf 'CLOSED PASS\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED PASS"
     metrics_append "CLOSED PASS" -
+    mkdir -p reviews
+    printf '## Taste\n%s\n' "$_cl_lesson" > reviews/taste.md
     remove_bet_worktree
     if close_append_lesson "$_cl_lesson"; then
       return 0
@@ -2255,6 +2299,8 @@ cmd_close() {
     printf 'CLOSED NO-BUILD\nindependence: %s\n' "$(honest_isolation)" > "$WM/CLOSED"
     say "CLOSED NO-BUILD"
     metrics_append "CLOSED NO-BUILD" -
+    mkdir -p reviews
+    printf '## Taste\n%s\n' "$_cl_lesson" > reviews/taste.md
     remove_bet_worktree
     if close_append_lesson "$_cl_lesson"; then
       return 0
