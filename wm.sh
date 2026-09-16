@@ -5,7 +5,7 @@ set -eu
 die() { printf 'refused: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
 
-WM=".wm"
+WM="$PWD/.wm"
 SPEC_ERR=
 
 ensure_wm() {
@@ -925,9 +925,18 @@ go_consume_backlog() {
   esac
   [ -f "$_gn_path" ] && [ -r "$_gn_path" ] || die "idea_path missing"
   if [ -f MAP.md ]; then
-    if ! closed_is_closeable; then
-      die "finish current map first"
+    _gn_closed=
+    if [ -f "$WM/CLOSED" ]; then
+      _gn_closed=$(awk 'NF { print; exit }' "$WM/CLOSED")
     fi
+    case $_gn_closed in
+      'CLOSED PASS'|'CLOSED NO-BUILD') ;;
+      *)
+        if ! closed_is_closeable; then
+          die "finish current map first"
+        fi
+        ;;
+    esac
     _gn_prev=$(awk -F '\t' 'NR>1 && $5=="INFLIGHT" { print $1; exit }' BACKLOG.tsv)
     [ -n "$_gn_prev" ] || _gn_prev=prior
     mkdir -p "history/maps/$_gn_prev"
@@ -1118,7 +1127,7 @@ cmd_init() {
     *) _in_src=$(CDPATH= cd "$(dirname "$_in_src")" && pwd)/$(basename "$_in_src") ;;
   esac
   [ -f "$_in_src" ] || die "WM_ENGINE not found: $_in_src"
-  if [ "$_in_src" != "$PWD/$WM/bin/wm" ]; then
+  if [ "$_in_src" != "$WM/bin/wm" ]; then
     cp "$_in_src" "$WM/bin/wm"
   fi
   chmod +x "$WM/bin/wm"
@@ -1650,7 +1659,7 @@ bet_slice_id_ok() {
 }
 
 bet_worktree_path() {
-  printf '%s\n' "$PWD/$WM/worktrees/$1"
+  printf '%s\n' "$WM/worktrees/$1"
 }
 
 # One git worktree per in-flight slice. <wt>/.wm is a symlink to the main
@@ -1671,8 +1680,12 @@ ensure_bet_worktree() {
     git worktree add -q -B "wm/$_bw_id" "$_bw_path" HEAD || die "bet worktree add failed"
     _bw_new=1
   fi
-  rm -rf "$_bw_path/.wm"
-  ln -sfn "$PWD/.wm" "$_bw_path/.wm"
+  if [ -L "$_bw_path/.wm" ]; then
+    rm -f "$_bw_path/.wm"
+  elif [ -e "$_bw_path/.wm" ]; then
+    rm -rf "$_bw_path/.wm"
+  fi
+  ln -sfn "$WM" "$_bw_path/.wm"
   if [ "$_bw_new" -eq 1 ]; then
     overlay_main_to_bet "$_bw_path"
   fi
@@ -1765,7 +1778,8 @@ reset_brick() {
     "$WM/red.status" "$WM/red.out" "$WM/built.status" "$WM/built.reason" \
     "$WM/green.status" "$WM/green.out" "$WM/pre-falsify-wid" "$WM/pre-build-wid" \
     "$WM/last-maker-run" "$WM/reviewer-ran" "$WM/slice-in-flight" \
-    "$WM/dispatch" "$WM/worker.out" "$WM/worker.err" "$WM/review-fail-count"
+    "$WM/dispatch" "$WM/worker.out" "$WM/worker.err" "$WM/review-fail-count" \
+    "$WM/map-revise-count"
   rm -rf "$WM/verdicts" "$WM/return" "$WM/invoke" "$WM/spawn" "$WM/briefs" "$WM/evidence"
   mkdir -p "$WM/verdicts" "$WM/return" "$WM/return/history" "$WM/invoke" "$WM/spawn" \
     "$WM/briefs" "$WM/evidence"
@@ -2355,6 +2369,30 @@ review_fail_count() {
   printf '%s\n' "$_rfc_n"
 }
 
+map_revise_count() {
+  _mrc_n=0
+  if [ -f "$WM/map-revise-count" ]; then
+    _mrc_n=$(awk 'NF { print $1+0; exit }' "$WM/map-revise-count")
+  fi
+  case $_mrc_n in
+    ''|*[!0-9]*) _mrc_n=0 ;;
+  esac
+  printf '%s\n' "$_mrc_n"
+}
+
+# Shape files only (not product owned_paths). Specifier CLIs often skip git.
+commit_shape() {
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  _cs_p=
+  for _cs_p in INTENT.md SPEC.md MAP.md RESEARCH.md REPO.md \
+    QUESTIONS.md ANSWERS.md architecture reviews/critique.md; do
+    [ -e "$_cs_p" ] || continue
+    git add -- "$_cs_p" 2>/dev/null || true
+  done
+  git diff --cached --quiet && return 0
+  git commit -qm 'wm: shape'
+}
+
 green_reviewer_fail() {
   [ -f "$WM/green.status" ] && [ "$(cat "$WM/green.status")" = ok ] || return 1
   _grf_rev=$(panel_agent reviewer)
@@ -2388,7 +2426,16 @@ cmd_next() {
       _nx_bat=$(sendback_battery_for_word MAP-REVISE) || die "Send-back battery missing for MAP-REVISE"
       _nx_row=$(sendback_lookup "$_nx_bat" MAP-REVISE) || die "Send-back missing MAP-REVISE"
       _nx_card=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $1 }')
+      _nx_cap=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $2 }')
+      _nx_andon=$(printf '%s\n' "$_nx_row" | awk -F '\t' '{ print $3 }')
       [ -n "$_nx_card" ] && [ "$_nx_card" != - ] || die "Send-back MAP-REVISE card empty"
+      case $_nx_cap in ''|*[!0-9]*) die "Send-back MAP-REVISE cap must be a number" ;; esac
+      _nx_mrc=$(map_revise_count)
+      if [ "$_nx_mrc" -ge "$_nx_cap" ]; then
+        [ -n "$_nx_andon" ] && [ "$_nx_andon" != - ] || die "Send-back MAP-REVISE andon empty"
+        say "$_nx_andon"
+        return 0
+      fi
       say "$_nx_card"
       return 0
     fi
@@ -2815,9 +2862,9 @@ cmd_loop() {
   # Foreground walker: consume next until work-level CLOSE / STOP-ASK / ESCALATE.
   # One slice in flight. After a closeable brick, mark that slice CLOSED and
   # continue remaining READY slices (deps satisfied). Exec PANEL as children.
-  [ -x "$PWD/$WM/bin/wm" ] || die "missing .wm/bin/wm (run wm init)"
-  WM_BIN="$PWD/$WM/bin/wm"
-  PATH="$PWD/$WM/bin:$PATH"
+  [ -x "$WM/bin/wm" ] || die "missing .wm/bin/wm (run wm init)"
+  WM_BIN="$WM/bin/wm"
+  PATH="$WM/bin:$PATH"
   export PATH
   _lp_i=0
   _lp_ran_reviewer=0
@@ -2827,6 +2874,7 @@ cmd_loop() {
     _lp_slice=$(kv_get "$WM/slice-in-flight" id)
   fi
   while :; do
+    commit_shape || exit 1
     _lp_i=$((_lp_i + 1))
     # Recompute each tick: map can land slices.tsv after go started (40 → 16+12*n).
     # LOOP_BOUND = max(40, min(240, 16 + 12*n)) for n data rows in slices.tsv.
@@ -2888,9 +2936,24 @@ cmd_loop() {
         if ! spec_ok; then
           loop_halt "STOP-ASK SPEC incomplete"
         fi
+        commit_shape || exit 1
         ;;
       "NEXT MAP")
         _lp_mw=$(map_word_recorded)
+        if [ "$_lp_mw" = MAP-REVISE ]; then
+          _lp_mrc=$(map_revise_count)
+          _lp_mrc=$((_lp_mrc + 1))
+          printf '%s\n' "$_lp_mrc" > "$WM/map-revise-count"
+          _lp_bat=$(sendback_battery_for_word MAP-REVISE) || die "Send-back battery missing for MAP-REVISE"
+          _lp_row=$(sendback_lookup "$_lp_bat" MAP-REVISE) || die "Send-back missing MAP-REVISE"
+          _lp_cap=$(printf '%s\n' "$_lp_row" | awk -F '\t' '{ print $2 }')
+          _lp_andon=$(printf '%s\n' "$_lp_row" | awk -F '\t' '{ print $3 }')
+          case $_lp_cap in ''|*[!0-9]*) die "Send-back MAP-REVISE cap must be a number" ;; esac
+          if [ "$_lp_mrc" -ge "$_lp_cap" ]; then
+            [ -n "$_lp_andon" ] && [ "$_lp_andon" != - ] || die "Send-back MAP-REVISE andon empty"
+            loop_halt "$_lp_andon"
+          fi
+        fi
         if [ ! -f MAP.md ] || [ "$_lp_mw" = MAP-REVISE ]; then
           if ! role_has_cli specifier; then
             loop_halt "STOP-ASK NEXT MAP"
@@ -2932,6 +2995,7 @@ cmd_loop() {
         if [ ! -f SPEC.md ]; then
           loop_halt "STOP-ASK SPEC incomplete"
         fi
+        commit_shape || exit 1
         "$WM_BIN" record-pre-falsify || exit 1
         ;;
       STOP-ASK|STOP-ASK*)
@@ -2941,6 +3005,7 @@ cmd_loop() {
         loop_halt "$_lp_card"
         ;;
       "NEXT RECORD PRE-FALSIFY")
+        commit_shape || exit 1
         "$WM_BIN" record-pre-falsify || exit 1
         ;;
       "NEXT RUN maker-falsify")

@@ -26,7 +26,7 @@ The named map: `MAP.md` plus `architecture/modules.md`, written by a **different
 MAP-REVISE → MAP (design/specifier). Do not re-accept the same bytes.
 
 word	card	cap	andon
-MAP-REVISE	NEXT MAP	1	-
+MAP-REVISE	NEXT MAP	2	ESCALATE MAP_REVISE
 
 ## Andon
 

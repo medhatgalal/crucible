@@ -245,6 +245,8 @@ require_fgrep "$HERE/skills/critique/CONTRACT.md" '/ult' \
   'critique CONTRACT Must-not must skip /ult'
 require_fgrep "$HERE/skills/critique/CONTRACT.md" 'word	card	cap	andon' \
   'critique CONTRACT Send-back must include word/card/cap/andon TSV'
+require_fgrep "$HERE/skills/critique/CONTRACT.md" 'ESCALATE MAP_REVISE' \
+  'critique CONTRACT MAP-REVISE andon must be ESCALATE MAP_REVISE'
 require_fgrep "$HERE/skills/review/CONTRACT.md" 'word	card	cap	andon' \
   'review CONTRACT Send-back must include word/card/cap/andon TSV'
 require_grep "$HERE/skills/critique/SKILL.md" '[Ii]nvert' \
@@ -1511,6 +1513,61 @@ else
 fi
 if grep -q 'CLOSED PASS' "$OUT" 2>/dev/null; then
   bad 'MAP-REVISE specifier loop without brick workers must not CLOSED PASS'
+else
+  ok
+fi
+
+# MAP-REVISE cap is loop-side: overlay cap=1 andon ESCALATE MAP_REVISE.
+# A scout that always revises must halt, not spin.
+setup_map_repo t-loop-revise-cap
+write_architecture_fixture alice LOW no
+impl_ok 'record-mapper loop MAP-REVISE cap' "$WM" record-mapper --from MAP.md || true
+impl_ok 'map-ready loop MAP-REVISE cap' "$WM" map-ready || true
+write_map_return bob MAP-REVISE
+impl_ok 'map-verdict loop MAP-REVISE cap' "$WM" map-verdict .wm/return/bob.md || true
+cast_brick_panel carol dave grok grok
+mkdir -p tools .crucible/skills/critique
+cp "$HERE/skills/critique/SKILL.md" .crucible/skills/critique/SKILL.md
+cp "$HERE/skills/critique/CONTRACT.md" .crucible/skills/critique/CONTRACT.md
+awk 'BEGIN { FS=OFS="\t" }
+  $1=="MAP-REVISE" { $3="1"; $4="ESCALATE MAP_REVISE"; print; next }
+  { print }
+' .crucible/skills/critique/CONTRACT.md > .crucible/skills/critique/CONTRACT.tmp
+mv .crucible/skills/critique/CONTRACT.md .crucible/skills/critique/CONTRACT.bak
+mv .crucible/skills/critique/CONTRACT.tmp .crucible/skills/critique/CONTRACT.md
+cat > tools/specifier-revise.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf '%s\n' "$(date +%s)" >> .wm/specifier-revise
+printf '\nREVISED\n' >> MAP.md
+EOF
+cat > tools/scout-always-revise.sh <<'EOF'
+#!/bin/sh
+set -eu
+agent=bob
+if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
+  a=$(awk -F ': ' '$1=="agent"{print $2; exit}' "$BRIEF")
+  [ -n "$a" ] && agent=$a
+fi
+mkdir -p .wm/return
+printf 'WORD: MAP-REVISE\nAGENT: %s\nMAP: MAP.md\n' "$agent" > ".wm/return/${agent}.md"
+EOF
+chmod +x tools/specifier-revise.sh tools/scout-always-revise.sh
+"$WM" cast specifier eve grok './tools/specifier-revise.sh {BRIEF}' >/dev/null
+"$WM" cast scout bob grok './tools/scout-always-revise.sh {BRIEF}' >/dev/null
+run_map_loop
+assert_map_loop_foreground 't-loop-revise-cap'
+if [ "$LOOP_RC" -ne 0 ] && grep -q 'ESCALATE MAP_REVISE' "$OUT"; then
+  ok
+else
+  bad "MAP-REVISE cap=1 loop wanted ESCALATE MAP_REVISE rc!=0, got rc=$LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+_mrc=$(cat .wm/map-revise-count 2>/dev/null || echo ABSENT)
+[ "$_mrc" = 1 ] && ok || bad "MAP-REVISE cap=1 map-revise-count wanted 1, got $_mrc"
+if [ -f .wm/specifier-revise ]; then
+  _nrev=$(wc -l < .wm/specifier-revise | tr -d ' ')
+  [ "$_nrev" -le 1 ] && ok || bad "MAP-REVISE cap=1 must not keep re-running specifier (lines=$_nrev)"
 else
   ok
 fi

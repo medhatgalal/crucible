@@ -1020,6 +1020,28 @@ assert_loop_foreground 't11-loop-pass-reentry'
 [ "$LOOP_RC" -eq 0 ] && ok || bad "honest reentry loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
 grep -q 'CLOSED PASS' "$OUT" && ok || bad "honest reentry wanted CLOSED PASS, got $(cat "$OUT")"
 
+# Dirty SPEC.md: direct record-pre-falsify still refuses; loop commits shape.
+setup_repo t-loop-commits-spec
+printf '\n# operator tweak\n' >> SPEC.md
+refuses 'uncommitted SPEC blocks record-pre-falsify' 'SPEC.md must be committed' \
+  "$WM" record-pre-falsify
+write_loop_maker_pass
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+run_wm_loop
+assert_loop_foreground 't-loop-commits-spec'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "dirty-SPEC loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+if grep -q 'CLOSED PASS' "$OUT" && [ -f .wm/CLOSED ] && grep -q 'CLOSED PASS' .wm/CLOSED; then
+  ok
+else
+  bad "dirty-SPEC loop wanted CLOSED PASS, got out=$(cat "$OUT") closed=$(cat .wm/CLOSED 2>/dev/null || echo ABSENT)"
+fi
+git diff --quiet HEAD -- SPEC.md \
+  && ok || bad 'loop must commit dirty SPEC.md before pre-falsify'
+grep -q 'operator tweak' SPEC.md \
+  && ok || bad 'shape commit must keep the dirty SPEC bytes'
+
 # (12) Leftover reviewer receipts after maker-build: still exec reviewer (CHECK 7 via loop)
 setup_repo t12-loop-leftover
 reach_green

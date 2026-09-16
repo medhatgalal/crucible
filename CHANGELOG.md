@@ -5,6 +5,17 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.15.0] - 2026-09-16
+
+### Smooth `go`
+- `wm loop` / `go` commits shape files (`SPEC.md`, `MAP.md`, `INTENT.md`,
+  architecture, …) before `record-pre-falsify`. Direct `record-pre-falsify`
+  still refuses an uncommitted SPEC.
+- MAP-REVISE Send-back cap is executed in the loop (default cap 2, andon
+  `ESCALATE MAP_REVISE`). Overlay cap=1 still works. `next`/`status` do not
+  increment the counter.
+- `.wm` is an absolute path so bet-worktree `cd` cannot retarget kernel state.
+
 ## [1.14.2] - 2026-09-16
 
 ### Discover argv and owned paths
