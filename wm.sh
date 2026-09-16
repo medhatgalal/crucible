@@ -1701,7 +1701,9 @@ sync_bet_to_main() {
   _sm_wh=$(git -C "$_sm_wt" rev-parse --verify HEAD 2>/dev/null) || _sm_wh=
   _sm_mh=$(git rev-parse --verify HEAD 2>/dev/null) || _sm_mh=
   if [ -n "$_sm_wh" ] && [ -n "$_sm_mh" ] && [ "$_sm_wh" != "$_sm_mh" ]; then
-    git merge --ff-only -q "$_sm_wh" >/dev/null 2>&1 || true
+    if ! git merge --ff-only -q "$_sm_wh" >/dev/null 2>&1; then
+      git reset --hard "$_sm_wh" >/dev/null 2>&1 || true
+    fi
   fi
   _sm_list=$(printf '%s\n%s\n' "$(owned_paths)" "$(in_flight_owned_paths)")
   while IFS= read -r _sm_p || [ -n "$_sm_p" ]; do

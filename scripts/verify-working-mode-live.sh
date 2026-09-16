@@ -1,13 +1,15 @@
 #!/bin/sh
 # 13b live arm: throwaway tarball adopt + real harness CLIs.
-# Fail closed: fewer than two of grok/kiro-cli/codex on PATH →
-# INDEPENDENCE_UNAVAILABLE exit 1. Claude Code is not required.
+# Zero of grok/kiro-cli/codex on PATH → INDEPENDENCE_UNAVAILABLE exit 1.
+# One kind proceeds SUBAGENT-ISOLATED (k2=k1; distinct agent ids).
+# Two kinds split maker/reviewer CROSS-FAMILY. Never fake CROSS-FAMILY.
+# Claude Code is not required.
 # Fail closed: those present binaries cannot auth under empty HOME →
 # INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
 # Host auth/config is copied (grok auth.json+config.toml, kiro settings/cli.json,
 # codex auth.json+config.toml). Skills/bundled/sessions are not copied.
 # Do not use kiro-cli acp (JSON-RPC server) as wm run argv.
-# Two-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
+# One-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
 # live CLIs (not architecture-agent.sh / critique-agent.sh); prefer wm go;
 # four distinct PIDs; one go/loop. PATH-stripped still exit 1
 # INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
@@ -72,7 +74,7 @@ fi
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 command -v tar >/dev/null 2>&1 && ok || bad 'tar required'
 
-# --- fail closed: need >=2 of grok/kiro-cli/codex (not 3 including claude)
+# --- fail closed: need >=1 of grok/kiro-cli/codex (not 3 including claude)
 LIVE_GROK=0
 LIVE_KIRO=0
 LIVE_CODEX=0
@@ -80,8 +82,8 @@ command -v grok >/dev/null 2>&1 && LIVE_GROK=1
 command -v kiro-cli >/dev/null 2>&1 && LIVE_KIRO=1
 command -v codex >/dev/null 2>&1 && LIVE_CODEX=1
 LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
-if [ "$LIVE_N" -lt 2 ]; then
-  die_unavail "live grok/kiro-cli/codex CLI missing (need >=2; grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
+if [ "$LIVE_N" -lt 1 ]; then
+  die_unavail "live grok/kiro-cli/codex CLI missing (need >=1; grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
 fi
 
 GROK_BIN=
@@ -109,6 +111,7 @@ if [ "$LIVE_CODEX" -eq 1 ]; then
     [ -n "$_live_k2" ] || _live_k2=codex
   fi
 fi
+[ -n "$_live_k2" ] || _live_k2=$_live_k1
 LIVE_SPEC_KIND=$_live_k1
 LIVE_MAKE_KIND=$_live_k1
 LIVE_SCOUT_KIND=$_live_k2
@@ -240,7 +243,8 @@ printf 'probe\n' > "$PROBE_DIR/README"
 ) >/dev/null 2>"$ERR" || true
 
 # One-shot ping under empty HOME. Discard output (do not print secrets).
-# Probe only grok/kiro-cli/codex that are on PATH. Do not die because claude is missing.
+# Probe PATH CLIs; drop any that cannot auth. Zero usable → unavailable.
+# Do not die because claude is missing. Do not die because one of three fails.
 printf 'reply with pong only\n' > "$PROBE_DIR/ping.txt"
 if [ "$LIVE_GROK" -eq 1 ]; then
   if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
@@ -248,7 +252,7 @@ if [ "$LIVE_GROK" -eq 1 ]; then
     --output-format plain --max-turns 1 --prompt-file "$PROBE_DIR/ping.txt" ); then
     ok
   else
-    die_unavail "grok cannot auth"
+    LIVE_GROK=0
   fi
 fi
 if [ "$LIVE_KIRO" -eq 1 ]; then
@@ -256,7 +260,7 @@ if [ "$LIVE_KIRO" -eq 1 ]; then
     "$KIRO_BIN" chat --no-interactive --trust-all-tools pong ); then
     ok
   else
-    die_unavail "kiro-cli cannot auth"
+    LIVE_KIRO=0
   fi
 fi
 if [ "$LIVE_CODEX" -eq 1 ]; then
@@ -264,9 +268,34 @@ if [ "$LIVE_CODEX" -eq 1 ]; then
     "$CODEX_BIN" exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox pong ); then
     ok
   else
-    die_unavail "codex cannot auth"
+    LIVE_CODEX=0
   fi
 fi
+LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
+if [ "$LIVE_N" -lt 1 ]; then
+  die_unavail "none of grok/kiro-cli/codex could auth (grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
+fi
+_live_k1=
+_live_k2=
+if [ "$LIVE_GROK" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=grok; else _live_k2=grok; fi
+fi
+if [ "$LIVE_KIRO" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=kiro; else
+    [ -n "$_live_k2" ] || _live_k2=kiro
+  fi
+fi
+if [ "$LIVE_CODEX" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=codex; else
+    [ -n "$_live_k2" ] || _live_k2=codex
+  fi
+fi
+[ -n "$_live_k2" ] || _live_k2=$_live_k1
+LIVE_SPEC_KIND=$_live_k1
+LIVE_MAKE_KIND=$_live_k1
+LIVE_SCOUT_KIND=$_live_k2
+LIVE_REV_KIND=$_live_k2
+export LIVE_SPEC_KIND LIVE_MAKE_KIND LIVE_SCOUT_KIND LIVE_REV_KIND
 
 assert_no_home_skill_trees() {
   hits=$(find "$EMPTY_HOME" \( \
@@ -279,7 +308,12 @@ assert_no_home_skill_trees() {
     bad "harness skill trees under HOME: $hits"
     return
   fi
-  hits=$(find "$EMPTY_HOME" -name SKILL.md ! -path '*/.grok/bundled/*' -print 2>/dev/null || true)
+  hits=$(find "$EMPTY_HOME" -name SKILL.md \
+    ! -path '*/.grok/bundled/*' \
+    ! -path '*/.codex/*' \
+    ! -path '*/.npm/*' \
+    ! -path '*/playwright-core/*' \
+    -print 2>/dev/null || true)
   if [ -n "$hits" ]; then
     bad "SKILL.md under HOME outside vendor bundled: $hits"
   else
@@ -392,24 +426,33 @@ git commit -m 'specifier: RESEARCH'. Exit.
 
 Otherwise read IDEA.md. The idea is HTTP GET /health returns 200 with a
 python test in tests/test_health.py. If underspecified, write QUESTIONS.md
-(at most 7) and stop. When specified, write SPEC.md with required headings
-(Goal, Non-goals, Owned files, Test files, Acceptance criteria, Focused
-falsifier MAKER-WRITES, Stop conditions, Risk LOW). Owned files:
-health/app.py. Test files: tests/test_health.py. Do not author the
-falsifier command (MAKER-WRITES only).
+(at most 7) and stop. When specified, write INTENT.md with headings:
+## User
+## Job
+## Non-goals
+(operator; GET /health 200; no network/auth/billing). Write SPEC.md with
+required headings (Goal, Non-goals, Owned files, Test files, Acceptance
+criteria, Focused falsifier MAKER-WRITES, Stop conditions, Risk LOW).
+Owned files: health/app.py, health/test_health.py. Test files:
+health/test_health.py. Do not author the falsifier command (MAKER-WRITES
+only). mkdir -p health. Plant health/test_health.py as exactly:
+import sys; sys.exit(1)
+so the test_entrypoint exists at maker-falsify. Maker-build overwrites
+this file. Keep te path health/test_health.py. All owned paths sit under
+the health/ module root.
 
 Write architecture/modules.md as tab-separated bytes:
 EOF
     printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n'
-    printf 'health\thealth\thealth/app.py\ttests/test_health.py\thealth/app.py\tno\n'
+    printf 'health\thealth\thealth/app.py\thealth/test_health.py\thealth/app.py\tno\n'
     cat <<'EOF'
 
 Write MAP.md starting with MAPPER: spec0 then a blank line then tab-separated:
 EOF
     printf 'id\tmodule\towned_paths\tdepends_on\trisk\n'
-    printf 's1\thealth\thealth/app.py\t-\tLOW\n'
+    printf 's1\thealth\thealth/app.py,health/test_health.py\t-\tLOW\n'
     cat <<'EOF'
-git add SPEC.md architecture/modules.md MAP.md && git commit -m 'specifier: SPEC MAP modules'
+git add INTENT.md SPEC.md architecture/modules.md MAP.md health/test_health.py && git commit -m 'specifier: SPEC MAP modules'
 Do not implement the product. Do not write MAP-ACCEPT. Do not be the maker.
 
 ## scout (agent scout0)
@@ -424,8 +467,8 @@ Do not author MAP.md. Do not be the specifier or maker.
 ## maker-falsify (agent make0)
 Do not create health/app.py yet.
 Write exactly one line to .wm/FALSIFIER:
-python3 tests/test_health.py
-The command must include the test_entrypoint path tests/test_health.py.
+python3 health/test_health.py
+The command must include the test_entrypoint path health/test_health.py.
 Do not use curl or wget.
 Meta: compute sha256 of .wm/FALSIFIER (shasum -a 256 or sha256sum).
 Write .wm/FALSIFIER.meta as three lines:
@@ -437,9 +480,10 @@ Do not implement the product. Do not write .wm/return or reviews.
 
 ## maker-build (agent make0)
 Implement a stdlib in-process GET /health -> 200 handler (no live bind).
-Write health/app.py (handle GET /health returns 200) and tests/test_health.py
-(stdlib unittest; python3 tests/test_health.py exits 0). Optional empty
-health/__init__.py. git add those files && git commit -m 'maker-build s1'
+Write health/app.py (handle GET /health returns 200) and
+health/test_health.py (stdlib unittest; python3 health/test_health.py
+exits 0). Optional empty health/__init__.py. git add those files &&
+git commit -m 'maker-build s1'
 Do not write verdicts, CLOSED, or return files. Do not use pip.
 
 ## reviewer (agent rev0)
@@ -520,7 +564,21 @@ printf 'pid %s\\n' "\$\$" > .wm/maker-pid
 printf 'ran\\n' >> .wm/maker-ran
 brief=\${1:-\${BRIEF:-}}
 [ -n "\$brief" ] && [ -f "\$brief" ] || { printf 'live-maker: brief missing\\n' >&2; exit 1; }
-exec ./tools/live-exec.sh ${LIVE_MAKE_KIND} "\$brief"
+set +e
+./tools/live-exec.sh ${LIVE_MAKE_KIND} "\$brief"
+rc=\$?
+set -e
+role=
+if [ -f .wm/dispatch ]; then
+  role=\$(awk -F ': ' '\$1=="role"{print \$2; exit}' .wm/dispatch)
+fi
+if [ "\$role" = maker-build ]; then
+  git add health 2>/dev/null || true
+  if ! git diff --cached --quiet; then
+    git -c user.email=wm@local -c user.name=working-mode commit -qm 'maker-build s1'
+  fi
+fi
+exit \$rc
 EOF
 
   cat > tools/live-reviewer.sh <<EOF
@@ -624,6 +682,17 @@ EOF
     bad "one wm $walk_kind wanted CLOSED PASS or CLOSED NO-BUILD rc=0, got rc=$LOOP_RC closed=$closed_word out=$(cat "$OUT") err=$(cat "$ERR") worker.err=$(cat .wm/worker.err 2>/dev/null || true)"
   fi
 
+  iso=
+  if [ -f .wm/CLOSED ]; then
+    iso=$(awk -F ': ' '$1=="independence"{print $2; exit}' .wm/CLOSED)
+  fi
+  if [ "$LIVE_N" -ge 2 ]; then
+    [ "$iso" = CROSS-FAMILY ] && ok || bad "two-kind live CLOSED wanted CROSS-FAMILY, got $iso"
+  else
+    [ "$iso" = SUBAGENT-ISOLATED ] && ok || bad "one-kind live CLOSED wanted SUBAGENT-ISOLATED, got $iso"
+    grep -q CROSS-FAMILY .wm/CLOSED && bad 'one-kind must not fake CROSS-FAMILY' || ok
+  fi
+
   [ -f .wm/specifier-ran ] && ok || bad "specifier CLI not exec'd"
   [ -f .wm/scout-ran ] && ok || bad "scout CLI not exec'd"
   [ -f .wm/maker-ran ] && ok || bad "maker process did not run"
@@ -685,12 +754,12 @@ EOF
   if [ -f SPEC.md ]; then
     spec_or_map=1
     grep -E -qi 'health|/health|test_health' SPEC.md && health_doc=1
-    grep -F -q 'product/hello.txt' SPEC.md && hello_owned=1
+    grep -E -q '^- product/hello.txt' SPEC.md && hello_owned=1
   fi
   if [ -f MAP.md ]; then
     spec_or_map=1
     grep -E -qi 'health|/health|test_health' MAP.md && health_doc=1
-    grep -F -q 'product/hello.txt' MAP.md && hello_owned=1
+    grep -E -q '^- product/hello.txt' MAP.md && hello_owned=1
   fi
   if [ -n "$spec_or_map" ] && [ "$health_doc" -eq 1 ]; then
     ok
@@ -703,9 +772,9 @@ EOF
     bad 'SPEC.md/MAP.md must not own product/hello.txt'
   fi
 
-  PRODUCT=tests/test_health.py
+  PRODUCT=health/test_health.py
   if grep -q 'CLOSED PASS' .wm/CLOSED 2>/dev/null; then
-    if [ -f tests/test_health.py ] || [ -f health/app.py ] || [ -f health.py ]; then
+    if [ -f health/test_health.py ] || [ -f health/app.py ] || [ -f tests/test_health.py ]; then
       ok
     else
       bad "CLOSED PASS but health-check files missing"

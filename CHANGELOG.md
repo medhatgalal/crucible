@@ -22,11 +22,21 @@ All notable changes to this project are documented here. This project follows
   editing `wm.sh`). Specifier brief matches that station. CONTRACT `## Send-back`
   / `## Andon` on architecture, critique, review, research.
 - Live independence (`scripts/verify-working-mode-live.sh`) fails closed when
-  fewer than two of grok/kiro-cli/codex are on PATH or cannot auth. Missing
+  none of grok/kiro-cli/codex are on PATH or cannot auth. One kind is
+  `SUBAGENT-ISOLATED`; two kinds are `CROSS-FAMILY`. Missing
   `claude` is not `INDEPENDENCE_UNAVAILABLE` by itself.
 - Adapter: `adapters/kiro.md`. Headless:
   `kiro-cli chat --no-interactive --trust-all-tools`. Do not use `kiro-cli acp`
   as a `wm run` argv.
+
+## [1.14.0] - 2026-09-16
+
+### Live one-kind
+- Live walk (`scripts/verify-working-mode-live.sh`) proceeds with one of
+  grok/kiro-cli/codex as `SUBAGENT-ISOLATED` (distinct agent ids).
+- Two kinds still split maker/reviewer; that case is `CROSS-FAMILY`.
+  One kind is never labelled CROSS-FAMILY.
+- Zero of those CLIs is still `INDEPENDENCE_UNAVAILABLE`.
 
 ## [1.13.0] - 2026-09-16
 

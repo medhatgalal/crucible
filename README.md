@@ -209,7 +209,7 @@ names the broken invariant:
 `./scripts/verify-working-mode-blank-home.sh`, and
 `./scripts/verify-working-mode-quickstart.sh` exist as additional
 working-mode proofs. `./scripts/verify-working-mode-live.sh` is fail-closed
-(`INDEPENDENCE_UNAVAILABLE` when fewer than two of grok/kiro-cli/codex are on PATH) and is **not**
+(`INDEPENDENCE_UNAVAILABLE` when none of grok/kiro-cli/codex are on PATH; one kind is SUBAGENT-ISOLATED) and is **not**
 a required CI gate.
 
 `./scripts/selftest.sh --fast` is the bounded gate to use between full runs.

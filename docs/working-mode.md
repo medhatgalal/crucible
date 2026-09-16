@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.13.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.14.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
@@ -9,7 +9,9 @@ to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
 `ANSWERS.md` are both non-empty; greenfield still mkdir. `map-ready`
 requires `INTENT.md` headings `## User` / `## Job` / `## Non-goals`.
 Named `test_entrypoint` must exist; `wm green` extra-proof hides it and
-requires the FALSIFIER to fail. CLOSE writes `reviews/taste.md`. Install with
+requires the FALSIFIER to fail. CLOSE writes `reviews/taste.md`. Live walk
+proceeds with one kind as `SUBAGENT-ISOLATED`; two kinds stay
+`CROSS-FAMILY`; zero is still `INDEPENDENCE_UNAVAILABLE`. Install with
 `crucible adopt PROGRAM --managed --working-mode`.
 Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
 or `status`. Runtime is the target repo plus one harness CLI. Skills live
@@ -42,7 +44,7 @@ bare `wm` on `PATH`). Mapper, maker, and reviewer must be distinct agents.
 Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
 background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty.
 Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo fixtures).
-Two kinds means any two of grok/kiro/codex.
+One kind live walk is `SUBAGENT-ISOLATED`; two kinds is `CROSS-FAMILY`.
 
 Advanced copy-paste (fixtures, HIGH sign, specifier+scout) stays below.
 
@@ -156,7 +158,7 @@ a **newer** tree (`adopt work --refresh`); `src == dst` is refused.
 | Product already matches the falsifier | Example A files + existing hello | `CLOSED NO-BUILD` | Reviewer PASS on a no-build red |
 | HIGH slice | Example B + `MAP-HUMAN` | Stops until you sign; then walks | Unattended HIGH/live (8c) |
 | Several modules | `MAP.md` with `depends_on` | One `loop` walks READY parents-CLOSED | Parallel in-slice TASKS |
-| Live Grok/Kiro/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if fewer than two of grok/kiro-cli/codex can auth | Claiming independence when those CLIs are missing |
+| Live Grok/Kiro/Codex | `scripts/verify-working-mode-live.sh` | Fail-closed if none of grok/kiro-cli/codex can auth; one kind `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY` | Claiming independence when those CLIs are missing |
 | Guided stall (`WAIT APPROVAL`) | Stay on `crucible drive` | Unchanged 1.6.6 gates | Working-mode will not clear those gates |
 
 ## Visuals
