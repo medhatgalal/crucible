@@ -61,6 +61,34 @@ else
   bad 'wm-go.sh grok command must pass --session-id {SESSION}'
 fi
 
+# 1.14 live walk source contract (no live CLIs).
+LIVE_SH="$HERE/scripts/verify-working-mode-live.sh"
+if [ -f "$LIVE_SH" ] && grep -F -q 'need >=1' "$LIVE_SH"; then
+  ok
+else
+  bad 'live script must fail closed with need >=1'
+fi
+if [ -f "$LIVE_SH" ] && grep -q 'LIVE_N" -lt 1' "$LIVE_SH"; then
+  ok
+else
+  bad 'live script unavailable gate must be LIVE_N -lt 1'
+fi
+if [ -f "$LIVE_SH" ] && grep -q 'SUBAGENT-ISOLATED' "$LIVE_SH"; then
+  ok
+else
+  bad 'live script must name SUBAGENT-ISOLATED'
+fi
+if [ -f "$LIVE_SH" ] && grep -q 'CROSS-FAMILY' "$LIVE_SH"; then
+  ok
+else
+  bad 'live script must name CROSS-FAMILY'
+fi
+if [ -f "$LIVE_SH" ] && grep -q 'need >=2' "$LIVE_SH"; then
+  bad 'live script must not keep need >=2 as the unavailable gate'
+else
+  ok
+fi
+
 # No-args help: exit 0 and required tokens.
 help_dir="$BASE/help"
 init_git_repo "$help_dir"

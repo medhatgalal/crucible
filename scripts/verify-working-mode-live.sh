@@ -1,13 +1,15 @@
 #!/bin/sh
 # 13b live arm: throwaway tarball adopt + real harness CLIs.
-# Fail closed: fewer than two of grok/kiro-cli/codex on PATH →
-# INDEPENDENCE_UNAVAILABLE exit 1. Claude Code is not required.
+# Zero of grok/kiro-cli/codex on PATH → INDEPENDENCE_UNAVAILABLE exit 1.
+# One kind proceeds SUBAGENT-ISOLATED (k2=k1; distinct agent ids).
+# Two kinds split maker/reviewer CROSS-FAMILY. Never fake CROSS-FAMILY.
+# Claude Code is not required.
 # Fail closed: those present binaries cannot auth under empty HOME →
 # INDEPENDENCE_UNAVAILABLE: <cli> cannot auth (exit 1). Do not grok-only PASS.
 # Host auth/config is copied (grok auth.json+config.toml, kiro settings/cli.json,
 # codex auth.json+config.toml). Skills/bundled/sessions are not copied.
 # Do not use kiro-cli acp (JSON-RPC server) as wm run argv.
-# Two-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
+# One-or-more auth: health-check IDEA (not hello); specifier/scout/maker/reviewer
 # live CLIs (not architecture-agent.sh / critique-agent.sh); prefer wm go;
 # four distinct PIDs; one go/loop. PATH-stripped still exit 1
 # INDEPENDENCE_UNAVAILABLE. Not a required CI gate.
@@ -72,7 +74,7 @@ fi
 command -v git >/dev/null 2>&1 && ok || bad 'git required'
 command -v tar >/dev/null 2>&1 && ok || bad 'tar required'
 
-# --- fail closed: need >=2 of grok/kiro-cli/codex (not 3 including claude)
+# --- fail closed: need >=1 of grok/kiro-cli/codex (not 3 including claude)
 LIVE_GROK=0
 LIVE_KIRO=0
 LIVE_CODEX=0
@@ -80,8 +82,8 @@ command -v grok >/dev/null 2>&1 && LIVE_GROK=1
 command -v kiro-cli >/dev/null 2>&1 && LIVE_KIRO=1
 command -v codex >/dev/null 2>&1 && LIVE_CODEX=1
 LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
-if [ "$LIVE_N" -lt 2 ]; then
-  die_unavail "live grok/kiro-cli/codex CLI missing (need >=2; grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
+if [ "$LIVE_N" -lt 1 ]; then
+  die_unavail "live grok/kiro-cli/codex CLI missing (need >=1; grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
 fi
 
 GROK_BIN=
@@ -109,6 +111,7 @@ if [ "$LIVE_CODEX" -eq 1 ]; then
     [ -n "$_live_k2" ] || _live_k2=codex
   fi
 fi
+[ -n "$_live_k2" ] || _live_k2=$_live_k1
 LIVE_SPEC_KIND=$_live_k1
 LIVE_MAKE_KIND=$_live_k1
 LIVE_SCOUT_KIND=$_live_k2
@@ -392,11 +395,19 @@ git commit -m 'specifier: RESEARCH'. Exit.
 
 Otherwise read IDEA.md. The idea is HTTP GET /health returns 200 with a
 python test in tests/test_health.py. If underspecified, write QUESTIONS.md
-(at most 7) and stop. When specified, write SPEC.md with required headings
-(Goal, Non-goals, Owned files, Test files, Acceptance criteria, Focused
-falsifier MAKER-WRITES, Stop conditions, Risk LOW). Owned files:
-health/app.py. Test files: tests/test_health.py. Do not author the
-falsifier command (MAKER-WRITES only).
+(at most 7) and stop. When specified, write INTENT.md with headings:
+## User
+## Job
+## Non-goals
+(operator; GET /health 200; no network/auth/billing). Write SPEC.md with
+required headings (Goal, Non-goals, Owned files, Test files, Acceptance
+criteria, Focused falsifier MAKER-WRITES, Stop conditions, Risk LOW).
+Owned files: health/app.py. Test files: tests/test_health.py. Do not
+author the falsifier command (MAKER-WRITES only).
+mkdir -p tests. Plant tests/test_health.py as exactly:
+import sys; sys.exit(1)
+so the test_entrypoint exists at maker-falsify. Maker-build overwrites
+this file. Keep te path tests/test_health.py.
 
 Write architecture/modules.md as tab-separated bytes:
 EOF
@@ -409,7 +420,7 @@ EOF
     printf 'id\tmodule\towned_paths\tdepends_on\trisk\n'
     printf 's1\thealth\thealth/app.py\t-\tLOW\n'
     cat <<'EOF'
-git add SPEC.md architecture/modules.md MAP.md && git commit -m 'specifier: SPEC MAP modules'
+git add INTENT.md SPEC.md architecture/modules.md MAP.md tests/test_health.py && git commit -m 'specifier: SPEC MAP modules'
 Do not implement the product. Do not write MAP-ACCEPT. Do not be the maker.
 
 ## scout (agent scout0)
@@ -622,6 +633,17 @@ EOF
     ok
   else
     bad "one wm $walk_kind wanted CLOSED PASS or CLOSED NO-BUILD rc=0, got rc=$LOOP_RC closed=$closed_word out=$(cat "$OUT") err=$(cat "$ERR") worker.err=$(cat .wm/worker.err 2>/dev/null || true)"
+  fi
+
+  iso=
+  if [ -f .wm/CLOSED ]; then
+    iso=$(awk -F ': ' '$1=="independence"{print $2; exit}' .wm/CLOSED)
+  fi
+  if [ "$LIVE_N" -ge 2 ]; then
+    [ "$iso" = CROSS-FAMILY ] && ok || bad "two-kind live CLOSED wanted CROSS-FAMILY, got $iso"
+  else
+    [ "$iso" = SUBAGENT-ISOLATED ] && ok || bad "one-kind live CLOSED wanted SUBAGENT-ISOLATED, got $iso"
+    grep -q CROSS-FAMILY .wm/CLOSED && bad 'one-kind must not fake CROSS-FAMILY' || ok
   fi
 
   [ -f .wm/specifier-ran ] && ok || bad "specifier CLI not exec'd"
