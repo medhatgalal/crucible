@@ -88,6 +88,11 @@ if [ -f "$LIVE_SH" ] && grep -q 'need >=2' "$LIVE_SH"; then
 else
   ok
 fi
+if [ -f "$LIVE_SH" ] && grep -q 'die_unavail "kiro-cli cannot auth"' "$LIVE_SH"; then
+  bad 'one CLI auth failure must not abort the live walk'
+else
+  ok
+fi
 
 # No-args help: exit 0 and required tokens.
 help_dir="$BASE/help"

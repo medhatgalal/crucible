@@ -243,7 +243,8 @@ printf 'probe\n' > "$PROBE_DIR/README"
 ) >/dev/null 2>"$ERR" || true
 
 # One-shot ping under empty HOME. Discard output (do not print secrets).
-# Probe only grok/kiro-cli/codex that are on PATH. Do not die because claude is missing.
+# Probe PATH CLIs; drop any that cannot auth. Zero usable → unavailable.
+# Do not die because claude is missing. Do not die because one of three fails.
 printf 'reply with pong only\n' > "$PROBE_DIR/ping.txt"
 if [ "$LIVE_GROK" -eq 1 ]; then
   if ( CDPATH=; cd "$PROBE_DIR" && run_timeout 25 \
@@ -251,7 +252,7 @@ if [ "$LIVE_GROK" -eq 1 ]; then
     --output-format plain --max-turns 1 --prompt-file "$PROBE_DIR/ping.txt" ); then
     ok
   else
-    die_unavail "grok cannot auth"
+    LIVE_GROK=0
   fi
 fi
 if [ "$LIVE_KIRO" -eq 1 ]; then
@@ -259,7 +260,7 @@ if [ "$LIVE_KIRO" -eq 1 ]; then
     "$KIRO_BIN" chat --no-interactive --trust-all-tools pong ); then
     ok
   else
-    die_unavail "kiro-cli cannot auth"
+    LIVE_KIRO=0
   fi
 fi
 if [ "$LIVE_CODEX" -eq 1 ]; then
@@ -267,9 +268,34 @@ if [ "$LIVE_CODEX" -eq 1 ]; then
     "$CODEX_BIN" exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox pong ); then
     ok
   else
-    die_unavail "codex cannot auth"
+    LIVE_CODEX=0
   fi
 fi
+LIVE_N=$((LIVE_GROK + LIVE_KIRO + LIVE_CODEX))
+if [ "$LIVE_N" -lt 1 ]; then
+  die_unavail "none of grok/kiro-cli/codex could auth (grok=$LIVE_GROK kiro-cli=$LIVE_KIRO codex=$LIVE_CODEX)"
+fi
+_live_k1=
+_live_k2=
+if [ "$LIVE_GROK" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=grok; else _live_k2=grok; fi
+fi
+if [ "$LIVE_KIRO" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=kiro; else
+    [ -n "$_live_k2" ] || _live_k2=kiro
+  fi
+fi
+if [ "$LIVE_CODEX" -eq 1 ]; then
+  if [ -z "$_live_k1" ]; then _live_k1=codex; else
+    [ -n "$_live_k2" ] || _live_k2=codex
+  fi
+fi
+[ -n "$_live_k2" ] || _live_k2=$_live_k1
+LIVE_SPEC_KIND=$_live_k1
+LIVE_MAKE_KIND=$_live_k1
+LIVE_SCOUT_KIND=$_live_k2
+LIVE_REV_KIND=$_live_k2
+export LIVE_SPEC_KIND LIVE_MAKE_KIND LIVE_SCOUT_KIND LIVE_REV_KIND
 
 assert_no_home_skill_trees() {
   hits=$(find "$EMPTY_HOME" \( \
