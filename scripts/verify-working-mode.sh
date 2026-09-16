@@ -1340,6 +1340,12 @@ if [ -f LESSONS.md ] && grep -q '^NONE$' LESSONS.md; then
 else
   bad "close NONE wanted ^NONE$, got $(cat LESSONS.md 2>/dev/null || echo ABSENT)"
 fi
+[ -f reviews/taste.md ] && ok || bad 'close NONE must write reviews/taste.md'
+if grep -q '^## Taste' reviews/taste.md && grep -q 'NONE' reviews/taste.md; then
+  ok
+else
+  bad "taste.md wanted ## Taste + NONE, got $(cat reviews/taste.md 2>/dev/null || echo ABSENT)"
+fi
 if [ -f "$HOME/LESSONS.md" ]; then
   bad 'close wrote LESSONS.md under $HOME'
 else
@@ -2539,6 +2545,7 @@ fi
 # Task 5 E3: FALSIFIER ignoring test_entrypoint refuses.
 setup_repo t-e3-falsifier-entrypoint
 mkdir -p architecture tests tools .wm
+printf '# foo\n' > tests/foo.py
 printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
   > architecture/modules.md
 printf 'foo\ttests\ttests/foo.py\ttests/foo.py\ttests/foo.py\tno\n' >> architecture/modules.md
@@ -2568,6 +2575,38 @@ chmod +x tools/true-falsify.sh
 "$WM" cast maker alice grok './tools/true-falsify.sh {BRIEF}' >/dev/null
 refuses 'FALSIFIER ignoring test_entrypoint' 'falsifier must invoke test_entrypoint' \
   "$WM" run maker-falsify
+
+# Named test_entrypoint path must exist.
+setup_repo t-e3-te-missing
+mkdir -p architecture tests tools .wm
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'foo\ttests\ttests/foo.py\ttests/foo.py\ttests/foo.py\tno\n' >> architecture/modules.md
+printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\nwhen: 0\n' > .wm/map-verdict
+printf 'id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n' > slices.tsv
+printf 's1\tfoo\ttests/foo.py\t-\tLOW\tREADY\n' >> slices.tsv
+printf 'id: s1\n' > .wm/slice-in-flight
+cat > tools/cite-missing-te.sh <<'EOF'
+#!/bin/sh
+set -eu
+mkdir -p .wm
+printf 'test -f tests/foo.py\n' > .wm/FALSIFIER
+if command -v sha256sum >/dev/null 2>&1; then
+  h=$(sha256sum .wm/FALSIFIER | awk '{print $1}')
+elif command -v shasum >/dev/null 2>&1; then
+  h=$(shasum -a 256 .wm/FALSIFIER | awk '{print $1}')
+else
+  h=$(openssl dgst -sha256 .wm/FALSIFIER | awk '{print $NF}')
+fi
+wid=NOCOMMIT
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+  wid=$(git rev-parse --short=12 HEAD)
+fi
+printf 'agent: alice\nwork-id: %s\nsha256: %s\n' "$wid" "$h" > .wm/FALSIFIER.meta
+EOF
+chmod +x tools/cite-missing-te.sh
+"$WM" cast maker alice grok './tools/cite-missing-te.sh {BRIEF}' >/dev/null
+refuses 'test_entrypoint missing' 'test_entrypoint missing' "$WM" run maker-falsify
 
 # Task 5 E4 / H3: FAIL then next is maker-build; next/status/help do not mutate count.
 setup_repo t-e4-fail-next-maker-build
