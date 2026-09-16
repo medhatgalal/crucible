@@ -1,6 +1,6 @@
 # Working-mode experiment log (2026-09-16)
 
-Operator extra-proof against **1.14.2**. Fixture CLIs for A/B/blank-home.
+Operator extra-proof against **1.15.0**. Fixture CLIs for A/B/blank-home.
 Live grok/kiro-cli/codex on the host PATH.
 Empty `HOME` for fixture walks. Live kiro probe/exec inherit host HOME
 (keychain). No `$HOME` skill install.

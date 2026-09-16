@@ -4,6 +4,11 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.15.0 — smooth go
+
+`go` commits shape files before pre-falsify. MAP-REVISE cap runs in the
+loop (default 2, then `ESCALATE MAP_REVISE`). Kernel `.wm` is absolute.
+
 ## 1.14.2 — grok prompt-file and ./ owned paths
 
 `wm go` grok discover uses `--always-approve --prompt-file` (not `-p`).

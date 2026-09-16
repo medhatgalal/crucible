@@ -21,9 +21,9 @@ archives and takes the next idea. `go --next` remains an alias.
 A readable idea file is copied onto `IDEA.md` when that name is missing.
 Non-empty `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`.
 `go` discovers `grok` / `kiro-cli` / `codex` when the panel is empty
-and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`.
-`go` and `status` write `.wm/FLOOR.md` (station, card, wip, andon,
-evidence). `status` does not increment FAIL retries.
+and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`. It commits shape
+(`wm: shape`) before pre-falsify; MAP-REVISE cap 2 then `ESCALATE MAP_REVISE`.
+`go` and `status` write `.wm/FLOOR.md`. `status` does not increment FAIL retries.
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if those headings are missing. Reviewer PASS does not require it.
@@ -48,7 +48,7 @@ Reviewer/scout that mutate owned product paths are refused.
 MAP-HUMAN still required for HIGH/live.
 Judging batteries ship a `## Send-back` TSV (`word`, `card`, `cap`, `andon`).
 Overlay `.crucible/skills/<bat>/` to change FAIL cap or MAP-REVISE card.
-An in-flight slice runs maker/reviewer in `.wm/worktrees/<id>`; CLOSE removes it.
+Maker/reviewer run in `.wm/worktrees/<id>`; CLOSE removes it.
 
 ## STOP-ASK
 

@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.14.2**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.15.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
