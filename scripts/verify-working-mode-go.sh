@@ -60,6 +60,17 @@ if grep -q '{SESSION}' "$HERE/wm-go.sh" \
 else
   bad 'wm-go.sh grok command must pass --session-id {SESSION}'
 fi
+if grep -q -- '-p --prompt-file' "$HERE/wm-go.sh"; then
+  bad 'grok -p is --single PROMPT; discover must use --prompt-file without -p'
+else
+  ok
+fi
+if grep -q -- '--prompt-file {BRIEF}' "$HERE/wm-go.sh" \
+  && grep -q -- '--always-approve' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh grok discover must use --always-approve --prompt-file {BRIEF}'
+fi
 
 # 1.14 live walk source contract (no live CLIs).
 # 1.14.1: kiro probe/exec inherit HOST_HOME (keychain OIDC). Empty HOME hang

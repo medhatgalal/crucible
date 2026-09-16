@@ -20,13 +20,14 @@ is escaped). Do not wrap `{BRIEF}` or `{SESSION}` in quotes in the command
 
 ```text
 name	kind	model	effort	command
-alice	grok	grok-4	high	grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}
+alice	grok	grok-4	high	grok --session-id {SESSION} --always-approve --no-subagents --disable-web-search --prompt-file {BRIEF}
 ```
 
 Guided-cycle `agents.tsv` uses the same columns. Auth stays in the operator
 environment (never in this file, never in skills, never committed).
 
-Non-interactive one-shot: `grok --session-id {SESSION} --no-subagents -p --prompt-file {BRIEF}`
+Non-interactive one-shot: `grok --session-id {SESSION} --always-approve --no-subagents --disable-web-search --prompt-file {BRIEF}`.
+Do not pass `-p` (`--single` requires a prompt string and steals `--prompt-file`).
 (engine quotes the path and session id). Interactive: `grok --cwd .` then
 open `{BRIEF}`. Discover (`wm go`) uses that one-shot line so each station
 gets a distinct Grok session rather than one chat wearing four hats.

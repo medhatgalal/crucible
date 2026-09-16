@@ -4,7 +4,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
-No working-mode changes past 1.14.1.
+## 1.14.2 — grok prompt-file and ./ owned paths
+
+`wm go` grok discover uses `--always-approve --prompt-file` (not `-p`).
+Maker-build owned-path CHECK matches `./foo` to `foo`.
 
 ## 1.14.1 — kiro host auth
 

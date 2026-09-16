@@ -1,7 +1,7 @@
 # Working-mode experiment log (2026-09-16)
 
-Operator extra-proof against **1.14.1** (`c21c552` plus this notes commit).
-Fixture CLIs for A/B/blank-home. Live grok/kiro-cli/codex on the host PATH.
+Operator extra-proof against **1.14.2**. Fixture CLIs for A/B/blank-home.
+Live grok/kiro-cli/codex on the host PATH.
 Empty `HOME` for fixture walks. Live kiro probe/exec inherit host HOME
 (keychain). No `$HOME` skill install.
 
@@ -15,6 +15,7 @@ Empty `HOME` for fixture walks. Live kiro probe/exec inherit host HOME
 | NO-BUILD | Product already matches falsifier | `CLOSED NO-BUILD`; PASS after no-build red refused | kernel |
 | E5 | Several modules, `depends_on`, one loop | 3 CLOSED slices | `verify-working-mode-blank-home.sh` **102/0** |
 | Live | grok + kiro-cli + codex, health-check IDEA | `CLOSED PASS`, four distinct PIDs, `CROSS-FAMILY` | `verify-working-mode-live.sh` **53/0** (1.14 was **52/0** with kiro dropped) |
+| T | Clone `sharkdp/tinytag`, branch, `adopt --working-mode`, LOW `TINYTAG_DIR` | `CLOSED PASS`, `CROSS-FAMILY`, `python3 tests/test_tinytag.py` rc 0, no `~/.tinytag` | local branch `feat/tinytag-dir-env` |
 | QS-home | empty HOME stays skill-free | pass | quickstart + blank-home + kernel |
 
 Live 1.14.1: kiro host-HOME `chat --no-interactive` probe succeeds (the extra `ok` vs 1.14). With three kinds on PATH, specifier/maker are grok and scout/reviewer are kiro. `kiro-cli acp` is not the wm argv.

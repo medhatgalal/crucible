@@ -137,7 +137,15 @@ path_in_list() {
   _pil_path=$1
   _pil_list=$2
   [ -n "$_pil_list" ] || return 1
-  printf '%s\n' "$_pil_list" | grep -qxF "$_pil_path"
+  case $_pil_path in ./*) _pil_path=${_pil_path#./} ;; esac
+  printf '%s\n' "$_pil_list" | awk -v p="$_pil_path" '
+    function norm(s) {
+      sub(/^\.\//, "", s)
+      return s
+    }
+    norm($0) == p { found = 1; exit }
+    END { exit found ? 0 : 1 }
+  '
 }
 
 porcelain_paths() {

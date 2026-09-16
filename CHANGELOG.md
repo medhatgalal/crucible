@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.14.2] - 2026-09-16
+
+### Discover argv and owned paths
+- `wm go` grok discover uses `--prompt-file {BRIEF}` with `--always-approve`.
+  Do not pass `-p` (`--single` requires a prompt and steals `--prompt-file`).
+- Maker-build owned-path CHECK treats `./foo` and `foo` as the same path
+  (`git diff --name-only` has no `./` prefix).
+
 ## [1.14.1] - 2026-09-16
 
 ### Kiro live auth
