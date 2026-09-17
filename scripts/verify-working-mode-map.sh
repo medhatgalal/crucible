@@ -1312,6 +1312,8 @@ printf 'widget\tsrc/widget\tsrc/widget/api.py\tsrc/widget/missing_te.py\tsrc/wid
   >> architecture/modules.md
 impl_ok 'map-ready plants missing test_entrypoint file' "$WM" map-ready || true
 [ -f src/widget/missing_te.py ] && ok || bad 'map-ready must plant src/widget/missing_te.py'
+grep -q 'sys.exit(1)' src/widget/missing_te.py \
+  && ok || bad 'planted .py test_entrypoint must be observed-red (sys.exit(1))'
 
 # 3d superseded 2026-09-15: HIGH + one kind + distinct agents + MAP-HUMAN proceeds.
 # Label SUBAGENT-ISOLATED. Never fake CROSS-FAMILY.

@@ -1044,6 +1044,23 @@ git diff --quiet HEAD -- SPEC.md \
 grep -q 'operator tweak' SPEC.md \
   && ok || bad 'shape commit must keep the dirty SPEC bytes'
 
+# Planted test_entrypoint must be shape-committed so red is not dirty porcelain.
+setup_repo t-loop-commits-te
+mkdir -p tests architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'foo\t.\tproduct.txt\ttests/te.py\tproduct.txt\tno\n' >> architecture/modules.md
+: > tests/te.py
+write_loop_maker_pass
+write_loop_reviewer_pass
+"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
+"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
+run_wm_loop
+assert_loop_foreground 't-loop-commits-te'
+[ "$LOOP_RC" -eq 0 ] && ok || bad "te-shape loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+git ls-files --error-unmatch tests/te.py >/dev/null 2>&1 \
+  && ok || bad 'loop must commit planted test_entrypoint tests/te.py'
+
 # (12) Leftover reviewer receipts after maker-build: still exec reviewer (CHECK 7 via loop)
 setup_repo t12-loop-leftover
 reach_green

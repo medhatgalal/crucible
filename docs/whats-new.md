@@ -4,6 +4,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.15.2 — shape-commit planted te
+
+`commit_shape` adds planted `test_entrypoint` files so red is not dirty porcelain.
+
 ## 1.15.1 — te exists at map-ready
 
 `map-ready` plants a missing `test_entrypoint` (empty file or directory).

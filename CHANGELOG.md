@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.15.2] - 2026-09-16
+
+### Shape-commit test_entrypoint
+- `commit_shape` git-adds planted `test_entrypoint` paths so `red` is not
+  `dirty product porcelain` on an empty te file.
+- Planted `*.py` te files are `sys.exit(1)` so empty Python is not NO-BUILD.
+
 ## [1.15.1] - 2026-09-16
 
 ### Hello te at map-ready
