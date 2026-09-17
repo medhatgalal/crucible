@@ -2436,6 +2436,16 @@ commit_shape() {
     [ -e "$_cs_p" ] || continue
     git add -- "$_cs_p" 2>/dev/null || true
   done
+  if [ -f architecture/modules.md ]; then
+    _cs_te=
+    while IFS= read -r _cs_te || [ -n "$_cs_te" ]; do
+      [ -n "$_cs_te" ] || continue
+      [ -e "$_cs_te" ] || continue
+      git add -- "$_cs_te" 2>/dev/null || true
+    done <<EOF
+$(list_module_test_entrypoints)
+EOF
+  fi
   git diff --cached --quiet && return 0
   git commit -qm 'wm: shape'
 }
