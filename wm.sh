@@ -1976,7 +1976,14 @@ EOF
           if [ "$_cm_dir" != . ]; then
             mkdir -p "$_cm_dir"
           fi
-          : > "$_cm_te"
+          case $_cm_base in
+            *.py)
+              printf 'import sys\nsys.exit(1)\n' > "$_cm_te"
+              ;;
+            *)
+              : > "$_cm_te"
+              ;;
+          esac
           ;;
         *)
           mkdir -p "$_cm_te"
