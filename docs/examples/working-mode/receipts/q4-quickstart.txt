@@ -1,0 +1,4 @@
+2026-09-16T00:53:15Z HOME=empty
+scripts/verify-working-mode-quickstart.sh
+46 passed, 0 failed
+RC=0

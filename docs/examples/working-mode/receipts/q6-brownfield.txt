@@ -1,0 +1,9 @@
+unattended tinytag on 1.15.2 engine
+DST=/tmp/wm-butter-tinytag3.9tj55V
+operator commits after go started: 0
+GO_RC=0
+CLOSED PASS
+independence: CROSS-FAMILY
+python3 tests/test_tinytag.py rc=0
+RED then BUILT then GREEN
+authors: working-mode only (wm: shape, maker)

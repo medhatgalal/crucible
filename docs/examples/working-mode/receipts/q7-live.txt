@@ -1,0 +1,6 @@
+2026-09-16 scripts/verify-working-mode-live.sh on VERSION 1.15.2
+53 passed, 0 failed
+LIVE_GATE CLOSED PASS
+LIVE_PIDS four distinct
+kiro-cli chat --no-interactive --trust-all-tools pong rc=0 under host HOME
+kiro not dropped (53/0 vs 1.14 drop 52/0)
