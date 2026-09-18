@@ -3,7 +3,7 @@
 Cwd is the **target repository root**, not the program directory.
 
 Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then
-`.crucible/work/wm.sh go [IDEA.md]`. Use `status` to read the next card.
+`.crucible/work/wm.sh go [IDEA.md]`. Use `status` / `debrief` (FLOOR + TRACE).
 
 Do not mix guided `drive` or `cycle` with this runner.
 

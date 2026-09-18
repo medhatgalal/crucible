@@ -2673,12 +2673,19 @@ floor_write() {
       done
     fi
   } > "$WM/FLOOR.md"
+  if [ ! -f "$WM/t0" ]; then
+    date +%s > "$WM/t0"
+  fi
+  _fw_t0=$(awk 'NF { print $1+0; exit }' "$WM/t0")
+  case $_fw_t0 in ''|*[!0-9]*) _fw_t0=0 ;; esac
+  _fw_el=$(( $(date +%s) - _fw_t0 ))
   if [ ! -f "$WM/TRACE.tsv" ]; then
     printf 'when\tcard\toutcome\n' > "$WM/TRACE.tsv"
   fi
   _fw_card_t=$(printf '%s' "$_fw_card" | tr '\t\n' '  ')
   _fw_st_t=$(printf '%s' "$_fw_st" | tr '\t\n' '  ')
   printf '%s\t%s\t%s\n' "$(iso_now)" "$_fw_card_t" "$_fw_st_t" >> "$WM/TRACE.tsv"
+  say "FLOOR t=+${_fw_el}s station=${_fw_st} card=${_fw_card} wip=${_fw_wip}"
 }
 
 cmd_status() {
@@ -2686,6 +2693,41 @@ cmd_status() {
   _st_card=$(printf '%s\n' "$_st_card" | awk 'NF { print; exit }')
   floor_write "$_st_card"
   say "$_st_card"
+}
+
+cmd_debrief() {
+  [ -f "$WM/FLOOR.md" ] || die "no FLOOR.md (run go or status)"
+  [ -f "$WM/TRACE.tsv" ] || die "no TRACE.tsv"
+  say "debrief"
+  cat "$WM/FLOOR.md"
+  if command -v python3 >/dev/null 2>&1; then
+    PYTHONDONTWRITEBYTECODE=1 python3 - "$WM/TRACE.tsv" <<'PY'
+import sys
+from datetime import datetime, timezone
+path = sys.argv[1]
+prev = None
+t0 = None
+print("when\tdelta_s\ttotal_s\tcard\tstation")
+with open(path, encoding="utf-8") as f:
+    next(f, None)
+    for line in f:
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) < 3:
+            continue
+        try:
+            t = datetime.strptime(parts[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if t0 is None:
+            t0 = t
+        delta = 0 if prev is None else int((t - prev).total_seconds())
+        total = int((t - t0).total_seconds())
+        print("%s\t%d\t%d\t%s\t%s" % (parts[0], delta, total, parts[1], parts[2]))
+        prev = t
+PY
+  else
+    cat "$WM/TRACE.tsv"
+  fi
 }
 
 # n = slices.tsv data rows; before map-ready, n=0 → 40.
@@ -3199,6 +3241,9 @@ case $cmd in
   go|bootstrap)
     [ "${WM_GO_LOADED:-}" = 1 ] || die "refresh from 1.8.0"
     cmd_go "$@"
+    ;;
+  debrief)
+    cmd_debrief
     ;;
   help)
     [ "${WM_GO_LOADED:-}" = 1 ] || die "refresh from 1.8.0"

@@ -4,6 +4,11 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.16.1 — FLOOR stream and debrief
+
+`go` prints elapsed FLOOR lines. `debrief` is the post-run improvement view
+(TRACE deltas). Outer `/crucible` must surface FLOOR instead of silent wait.
+
 ## 1.16.0 — /crucible outer loop
 
 `/crucible` in Grok: short intake, then `wm.sh go` until CLOSE or a brake.
