@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.16.0] - 2026-09-18
+
+### Outer loop
+- Battery `skills/crucible`: Grok `/crucible` asks intent (new / brownfield /
+  bug / continue / refresh / engine), then adopt + `wm.sh go`. Parent agent
+  does not implement or patch `wm.sh` unless intent is engine. Brakes: stop,
+  hold, andon, red.
+
 ## [1.15.2] - 2026-09-16
 
 ### Shape-commit test_entrypoint

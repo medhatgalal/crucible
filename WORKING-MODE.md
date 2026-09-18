@@ -9,9 +9,8 @@ Do not mix guided `drive` or `cycle` with this runner.
 
 ## Start
 
-1. Read this file.
-2. Run `.crucible/work/wm.sh` (no args), then `go` with an optional idea file
-   (or `status` to inspect).
+1. Read this file. In Grok, `/crucible` is intake; then this runner takes over.
+2. Run `.crucible/work/wm.sh` (no args), then `go` (or `status`).
 3. Stay in the foreground. Do not background the walker.
 
 `go` inits if needed. With no flags: missing `IDEA.md` plus a READY
