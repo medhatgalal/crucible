@@ -72,6 +72,14 @@ else
   bad 'wm-go.sh grok discover must use --always-approve --prompt-file {BRIEF}'
 fi
 
+# Outer-loop /crucible battery (parent agent; not a judging station).
+if [ -f "$HERE/skills/crucible/SKILL.md" ] \
+  && grep -q 'name: crucible' "$HERE/skills/crucible/SKILL.md" \
+  && grep -q '/crucible' "$HERE/skills/crucible/SKILL.md"; then
+  ok
+else
+  bad 'skills/crucible/SKILL.md must exist for /crucible outer loop'
+fi
 # 1.14 live walk source contract (no live CLIs).
 # 1.14.1: kiro probe/exec inherit HOST_HOME (keychain OIDC). Empty HOME hang
 # is not logout. Do not exec kiro-cli acp as wm argv.

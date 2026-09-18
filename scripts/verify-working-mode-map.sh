@@ -2122,7 +2122,7 @@ for d in "$HERE/skills"/*; do
   [ -d "$d" ] || continue
   n=${d##*/}
   case $n in
-    architecture|critique|review|loop-design|working-mode|research|repo-scout) ;;
+    architecture|critique|review|loop-design|working-mode|research|repo-scout|crucible) ;;
     *) extra="$extra $n" ;;
   esac
 done

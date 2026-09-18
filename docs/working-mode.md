@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.15.2**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.16.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
 swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
 to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
@@ -37,9 +37,11 @@ printf '%s\n' "product/hello.txt contains exactly hello" > IDEA.md
 .crucible/work/wm.sh go
 ```
 
-Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then `go`
-or `status`. Runtime is `.crucible/work/wm.sh` from that target root (not a
-bare `wm` on `PATH`). Mapper, maker, and reviewer must be distinct agents.
+In a Grok session, `/crucible` is the outer loop: it asks new work / brownfield /
+bug / continue / refresh, writes `IDEA.md` as needed, adopts if missing, then
+runs `go`. Brakes: stop, hold, andon, red. Engine patches are a different
+intent. Forgot the command? `.crucible/work/wm.sh` (help), then `go` or `status`.
+Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on `PATH`). Mapper, maker, and reviewer must be distinct agents.
 `{BRIEF}` is quoted by the engine — do not wrap it in quotes in the command.
 Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
 background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty.

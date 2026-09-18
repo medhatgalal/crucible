@@ -4,6 +4,11 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.16.0 — /crucible outer loop
+
+`/crucible` in Grok: short intake, then `wm.sh go` until CLOSE or a brake.
+User-facing: install/update Crucible and kick off. Inner loop unchanged.
+
 ## 1.15.2 — shape-commit planted te
 
 `commit_shape` adds planted `test_entrypoint` files so red is not dirty porcelain.

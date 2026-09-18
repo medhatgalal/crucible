@@ -1,12 +1,10 @@
 ---
 name: working-mode
-description: Run working-mode via .crucible/*/wm.sh. Print help with no args, then go or status to build the product from IDEA.md.
+description: Run working-mode via .crucible/*/wm.sh. Print help with no args, then go or status to build the product from IDEA.md. Guided intake is /crucible.
 ---
 
-If `.crucible/*/wm.sh` exists, run it with no arguments (help), then run
-`go` (optional idea file) or `status`. Cwd is the target repository root,
-not the program directory.
+If `.crucible/*/wm.sh` is missing, follow the **crucible** skill (`/crucible`).
 
-Do not mix guided `drive`. HIGH needs MAP-HUMAN. Stay in the foreground.
-
-Read `WORKING-MODE.md` next to `wm.sh` when present.
+If it exists and they only want to walk: cwd = target root; run
+`.crucible/work/wm.sh go` or `status`. Stay in the foreground. HIGH needs
+`MAP-HUMAN`. Read `WORKING-MODE.md` next to `wm.sh`.
