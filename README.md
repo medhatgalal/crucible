@@ -57,9 +57,28 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | Start real work while leftover DONE occupies another cycle | `adopt NAME --managed --panel-from SRC` — copies the approved panel; does not `--next` |
 | Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
-| Run working-mode (opt-in) | If adopted with `--working-mode`: `.crucible/work/wm.sh` then `go` — [docs/working-mode.md](docs/working-mode.md) |
+| Run working-mode (opt-in) | If adopted with `--working-mode`: Grok `/crucible`, then `.crucible/work/wm.sh` (help) then `go` — [docs/working-mode.md](docs/working-mode.md) |
 
 Conversational “keep looping” is not a waiver to implement.
+
+### Working-mode (opt-in): two repos, two loops
+
+**Engine** is this Crucible checkout. **Product** is the git root you want built.
+Install **from** the engine **into** the product ([docs/install.md](docs/install.md)).
+Default adopt is still guided `cycle` / `drive`. Working-mode is
+`adopt work --managed --working-mode`. Do not mix the loops. Do not `go` a
+product as a way to patch the engine.
+
+In the **product** repo, after that install:
+
+1. Grok `/crucible` — outer loop (intake, adopt, brakes). The coordinator does not implement or judge PASS.
+2. Inner loop: `.crucible/work/wm.sh go` from the product root. Stay in the foreground.
+3. Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`.
+4. Brakes (**stop**, **hold**, **andon**, **red**): kill `go`, run `status`, read `.wm/FLOOR.md`, wait.
+5. `STOP-ASK QUESTIONS` → write `ANSWERS.md`. `STOP-ASK MAP-HUMAN` → HIGH/live only (LOW local maps do not need it).
+6. Board: `.wm/FLOOR.md` (card, wip, andon), `.wm/TRACE.tsv` (when / card / station), `.wm/CLOSED` (first line `CLOSED PASS` or `CLOSED NO-BUILD`).
+
+How-to: [docs/working-mode.md](docs/working-mode.md).
 
 ## ✨ The value
 

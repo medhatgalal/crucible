@@ -28,6 +28,21 @@ For release-specific changes and current operator-visible limits, see
 [docs/whats-new.md](docs/whats-new.md). Working-mode is opt-in (not the guided
 default); see [docs/working-mode.md](docs/working-mode.md).
 
+## Working-mode (opt-in)
+
+When `PROGRAM` has `working-mode: yes`, this file's `cycle` / `drive` path is
+the **other** loop. Do not mix. Install/refresh: [docs/install.md](docs/install.md).
+
+- Outer: Grok `/crucible` (intake, adopt, brakes). Coordinator does not implement or judge PASS.
+- Inner: `.crucible/<program>/wm.sh go` from the target root. Stay in the foreground.
+- Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`.
+- Brakes (stop, hold, andon, red): kill `go`, run `status`, read `.wm/FLOOR.md`, wait.
+- `STOP-ASK QUESTIONS`: write `ANSWERS.md` (or clear `QUESTIONS.md`), then `go`.
+- `STOP-ASK MAP-HUMAN`: HIGH/live only. LOW local maps do not need it.
+- Engine (fix `wm.sh`) is a different loop — do not `go` a product to patch it.
+- Board: `.wm/FLOOR.md`, `.wm/TRACE.tsv`, `.wm/CLOSED`. How-to:
+  [docs/working-mode.md](docs/working-mode.md).
+
 `STATUS.md` is the next-action card (`state`, `engine`, `worth`, active item, inflight
 attempt, last evidence, next human gate). FALSE/STALE closes a claim; TRUE is only
 required to admit work. ABSENT-only investigation says NO-BUILD if all FALSE/STALE.

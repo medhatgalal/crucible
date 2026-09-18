@@ -11,6 +11,7 @@ All notable changes to this project are documented here. This project follows
 - Every card prints `FLOOR t=+Ns station=… card=… wip=…` (second-floor view).
 - `wm.sh debrief` prints FLOOR plus TRACE deltas (seconds per card).
 - `/crucible` must not lock chat: show FLOOR at least every ~20s.
+- Operator/AI how-to: install, /crucible then go, brakes, STOP-ASK, FLOOR/TRACE/CLOSED.
 
 ## [1.16.0] - 2026-09-18
 

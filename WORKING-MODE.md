@@ -3,9 +3,10 @@
 Cwd is the **target repository root**, not the program directory.
 
 Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then
-`.crucible/work/wm.sh go [IDEA.md]`. Use `status` / `debrief` (FLOOR + TRACE).
+`.crucible/work/wm.sh go [IDEA.md]`. Use `status` to read the next card.
 
-Do not mix guided `drive` or `cycle` with this runner.
+Do not mix guided `drive` or `cycle` with this runner. Engine work (fix
+`wm.sh`, change Crucible) is a different loop: do not `go` to patch the engine.
 
 ## Start
 
@@ -22,7 +23,7 @@ Non-empty `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`.
 `go` discovers `grok` / `kiro-cli` / `codex` when the panel is empty
 and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`. It commits shape
 (`wm: shape`) before pre-falsify; MAP-REVISE cap 2 then `ESCALATE MAP_REVISE`.
-`go` and `status` write `.wm/FLOOR.md`. `status` does not increment FAIL retries.
+`go` and `status` write `.wm/FLOOR.md` and `.wm/TRACE.tsv`; close writes `.wm/CLOSED`. `status` does not increment FAIL retries.
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if those headings are missing. Reviewer PASS does not require it.

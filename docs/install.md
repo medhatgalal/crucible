@@ -5,12 +5,20 @@ not this documentation tree and not `.crucible/<program>/`.
 
 | Situation | Section |
 | --- | --- |
-| No `.crucible/<program>/PROGRAM` | [First install](#first-install) |
+| No `.crucible/<program>/PROGRAM` | [First install](#first-install) (guided) or [working-mode](#opt-in-working-mode) |
 | Program exists; `engine:` older than this tree | [Upgrade](#upgrade-an-installed-program) |
 | Directory exists but no `PROGRAM` | Husk — keep, trash, or `adopt` a **different** name. Do not `--refresh`. |
 | Cycle already bound | [START.md](../START.md) and `STATUS.md` |
+| Working-mode (`wm.sh` / `/crucible`) | [Opt-in working-mode](#opt-in-working-mode) |
 
-Protocol: [START.md](../START.md). Outer loop: [drive.md](drive.md).
+**Two repos.** Engine = this Crucible source. Product = the git root you want
+built. Cwd is always the **product** (target) root. `adopt` copies the engine
+*into* `.crucible/<program>/` in the product. Never adopt into the engine repo
+unless the intent is engine work — and then do not `go` a product to patch
+`wm.sh`. Engine work is a different loop.
+
+Protocol: [START.md](../START.md). Guided outer loop: [drive.md](drive.md).
+Working-mode outer loop: Grok `/crucible` then [working-mode.md](working-mode.md).
 
 ## First install
 
@@ -68,7 +76,7 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 ## Opt-in working-mode
 
-On **1.8.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.16.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. To also install the working-mode runner and
 batteries into the **target** (no `$HOME` skill trees):
 
@@ -79,15 +87,21 @@ batteries into the **target** (no `$HOME` skill trees):
 That copies `wm.sh` into `.crucible/work/`, canonical skills into `.crucible/skills/`,
 harness views under `.crucible/.{grok,claude,agents}/skills/` and repo-root
 `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
-of the installing tree). Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`.
-Worked examples are in the [working-mode.md](working-mode.md) Quickstart. Adapters are copied when the source tree has `adapters/`;
+of the installing tree). Adapters are copied when the source tree has `adapters/`;
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
+Then, from the **target** root: Grok `/crucible` (outer loop: intake, adopt,
+brakes) or `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`. Inner loop is
+`go`. Stop on `CLOSED`, `STOP-ASK`, or `ESCALATE`. Brakes (stop, hold, andon,
+red): kill `go`, run `status`, read `.wm/FLOOR.md`, wait. How-to:
+[working-mode.md](working-mode.md) (Quickstart).
+
 `--refresh` refreshes working-mode if it is already installed (`wm.sh` present or
 `PROGRAM` has `working-mode: yes`). `adopt PROGRAM --refresh --working-mode` can
-add working-mode onto a guided install. Refresh from a **versioned tarball** (or
-another checkout), never from the installed binary:
+add working-mode onto a guided install. Stop any in-flight `go` (and `drive`)
+first. Refresh from a **versioned tarball** (or another checkout), never from
+the installed binary:
 
 ```sh
 <path-to-newer-crucible>/crucible adopt work --refresh
