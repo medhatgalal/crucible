@@ -4,6 +4,9 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+`/crucible` intake uses the harness question tool: Grok `ask_user_question`,
+Codex `request_user_input`, Kiro CLI numbered chat (no built-in ask-user tool).
+
 ## 1.16.1 — FLOOR stream and debrief
 
 `go` prints elapsed FLOOR lines. `debrief` is the post-run improvement view

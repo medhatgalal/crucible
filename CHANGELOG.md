@@ -5,6 +5,12 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Outer loop
+- `/crucible` intake uses the harness question tool for every missing fact
+  (forks and free text): Grok `ask_user_question`, Codex `request_user_input`,
+  Kiro CLI numbered chat (no built-in ask-user tool). Do not dump a numbered
+  list in chat when the tool exists.
+
 ## [1.16.1] - 2026-09-18
 
 ### Observability

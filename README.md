@@ -57,7 +57,7 @@ Success is structure followed with evidence—not a solo agent pretending to be 
 | Start real work while leftover DONE occupies another cycle | `adopt NAME --managed --panel-from SRC` — copies the approved panel; does not `--next` |
 | Drop junk INVESTIGATE | `cycle problem --abandon REASON` — no PASS, no new PROBLEM |
 | Approve panel or proposal | You run `cycle approve-panel` / `cycle approve`. Drive never auto-approves |
-| Run working-mode (opt-in) | If adopted with `--working-mode`: Grok `/crucible`, then `.crucible/work/wm.sh` (help) then `go` — [docs/working-mode.md](docs/working-mode.md) |
+| Run working-mode (opt-in) | If adopted with `--working-mode`: `/crucible` (Grok, Kiro CLI, or Codex), then `.crucible/work/wm.sh` (help) then `go` — [docs/working-mode.md](docs/working-mode.md) |
 
 Conversational “keep looping” is not a waiver to implement.
 
@@ -71,7 +71,7 @@ product as a way to patch the engine.
 
 In the **product** repo, after that install:
 
-1. Grok `/crucible` — outer loop (intake, adopt, brakes). The coordinator does not implement or judge PASS.
+1. `/crucible` (Grok, Kiro CLI, or Codex) — outer loop (intake, adopt, brakes). The coordinator does not implement or judge PASS.
 2. Inner loop: `.crucible/work/wm.sh go` from the product root. Stay in the foreground.
 3. Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`.
 4. Brakes (**stop**, **hold**, **andon**, **red**): kill `go`, run `status`, read `.wm/FLOOR.md`, wait.

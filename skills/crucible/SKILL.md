@@ -25,8 +25,23 @@ Say so. Do not `go` on a product as a way to patch the engine.
 
 # Intake (skip any answer already in the conversation)
 
-Ask **one** question at a time. Prefer a compact multiple-choice for the fork,
-then free text for paths and the job.
+Ask **one** missing fact at a time. Every missing fact — fork **or** free text
+(path, job sentence, source) — goes through the harness question tool. Inspect
+the **live** tool list. Do not guess. Do not print a numbered list in chat when
+a question tool is present.
+
+| Harness | Tool | Call |
+| --- | --- | --- |
+| Grok | `ask_user_question` | `questions[]` with `question` + `options` (`label`, `description`). Other is automatic. |
+| Codex | `request_user_input` | one question (max 3). Each needs `id`, `header` (≤12 chars), `question`, 2–3 `options`. Recommended first, label suffix `(Recommended)`. Do not add Other; the client does. |
+| Kiro CLI | none | no built-in ask-user tool. One numbered question in chat; wait. Do not invent `AskUserQuestion` or `ask_user_question`. |
+
+If the Grok or Codex tool is missing this session, use the Kiro fallback.
+Wait for the tool (or chat) answer before the next fact.
+
+Forks use compact options. Free text still uses the same tool: offer an
+inferred default as `(Recommended)` when you have one (cwd git root,
+`$CRUCIBLE_SRC`) and let Other take the rest.
 
 1. **Intent** (required if unknown)
    - New work (empty or new repo)

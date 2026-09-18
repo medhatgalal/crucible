@@ -18,7 +18,7 @@ unless the intent is engine work — and then do not `go` a product to patch
 `wm.sh`. Engine work is a different loop.
 
 Protocol: [START.md](../START.md). Guided outer loop: [drive.md](drive.md).
-Working-mode outer loop: Grok `/crucible` then [working-mode.md](working-mode.md).
+Working-mode outer loop: `/crucible` (Grok, Kiro CLI, or Codex) then [working-mode.md](working-mode.md).
 
 ## First install
 
@@ -91,8 +91,9 @@ of the installing tree). Adapters are copied when the source tree has `adapters/
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
-Then, from the **target** root: Grok `/crucible` (outer loop: intake, adopt,
-brakes) or `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`. Inner loop is
+Then, from the **target** root: `/crucible` on Grok, Kiro CLI, or Codex
+(outer loop: intake, adopt, brakes) or `.crucible/work/wm.sh` (no args) then
+`go [IDEA.md]`. Inner loop is
 `go`. Stop on `CLOSED`, `STOP-ASK`, or `ESCALATE`. Brakes (stop, hold, andon,
 red): kill `go`, run `status`, read `.wm/FLOOR.md`, wait. How-to:
 [working-mode.md](working-mode.md) (Quickstart).

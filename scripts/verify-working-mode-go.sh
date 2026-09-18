@@ -73,12 +73,21 @@ else
 fi
 
 # Outer-loop /crucible battery (parent agent; not a judging station).
-if [ -f "$HERE/skills/crucible/SKILL.md" ] \
-  && grep -q 'name: crucible' "$HERE/skills/crucible/SKILL.md" \
-  && grep -q '/crucible' "$HERE/skills/crucible/SKILL.md"; then
+SKILL_CRUCIBLE="$HERE/skills/crucible/SKILL.md"
+if [ -f "$SKILL_CRUCIBLE" ] \
+  && grep -q 'name: crucible' "$SKILL_CRUCIBLE" \
+  && grep -q '/crucible' "$SKILL_CRUCIBLE"; then
   ok
 else
   bad 'skills/crucible/SKILL.md must exist for /crucible outer loop'
+fi
+# Intake must name the live question tool per harness (Grok / Codex / Kiro CLI).
+if grep -q 'ask_user_question' "$SKILL_CRUCIBLE" \
+  && grep -q 'request_user_input' "$SKILL_CRUCIBLE" \
+  && grep -q 'Kiro CLI' "$SKILL_CRUCIBLE"; then
+  ok
+else
+  bad 'skills/crucible/SKILL.md must name ask_user_question, request_user_input, and Kiro CLI fallback'
 fi
 # 1.14 live walk source contract (no live CLIs).
 # 1.14.1: kiro probe/exec inherit HOST_HOME (keychain OIDC). Empty HOME hang
