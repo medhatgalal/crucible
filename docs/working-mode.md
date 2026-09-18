@@ -1,26 +1,148 @@
 # Working-mode (opt-in)
 
 On **1.16.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
-`wm.sh` unless `--working-mode`. Working-mode is a second runner (`wm.sh`) plus
-swap-out batteries. Overlay a judging battery under `.crucible/skills/<bat>/`
-to change FAIL cap or MAP-REVISE card (`## Send-back` TSV) without editing
-`wm.sh`. Brownfield `check-module-fit` / `map-ready` will not mkdir a new
-`src/<name>`, `packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md` and
-`ANSWERS.md` are both non-empty; greenfield still mkdir. `map-ready`
-requires `INTENT.md` headings `## User` / `## Job` / `## Non-goals`.
-Named `test_entrypoint` must exist; `wm green` extra-proof hides it and
-requires the FALSIFIER to fail. CLOSE writes `reviews/taste.md`. Live walk
-proceeds with one kind as `SUBAGENT-ISOLATED`; two kinds stay
-`CROSS-FAMILY`; zero is still `INDEPENDENCE_UNAVAILABLE`. Install with
-`crucible adopt PROGRAM --managed --working-mode`.
-Forgot the command: `.crucible/work/wm.sh` (no args) then `go [IDEA.md]`
-or `status`. Runtime is the target repo plus one harness CLI. Skills live
-in the repo (`.crucible/skills/` and harness views). There is no `$HOME`
-skill runtime.
+`wm.sh` unless `--working-mode`. This page is the how-to for a **user and an
+AI**. The harness card next to `wm.sh` is `WORKING-MODE.md` (short). Guided
+`cycle` / `drive` stay on [START.md](../START.md).
 
-From the **target repository root**, invoke `.crucible/<program>/wm.sh` (not a
-bare `wm` on `PATH`). After `adopt work --managed --working-mode`, `<program>`
-is `work`.
+## Two repos, two loops
+
+| | Engine | Product |
+| --- | --- | --- |
+| What | This Crucible source (`crucible`, `wm.sh`, batteries) | The git repository you want built |
+| Cwd | Only when changing Crucible itself | Always the **target repository root** |
+| Loop | Other bet / other worktree | Grok `/crucible` (outer) then `.crucible/<program>/wm.sh go` (inner) |
+
+Install **from** the engine tree **into** the product. Never adopt into the
+engine repo unless the intent is engine work — and then do not `go` a product.
+Engine work (fix `wm.sh`, change Crucible) is a different loop. Do not `go` a
+product as a way to patch the engine.
+
+Guided loop (default `adopt work --managed`): `cycle` / `drive`. Working-mode
+(`adopt work --managed --working-mode`): `/crucible` then `go`. Do not mix.
+
+After `adopt work --managed --working-mode`, `<program>` is `work`. Invoke
+`.crucible/<program>/wm.sh` from the target root (not a bare `wm` on `PATH`).
+Skills live in the repo (`.crucible/skills/` and harness views). There is no
+`$HOME` skill runtime.
+
+## Install or update
+
+Need a Crucible source `$SRC` (clone or release tarball). Cwd = **product**
+root. Full contract: [install.md](install.md).
+
+```sh
+"$SRC/crucible" adopt work --managed --working-mode
+"$SRC/crucible" adopt work --refresh --working-mode   # already installed; stop go first
+```
+
+`--refresh` refuses `src == dst`. Do not run it from `.crucible/work/crucible`.
+
+## Kick off (`/crucible` then `go`)
+
+**Outer loop** (Grok `/crucible`): ask intent one question at a time (new /
+brownfield / bug / continue / refresh / engine), adopt if `wm.sh` is missing,
+write `IDEA.md` from the job sentence, then launch `go`. The coordinator does
+not implement the product and does not judge PASS.
+
+**Inner loop** — from the target root:
+
+```sh
+.crucible/work/wm.sh            # help
+.crucible/work/wm.sh go         # or go [IDEA.md]
+.crucible/work/wm.sh status     # next card; writes .wm/FLOOR.md
+```
+
+Stay in the foreground. Do not background-wait. `go` discovers grok /
+kiro-cli / codex when the panel is empty, commits shape (`wm: shape`) before
+pre-falsify, and walks until `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or
+`ESCALATE`. Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo
+fixtures). One kind live walk is `SUBAGENT-ISOLATED`; two kinds is
+`CROSS-FAMILY`. Never fake CROSS-FAMILY. Mapper, maker, and reviewer must be
+distinct agents. `{BRIEF}` is quoted by the engine — do not wrap it in quotes
+in the command.
+
+Forgot the command? `.crucible/work/wm.sh` (help), then `go` or `status`.
+
+## Brakes (stop, hold, andon, red)
+
+If the user says **stop**, cancel, abort, **hold**, I'll drive, take the wheel,
+**andon**, **red**, red button, or don't implement: stop launching or kill the
+in-flight `go` process group, run `status`, report FLOOR, wait. Do not keep
+implementing.
+
+Live / destroy / push-main are STOP-ASK, not unattended.
+
+## STOP-ASK: MAP-HUMAN and QUESTIONS
+
+`STOP-ASK` means the walker stopped for a human file. Quote the card, write
+the file, then `go` again. Do not `git commit` to unstick `go`. Do not recast
+unless the card is `NEXT CAST`.
+
+| Card | What you do |
+| --- | --- |
+| QUESTIONS | Non-empty `QUESTIONS.md` without `ANSWERS.md`. Write `ANSWERS.md` or clear `QUESTIONS.md` |
+| MAP-HUMAN | Next READY slice is HIGH or `live_write=yes`. Write `MAP-HUMAN`, then `go` |
+| NEXT INTAKE | Write `IDEA.md` |
+| live / destroy / push-main | Stop |
+
+HIGH needs `MAP-HUMAN`. LOW local maps do not. Sign is **next-slice** /
+**next READY** scoped:
+
+```
+SIGNED: operator
+MAP: MAP.md
+SHA256: <sha256 of current MAP.md>
+```
+
+`SIGNED:` must be a human id — not mapper, maker, reviewer, parent,
+coordinator, or loop. `SHA256:` (or `MAP-SHA256:`) must match the current
+`MAP.md`; a rewrite after sign is not a sign.
+
+Brownfield `check-module-fit` / `map-ready` will not mkdir a new `src/<name>`,
+`packages/<name>`, or `cmd/<name>` unless `QUESTIONS.md` and `ANSWERS.md` are
+both non-empty; greenfield still mkdir.
+
+## Observability (FLOOR, TRACE, CLOSED, status)
+
+`go` and `status` write `.wm/FLOOR.md` and append `.wm/TRACE.tsv`. `status`
+prints the next card and does **not** increment FAIL retries.
+
+```sh
+.crucible/work/wm.sh status
+cat .wm/FLOOR.md
+cat .wm/TRACE.tsv
+cat .wm/CLOSED
+```
+
+**FLOOR.md** (current board):
+
+| Field | Meaning |
+| --- | --- |
+| `station:` | `SHAPE` `DESIGN` `BUILD` `INSPECT` `ANDON` `DONE` |
+| `card:` | Next verb (`NEXT RED`, `STOP-ASK QUESTIONS`, `CLOSED PASS`, …) |
+| `wip:` | In-flight slice id, or `-` |
+| `andon:` | The STOP-ASK / ESCALATE card, or `-` |
+| `independence:` | `CROSS-FAMILY` (two kinds) or `SUBAGENT-ISOLATED` (one kind) |
+| `evidence:` | `.wm/FALSIFIER`, `.wm/CLOSED`, `reviews/review.md`, `.wm/evidence/*` |
+
+**TRACE.tsv** columns `when`, `card`, `outcome` (tab-separated). `outcome` is
+the station. A healthy brick shows `NEXT RED` before `NEXT RUN maker-build`.
+Tail TRACE on `ESCALATE` / kernel `refused:`.
+
+**CLOSED** (work-level, first line): `CLOSED PASS` or `CLOSED NO-BUILD`, then
+`independence:`. Slice close is not work close — `.wm/CLOSED` stays only when
+no READY `slices.tsv` row remains.
+
+On **CLOSED PASS** / **CLOSED NO-BUILD**: show CLOSED, FLOOR,
+`git log -5 --oneline`, stop.
+On **STOP-ASK**: quote the card; name the file (`MAP-HUMAN`, `ANSWERS.md`,
+`IDEA.md`); wait; `go` again.
+On **ESCALATE**: show the exact line and TRACE tail. Do not patch `wm.sh`
+unless intent is engine.
+
+Overlay a judging battery under `.crucible/skills/<bat>/` to change FAIL cap
+or MAP-REVISE card (`## Send-back` TSV) without editing `wm.sh`.
 
 ## Quickstart
 
@@ -36,17 +158,6 @@ cd "$DST"
 printf '%s\n' "product/hello.txt contains exactly hello" > IDEA.md
 .crucible/work/wm.sh go
 ```
-
-In a Grok session, `/crucible` is the outer loop: it asks new work / brownfield /
-bug / continue / refresh, writes `IDEA.md` as needed, adopts if missing, then
-runs `go`. Brakes: stop, hold, andon, red. Engine patches are a different
-intent. Forgot the command? `.crucible/work/wm.sh` (help), then `go` or `status`.
-Runtime is `.crucible/work/wm.sh` from that target root (not a bare `wm` on `PATH`). Mapper, maker, and reviewer must be distinct agents.
-`{BRIEF}` is quoted by the engine — do not wrap it in quotes in the command.
-Stop on `CLOSED PASS`, `CLOSED NO-BUILD`, `STOP-ASK`, or `ESCALATE`. Do not
-background-wait. `go` discovers grok/kiro-cli/codex when the panel is empty.
-Zero CLIs is `INDEPENDENCE_UNAVAILABLE` (it will not invent echo fixtures).
-One kind live walk is `SUBAGENT-ISOLATED`; two kinds is `CROSS-FAMILY`.
 
 Advanced copy-paste (fixtures, HIGH sign, specifier+scout) stays below.
 

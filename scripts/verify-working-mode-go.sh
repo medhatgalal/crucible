@@ -154,7 +154,7 @@ else
   bad "no-args wanted run:/go/harness:, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 if grep -q 'working-mode' "$OUT" \
-  && grep -q 'commands: go status help' "$OUT" \
+  && grep -q 'commands: go status debrief help' "$OUT" \
   && grep -q 'harness: read WORKING-MODE.md then go' "$OUT"; then
   ok
 else
@@ -738,6 +738,27 @@ if [ -f "$s3in/.wm/TRACE.tsv" ] \
   ok
 else
   bad "S3 TRACE.tsv must exist with header, got $(cat "$s3in/.wm/TRACE.tsv" 2>/dev/null || echo ABSENT)"
+fi
+if grep -q 'FLOOR t=+' "$OUT" "$ERR"; then
+  ok
+else
+  bad "S3 go must print FLOOR t=+ elapsed, got out=$(cat "$OUT") err=$(cat "$ERR")"
+fi
+set +e
+(
+  CDPATH=
+  cd "$s3in"
+  PATH="$BIN:/usr/bin:/bin"
+  export PATH
+  "$WM" debrief
+) >"$OUT" 2>"$ERR"
+s3d_rc=$?
+set -e
+[ "$s3d_rc" -eq 0 ] && ok || bad "S3 debrief rc=$s3d_rc err=$(cat "$ERR")"
+if grep -q 'debrief' "$OUT" && grep -E -q 'INTAKE|ANDON|SHAPE' "$OUT"; then
+  ok
+else
+  bad "S3 debrief wanted FLOOR+TRACE, got $(cat "$OUT")"
 fi
 
 # S3: status writes FLOOR.md and does not invent a FAIL count.

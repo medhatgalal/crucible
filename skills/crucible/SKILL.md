@@ -59,8 +59,11 @@ Cwd **must** be the target root.
 .crucible/work/wm.sh go
 ```
 
-Stay in the foreground. Do not background-wait. Do not recast unless `go`
-says `NEXT CAST`. Do not `git commit` to unstick `go`.
+Stay with the walker, but **do not lock the chat**. `go` prints `FLOOR t=+Ns
+station=… card=… wip=…` on every card. After each ~20s of silence, print the
+latest FLOOR line or run `status`. Never wait minutes without showing FLOOR.
+Do not recast unless `go` says `NEXT CAST`. Do not `git commit` to unstick `go`.
+On CLOSE run `debrief` and show TRACE deltas.
 
 # After go starts
 
