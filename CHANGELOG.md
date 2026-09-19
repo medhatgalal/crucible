@@ -5,6 +5,15 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.16.3] - 2026-09-19
+
+### Honest FLOOR and red
+- Each `go` resets the FLOOR clock (`t0`). Resume after QUESTIONS is not +hours.
+- `MAP-REVISE` requires a reason line (not WORD/AGENT/MAP only). Empty kiro
+  revises no longer burn the cap or count as a real revise.
+- `red` refuses an empty `test_entrypoint` file (no `CLOSED NO-BUILD` on an
+  empty `page.test.tsx`). Planted `.ts`/`.tsx` stubs throw instead of empty.
+
 ## [1.16.2] - 2026-09-18
 
 ### Outer loop

@@ -1050,14 +1050,17 @@ mkdir -p tests architecture
 printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
   > architecture/modules.md
 printf 'foo\t.\tproduct.txt\ttests/te.py\tproduct.txt\tno\n' >> architecture/modules.md
-: > tests/te.py
+printf 'import sys\nsys.exit(1)\n' > tests/te.py
 write_loop_maker_pass
 write_loop_reviewer_pass
 "$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
 "$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
-run_wm_loop
-assert_loop_foreground 't-loop-commits-te'
-[ "$LOOP_RC" -eq 0 ] && ok || bad "te-shape loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
+# First loop tick commit_shape; do not wait LOOP_BOUND on a failing te.
+"$WM" loop >"$OUT" 2>"$ERR" &
+_te_pid=$!
+sleep 5
+kill "$_te_pid" 2>/dev/null || true
+wait "$_te_pid" 2>/dev/null || true
 git ls-files --error-unmatch tests/te.py >/dev/null 2>&1 \
   && ok || bad 'loop must commit planted test_entrypoint tests/te.py'
 
@@ -2803,6 +2806,18 @@ setup_repo t-q4-taut-true-trim
 write_taut_falsify '  true  '
 "$WM" cast maker alice grok './tools/taut-falsify.sh {BRIEF}' >/dev/null
 refuses 'tautological falsifier trimmed true' 'tautological falsifier' "$WM" run maker-falsify
+
+# Empty test_entrypoint cannot NO-BUILD (SaaS walk: empty page.test.tsx).
+setup_repo t-red-empty-te
+mkdir -p tests architecture
+printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
+  > architecture/modules.md
+printf 'foo\t.\tproduct.txt\ttests/te.py\tproduct.txt\tno\n' >> architecture/modules.md
+: > tests/te.py
+"$WM" record-pre-falsify >/dev/null
+write_falsifier 'test -f tests/te.py' alice
+commit_msg 'empty te falsifier'
+refuses 'empty test_entrypoint cannot red-succeed' 'test_entrypoint empty' "$WM" red
 
 # Q3: maker-build commit outside owned_paths refused.
 setup_repo t-q3-unowned-diff

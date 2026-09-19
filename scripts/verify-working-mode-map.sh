@@ -506,7 +506,12 @@ write_map_return() {
   _wmr_agent=${1:-bob}
   _wmr_word=${2:-MAP-ACCEPT}
   mkdir -p .wm/return
-  printf 'WORD: %s\nAGENT: %s\nMAP: MAP.md\n' "$_wmr_word" "$_wmr_agent" > ".wm/return/${_wmr_agent}.md"
+  if [ "$_wmr_word" = MAP-REVISE ]; then
+    printf 'WORD: %s\nAGENT: %s\nMAP: MAP.md\nREASON: slice owned_paths omit the falsifier file\n' \
+      "$_wmr_word" "$_wmr_agent" > ".wm/return/${_wmr_agent}.md"
+  else
+    printf 'WORD: %s\nAGENT: %s\nMAP: MAP.md\n' "$_wmr_word" "$_wmr_agent" > ".wm/return/${_wmr_agent}.md"
+  fi
 }
 
 cast_brick_panel() {
@@ -739,8 +744,11 @@ printf 'WORD: PASS\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
 refuses 'map word PASS refused' 'refused:' "$WM" check-map-word .wm/return/bob.md
 printf 'WORD: MAP-ACCEPT\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
 impl_ok 'map word MAP-ACCEPT from distinct critique' "$WM" check-map-word .wm/return/bob.md || true
-printf 'WORD: MAP-REVISE\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
+printf 'WORD: MAP-REVISE\nAGENT: bob\nMAP: MAP.md\nREASON: owned_paths omit tests\n' > .wm/return/bob.md
 impl_ok 'map word MAP-REVISE from distinct critique' "$WM" check-map-word .wm/return/bob.md || true
+printf 'WORD: MAP-REVISE\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob-empty.md
+refuses 'MAP-REVISE without reason' 'MAP-REVISE missing reason' \
+  "$WM" check-map-word .wm/return/bob-empty.md
 printf 'WORD: MAP-STOP-ASK\nAGENT: bob\nMAP: MAP.md\n' > .wm/return/bob.md
 impl_ok 'map word MAP-STOP-ASK from distinct critique' "$WM" check-map-word .wm/return/bob.md || true
 
@@ -1564,7 +1572,7 @@ if [ -n "${BRIEF:-}" ] && [ -f "$BRIEF" ]; then
   [ -n "$a" ] && agent=$a
 fi
 mkdir -p .wm/return
-printf 'WORD: MAP-REVISE\nAGENT: %s\nMAP: MAP.md\n' "$agent" > ".wm/return/${agent}.md"
+printf 'WORD: MAP-REVISE\nAGENT: %s\nMAP: MAP.md\nREASON: owned_paths omit the test file\n' "$agent" > ".wm/return/${agent}.md"
 EOF
 chmod +x tools/specifier-revise.sh tools/scout-always-revise.sh
 "$WM" cast specifier eve grok './tools/specifier-revise.sh {BRIEF}' >/dev/null

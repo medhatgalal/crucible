@@ -1105,7 +1105,7 @@ write_brief() {
       scout)
         _wb_mw=$(map_word_recorded)
         if [ -f MAP.md ] && { [ -z "$_wb_mw" ] || [ "$_wb_mw" = MAP-REVISE ]; }; then
-          printf 'Write .wm/return/%s.md with WORD: MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK (not authored by the mapper) plus MAP: MAP.md.\n' "$_wb_agent"
+          printf 'Write .wm/return/%s.md with WORD: MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK (not authored by the mapper), MAP: MAP.md, and if MAP-REVISE a REASON: line (one sentence). Empty MAP-REVISE is invalid.\n' "$_wb_agent"
         else
           printf 'Write .wm/return/%s.md with WORD: NO-BUILD if the capability already exists, plus EVIDENCE:.\n' "$_wb_agent"
         fi
@@ -1980,8 +1980,11 @@ EOF
             *.py)
               printf 'import sys\nsys.exit(1)\n' > "$_cm_te"
               ;;
+            *.ts|*.tsx|*.js|*.jsx)
+              printf 'throw new Error("red")\n' > "$_cm_te"
+              ;;
             *)
-              : > "$_cm_te"
+              printf 'RED\n' > "$_cm_te"
               ;;
           esac
           ;;
@@ -2033,6 +2036,19 @@ cmd_check_map_word() {
     MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK) ;;
     *) die "map words are MAP-ACCEPT|MAP-REVISE|MAP-STOP-ASK (not CLOSED PASS)" ;;
   esac
+  if [ "$_mw_word" = MAP-REVISE ]; then
+    if ! awk '
+      BEGIN { IGNORECASE = 1 }
+      /^[[:space:]]*$/ { next }
+      /^WORD:/ { next }
+      /^AGENT:/ { next }
+      /^MAP:/ { next }
+      { found = 1; exit }
+      END { exit found ? 0 : 1 }
+    ' "$_mw_file"; then
+      die "MAP-REVISE missing reason"
+    fi
+  fi
   _mw_who=$(kv_get "$_mw_file" AGENT)
   if [ -z "$_mw_who" ]; then
     _mw_who=$(basename "$_mw_file" .md)
@@ -2139,6 +2155,15 @@ cmd_red() {
     die "early implement"
   fi
   file_sha256 "$WM/FALSIFIER" > "$WM/FALSIFIER.sha256"
+  _rd_te=
+  while IFS= read -r _rd_te || [ -n "$_rd_te" ]; do
+    [ -n "$_rd_te" ] || continue
+    if [ -f "$_rd_te" ] && [ ! -s "$_rd_te" ]; then
+      die "test_entrypoint empty"
+    fi
+  done <<EOF
+$(list_module_test_entrypoints)
+EOF
   set +e
   sh -c "$_rd_fals" > "$WM/red.out" 2>&1
   _rd_st=$?
