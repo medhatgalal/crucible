@@ -10,7 +10,7 @@ Do not mix guided `drive` or `cycle` with this runner. Engine work (fix
 
 ## Start
 
-1. Read this file. In Grok, `/crucible` is intake; then this runner takes over.
+1. Read this file. `/crucible` (Grok, Kiro CLI, or Codex) is intake; then this runner takes over.
 2. Run `.crucible/work/wm.sh` (no args), then `go` (or `status`).
 3. Stay in the foreground. Do not background the walker.
 

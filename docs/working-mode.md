@@ -11,7 +11,7 @@ AI**. The harness card next to `wm.sh` is `WORKING-MODE.md` (short). Guided
 | --- | --- | --- |
 | What | This Crucible source (`crucible`, `wm.sh`, batteries) | The git repository you want built |
 | Cwd | Only when changing Crucible itself | Always the **target repository root** |
-| Loop | Other bet / other worktree | Grok `/crucible` (outer) then `.crucible/<program>/wm.sh go` (inner) |
+| Loop | Other bet / other worktree | `/crucible` on Grok, Kiro CLI, or Codex (outer) then `.crucible/<program>/wm.sh go` (inner) |
 
 Install **from** the engine tree **into** the product. Never adopt into the
 engine repo unless the intent is engine work — and then do not `go` a product.
@@ -40,10 +40,12 @@ root. Full contract: [install.md](install.md).
 
 ## Kick off (`/crucible` then `go`)
 
-**Outer loop** (Grok `/crucible`): ask intent one question at a time (new /
-brownfield / bug / continue / refresh / engine), adopt if `wm.sh` is missing,
-write `IDEA.md` from the job sentence, then launch `go`. The coordinator does
-not implement the product and does not judge PASS.
+**Outer loop** (`/crucible` on Grok, Kiro CLI, or Codex): ask missing facts
+one at a time through the harness question tool (Grok `ask_user_question`,
+Codex `request_user_input`; Kiro CLI has none — numbered chat). Intent is
+new / brownfield / bug / continue / refresh / engine. Adopt if `wm.sh` is
+missing, write `IDEA.md` from the job sentence, then launch `go`. The
+coordinator does not implement the product and does not judge PASS.
 
 **Inner loop** — from the target root:
 
