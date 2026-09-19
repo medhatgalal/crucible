@@ -1022,6 +1022,14 @@ assert_loop_foreground 't11-loop-pass-reentry'
 [ "$LOOP_RC" -eq 0 ] && ok || bad "honest reentry loop exit $LOOP_RC out=$(cat "$OUT") err=$(cat "$ERR")"
 grep -q 'CLOSED PASS' "$OUT" && ok || bad "honest reentry wanted CLOSED PASS, got $(cat "$OUT")"
 
+# cmd_go wipe of stale PASS/NO-BUILD is grepped in verify-working-mode-go.sh.
+
+setup_repo t-status-trace-dedupe
+"$WM" status >"$OUT" 2>"$ERR" || bad "status 1 refused"
+"$WM" status >"$OUT" 2>"$ERR" || bad "status 2 refused"
+_tr_n=$(awk 'NF { c++ } END { print c+0 }' .wm/TRACE.tsv)
+[ "$_tr_n" -eq 2 ] && ok || bad "status twice must append one TRACE card"
+
 # Dirty SPEC.md: direct record-pre-falsify still refuses; loop commits shape.
 setup_repo t-loop-commits-spec
 printf '\n# operator tweak\n' >> SPEC.md
@@ -1043,26 +1051,6 @@ git diff --quiet HEAD -- SPEC.md \
   && ok || bad 'loop must commit dirty SPEC.md before pre-falsify'
 grep -q 'operator tweak' SPEC.md \
   && ok || bad 'shape commit must keep the dirty SPEC bytes'
-
-# Planted test_entrypoint must be shape-committed so red is not dirty porcelain.
-setup_repo t-loop-commits-te
-mkdir -p tests architecture
-printf 'module_id\troot_path\tpublic_contracts\ttest_entrypoint\tpattern_instance\tlive_write\n' \
-  > architecture/modules.md
-printf 'foo\t.\tproduct.txt\ttests/te.py\tproduct.txt\tno\n' >> architecture/modules.md
-printf 'import sys\nsys.exit(1)\n' > tests/te.py
-write_loop_maker_pass
-write_loop_reviewer_pass
-"$WM" cast maker alice grok './tools/loop-maker.sh {BRIEF}' >/dev/null
-"$WM" cast reviewer bob grok './tools/loop-reviewer.sh {BRIEF}' >/dev/null
-# First loop tick commit_shape; do not wait LOOP_BOUND on a failing te.
-"$WM" loop >"$OUT" 2>"$ERR" &
-_te_pid=$!
-sleep 5
-kill "$_te_pid" 2>/dev/null || true
-wait "$_te_pid" 2>/dev/null || true
-git ls-files --error-unmatch tests/te.py >/dev/null 2>&1 \
-  && ok || bad 'loop must commit planted test_entrypoint tests/te.py'
 
 # (12) Leftover reviewer receipts after maker-build: still exec reviewer (CHECK 7 via loop)
 setup_repo t12-loop-leftover

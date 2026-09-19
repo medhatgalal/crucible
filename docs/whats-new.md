@@ -4,6 +4,12 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.16.4 — continue does not skip brick
+
+`go` clears closeable PASS/NO-BUILD receipts only when CLOSED is missing
+(so continue cannot skip brick). STOP-ASK resume keeps in-flight receipts.
+`go` resets TRACE; duplicate consecutive FLOOR cards are skipped.
+
 ## 1.16.3 — honest FLOOR clock, MAP-REVISE reason, empty te
 
 `go` resets `t=+`. Empty MAP-REVISE is invalid. Empty test files cannot NO-BUILD.

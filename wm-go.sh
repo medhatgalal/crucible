@@ -124,6 +124,15 @@ cmd_go() {
   fi
   ensure_wm
   date +%s > "$WM/t0"
+  printf 'when\tcard\toutcome\n' > "$WM/TRACE.tsv"
+  # Closeable PASS/NO-BUILD without CLOSED is NEXT CLOSE (skips brick).
+  # Resume after STOP-ASK is also unclosed; do not wipe those receipts.
+  if [ ! -f "$WM/CLOSED" ] && live_is_pass_or_nobuild; then
+    rm -f "$WM/verdicts/"* "$WM/evidence/"* \
+      "$WM/red.status" "$WM/green.status" \
+      "$WM/red.out" "$WM/green.out" \
+      "$WM/built.status" "$WM/built.reason"
+  fi
   if [ "$_go_next" -eq 1 ]; then
     go_consume_backlog
   elif [ -n "$_go_idea" ]; then

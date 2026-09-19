@@ -5,6 +5,16 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.16.4] - 2026-09-19
+
+### Continue walk
+- `go` clears closeable PASS/NO-BUILD inspect receipts (verdicts, evidence,
+  red/green/built) only when CLOSED is missing, so continue cannot skip brick.
+  Resume after STOP-ASK keeps in-flight receipts.
+- `go` rewrites TRACE.tsv (debrief is this run only).
+- TRACE does not append a duplicate consecutive card.
+- `debrief` prints space-separated columns.
+
 ## [1.16.3] - 2026-09-19
 
 ### Honest FLOOR and red
