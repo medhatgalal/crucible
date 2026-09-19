@@ -4,6 +4,8 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.16.2 — harness question tools
+
 `/crucible` intake uses the harness question tool: Grok `ask_user_question`,
 Codex `request_user_input`, Kiro CLI numbered chat (no built-in ask-user tool).
 

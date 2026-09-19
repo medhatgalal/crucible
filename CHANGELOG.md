@@ -5,6 +5,8 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.16.2] - 2026-09-18
+
 ### Outer loop
 - `/crucible` intake uses the harness question tool for every missing fact
   (forks and free text): Grok `ask_user_question`, Codex `request_user_input`,
