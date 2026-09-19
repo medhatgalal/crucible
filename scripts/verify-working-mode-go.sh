@@ -72,6 +72,12 @@ else
   bad 'wm-go.sh grok discover must use --always-approve --prompt-file {BRIEF}'
 fi
 
+if grep -q 'TRACE.tsv' "$HERE/wm-go.sh" \
+  && grep -q 'live_is_pass_or_nobuild' "$HERE/wm-go.sh"; then
+  ok
+else
+  bad 'wm-go.sh go must reset TRACE and clear closeable inspect only when CLOSED is missing'
+fi
 # Outer-loop /crucible battery (parent agent; not a judging station).
 SKILL_CRUCIBLE="$HERE/skills/crucible/SKILL.md"
 if [ -f "$SKILL_CRUCIBLE" ] \

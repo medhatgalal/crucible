@@ -2709,7 +2709,13 @@ floor_write() {
   fi
   _fw_card_t=$(printf '%s' "$_fw_card" | tr '\t\n' '  ')
   _fw_st_t=$(printf '%s' "$_fw_st" | tr '\t\n' '  ')
-  printf '%s\t%s\t%s\n' "$(iso_now)" "$_fw_card_t" "$_fw_st_t" >> "$WM/TRACE.tsv"
+  _fw_last=
+  if [ -f "$WM/TRACE.tsv" ]; then
+    _fw_last=$(awk -F '\t' 'NF>=2 { c=$2 } END { print c }' "$WM/TRACE.tsv")
+  fi
+  if [ "$_fw_last" != "$_fw_card_t" ]; then
+    printf '%s\t%s\t%s\n' "$(iso_now)" "$_fw_card_t" "$_fw_st_t" >> "$WM/TRACE.tsv"
+  fi
   say "FLOOR t=+${_fw_el}s station=${_fw_st} card=${_fw_card} wip=${_fw_wip}"
 }
 
@@ -2732,7 +2738,7 @@ from datetime import datetime, timezone
 path = sys.argv[1]
 prev = None
 t0 = None
-print("when\tdelta_s\ttotal_s\tcard\tstation")
+print("when  delta_s  total_s  card  station")
 with open(path, encoding="utf-8") as f:
     next(f, None)
     for line in f:
@@ -2747,7 +2753,7 @@ with open(path, encoding="utf-8") as f:
             t0 = t
         delta = 0 if prev is None else int((t - prev).total_seconds())
         total = int((t - t0).total_seconds())
-        print("%s\t%d\t%d\t%s\t%s" % (parts[0], delta, total, parts[1], parts[2]))
+        print("%s  %d  %d  %s  %s" % (parts[0], delta, total, parts[1], parts[2]))
         prev = t
 PY
   else

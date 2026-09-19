@@ -23,7 +23,7 @@ Non-empty `QUESTIONS.md` without `ANSWERS.md` is `STOP-ASK QUESTIONS`.
 `go` discovers `grok` / `kiro-cli` / `codex` when the panel is empty
 and walks until `CLOSED`, `STOP-ASK`, or `ESCALATE`. It commits shape
 (`wm: shape`) before pre-falsify; MAP-REVISE cap 2 then `ESCALATE MAP_REVISE`.
-`go` and `status` write `.wm/FLOOR.md` and `.wm/TRACE.tsv`; close writes `.wm/CLOSED`. `status` does not increment FAIL retries.
+`go` rewrites `.wm/TRACE.tsv` (this run) and writes `.wm/FLOOR.md`; `status` appends TRACE. Close writes `.wm/CLOSED`. `status` does not increment FAIL retries. Closeable inspect without CLOSED is cleared so continue cannot skip brick; STOP-ASK resume keeps receipts.
 
 Specifier SPEC pass writes `INTENT.md` (`## User` `## Job` `## Non-goals`).
 `map-ready` dies if those headings are missing. Reviewer PASS does not require it.

@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.16.3**, default adopt is still the guided cycle (1.6.6 **layout**): no
+On **1.16.4**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. This page is the how-to for a **user and an
 AI**. The harness card next to `wm.sh` is `WORKING-MODE.md` (short). Guided
 `cycle` / `drive` stay on [START.md](../START.md).
@@ -107,8 +107,14 @@ both non-empty; greenfield still mkdir.
 
 ## Observability (FLOOR, TRACE, CLOSED, status)
 
-`go` and `status` write `.wm/FLOOR.md` and append `.wm/TRACE.tsv`. `status`
-prints the next card and does **not** increment FAIL retries.
+`go` rewrites `.wm/TRACE.tsv` (this run only) and writes `.wm/FLOOR.md`.
+`status` writes `.wm/FLOOR.md` and appends TRACE; consecutive identical
+cards are not repeated. `status` prints the next card and does **not**
+increment FAIL retries.
+
+If `CLOSED` is missing but a closeable PASS/NO-BUILD verdict is still
+live, `go` clears those inspect receipts (verdicts, evidence, red/green/built)
+so continue cannot skip brick. In-flight receipts after `STOP-ASK` stay.
 
 ```sh
 .crucible/work/wm.sh status

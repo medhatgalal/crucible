@@ -1,6 +1,6 @@
 #!/bin/sh
 # 13b: harness adapters + blank-HOME tarball adopt + 3-slice fixture walk.
-# Falsifier-first: RED when adapters/docs/VERSION 1.16.3 pin are absent.
+# Falsifier-first: RED when adapters/docs/VERSION 1.16.4 pin are absent.
 # Fixture echo/python stubs only. Live grok/kiro-cli/codex are not invoked.
 # If none of those CLIs are on PATH: record INDEPENDENCE_UNAVAILABLE
 # (not a fixture fail). Claude Code is not required.
@@ -23,8 +23,13 @@ if [ ! -f "$HERE/adapters/grok.md" ] \
 fi
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
-if [ "$VERSION" != 1.16.3 ]; then
-  printf 'RED VERSION is %s, want 1.16.3\n' "$VERSION" >&2
+if [ "$VERSION" != 1.16.4 ]; then
+  printf 'RED VERSION is %s, want 1.16.4\n' "$VERSION" >&2
+  exit 1
+fi
+
+if ! grep -q '^## \[1.16.4\] - 2026-09-19$' "$HERE/CHANGELOG.md"; then
+  printf 'RED CHANGELOG.md missing ## [1.16.4] - 2026-09-19\n' >&2
   exit 1
 fi
 
@@ -236,7 +241,7 @@ run_adopt() {
   ( CDPATH=; cd "$dir" && "$@" >"$OUT" 2>"$ERR" )
 }
 
-# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.16.3).
+# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.16.4).
 PKG_OUT="$BASE/pkg"
 mkdir -p "$PKG_OUT"
 if "$HERE/scripts/package-release.sh" "$VERSION" HEAD "$PKG_OUT" >"$OUT" 2>"$ERR"; then
@@ -321,8 +326,8 @@ if [ -n "$EXTRACT" ]; then
   [ -f "$AD/.crucible/.claude/skills/architecture/SKILL.md" ] && ok || bad 'nested claude view missing'
   [ -f "$AD/.crucible/.agents/skills/architecture/SKILL.md" ] && ok || bad 'nested agents view missing'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
-    grep -q '^version: 1.16.3$' "$AD/.crucible/work/ENGINE-SOURCE" \
-      && ok || bad 'ENGINE-SOURCE version is not 1.16.3'
+    grep -q '^version: 1.16.4$' "$AD/.crucible/work/ENGINE-SOURCE" \
+      && ok || bad 'ENGINE-SOURCE version is not 1.16.4'
   else
     bad 'ENGINE-SOURCE missing after working-mode adopt'
   fi
