@@ -47,9 +47,11 @@ inferred default as `(Recommended)` when you have one (cwd git root,
    - New work (empty or new repo)
    - Brownfield feature (existing repo)
    - Bug fix (existing repo)
-   - Continue a walk (`status` / `go` again)
+   - Continue a walk (`status` / `go` again on a **product** tree after
+     engine refresh). Not how you fix wm.sh.
    - Update/refresh Crucible in this repo
-   - Improve the Crucible **engine** (stop; other loop)
+   - Improve the Crucible **engine** (worktree on the Crucible source; then
+     refresh the product and Continue walk)
 
 2. **Where** — target git root. Default: current workspace if it is a git repo.
    Never adopt into the Crucible engine repo unless intent is engine (and then don't `go` a product).

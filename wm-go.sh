@@ -122,6 +122,8 @@ cmd_go() {
   if [ ! -x "$WM/bin/wm" ]; then
     cmd_init
   fi
+  ensure_wm
+  date +%s > "$WM/t0"
   if [ "$_go_next" -eq 1 ]; then
     go_consume_backlog
   elif [ -n "$_go_idea" ]; then

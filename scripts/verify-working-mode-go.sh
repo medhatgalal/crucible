@@ -753,6 +753,11 @@ if grep -q 'FLOOR t=+' "$OUT" "$ERR"; then
 else
   bad "S3 go must print FLOOR t=+ elapsed, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
+if grep -E -q 'FLOOR t=\+[0-9]{7,}' "$OUT" "$ERR"; then
+  bad "S3 go FLOOR elapsed must reset t0 (huge t=+), got $(grep FLOOR "$OUT" "$ERR")"
+else
+  ok
+fi
 set +e
 (
   CDPATH=

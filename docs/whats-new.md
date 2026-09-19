@@ -4,6 +4,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.16.3 — honest FLOOR clock, MAP-REVISE reason, empty te
+
+`go` resets `t=+`. Empty MAP-REVISE is invalid. Empty test files cannot NO-BUILD.
+
 ## 1.16.2 — harness question tools
 
 `/crucible` intake uses the harness question tool: Grok `ask_user_question`,
