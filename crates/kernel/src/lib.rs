@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. No HTTP. No Herdr / Grok / EngOS types.
 
 mod error;
 mod events;
@@ -9,6 +9,7 @@ mod metrics;
 mod paths;
 mod station;
 mod trace;
+mod worktree;
 
 pub use error::KernelError;
 pub use events::{append_event, read_events};
@@ -18,6 +19,7 @@ pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
+pub use worktree::mint_worktree;
 
 pub use crucible_contract::{
     format_rfc3339_z, parse_rfc3339_z, Clock, Event, EventKind, FixedClock, SystemClock,
@@ -29,6 +31,7 @@ mod tests {
     use crucible_contract::WalkSnapshot;
     use std::fs;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -672,5 +675,108 @@ mod tests {
             !wt.join(".wm").exists(),
             "EVENTS belong on the repo .wm, not a worktree .wm"
         );
+    }
+
+    fn require_git() {
+        let ok = Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(
+            ok,
+            "git is required for worktree tests (do not ignore; mint uses git worktree add)"
+        );
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        require_git();
+        let o = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "crucible")
+            .env("GIT_AUTHOR_EMAIL", "crucible@example.test")
+            .env("GIT_COMMITTER_NAME", "crucible")
+            .env("GIT_COMMITTER_EMAIL", "crucible@example.test")
+            .output()
+            .expect("spawn git");
+        assert!(
+            o.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+
+    fn init_git_product(dir: &Path) {
+        require_git();
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "user.name", "crucible"]);
+        git(dir, &["config", "user.email", "crucible@example.test"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+        fs::write(dir.join(".gitignore"), ".wm/\n").unwrap();
+        fs::write(dir.join("README"), "product\n").unwrap();
+        git(dir, &["add", ".gitignore", "README"]);
+        git(dir, &["commit", "-qm", "init"]);
+    }
+
+    #[test]
+    fn mint_worktree_under_wm_run_true_events_on_repo() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let wt = mint_worktree(tmp.path(), "s1").unwrap();
+        assert_eq!(wt, tmp.wm().join("worktrees").join("s1"));
+        assert!(wt.exists(), "worktree path must exist: {}", wt.display());
+        assert!(
+            wt.join(".git").is_file(),
+            "git worktree has a .git file; a clone --local would be a .git directory"
+        );
+        let list = Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(tmp.path())
+            .output()
+            .expect("git worktree list");
+        assert!(list.status.success());
+        let list = String::from_utf8_lossy(&list.stdout);
+        assert!(
+            list.contains("worktrees/s1"),
+            "git worktree list must contain worktrees/s1 (not a detached clone): {list}"
+        );
+
+        let r = run(
+            tmp.path(),
+            &wt,
+            posix_tool("true"),
+            &[],
+            "sess-mint",
+            "NEXT RUN maker-build",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1, "one invoke_end on the repo .wm: {ev:?}");
+        assert_eq!(ev[0].kind, EventKind::InvokeEnd);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-mint"));
+        assert_eq!(ev[0].exit, Some(0));
+        assert!(tmp.wm().join("EVENTS").is_file());
+        assert!(
+            !wt.join(".wm").exists(),
+            "EVENTS stay on the parent repo .wm, not in the worktree"
+        );
+        assert!(
+            !wt.join(".wm").join("EVENTS").exists(),
+            "worktree must not grow its own EVENTS file"
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 1);
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "this slice has no panel; isolation stays SUBAGENT-ISOLATED: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
     }
 }
