@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -8,6 +8,7 @@ mod go;
 mod invoke;
 mod metrics;
 mod paths;
+mod questions;
 mod red;
 mod station;
 mod trace;
@@ -20,6 +21,7 @@ pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
+pub use questions::{stop_ask_questions, StopAskQuestions};
 pub use red::{next_red, next_red_with, NextRed, NextRedOpts};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
@@ -1385,5 +1387,117 @@ mod tests {
         );
         assert!(!tmp.wm().join("CLOSED").exists());
         assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn stop_ask_questions_missing_or_empty_answers_floor_halt_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(r.stop);
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK QUESTIONS");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("andon: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to next card: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let cols: Vec<&str> = metrics.lines().nth(1).unwrap().split('\t').collect();
+        assert_eq!(cols[1], "STOP-ASK QUESTIONS");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("STOP-ASK QUESTIONS")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(
+            !tmp.path().join("ANSWERS.md").exists(),
+            "kernel must not invent ANSWERS.md"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        fs::write(tmp.path().join("ANSWERS.md"), "").unwrap();
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(
+            r.stop,
+            "zero-byte ANSWERS.md is POSIX ! -s, same as missing"
+        );
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK QUESTIONS");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            "",
+            "must not invent answers into an empty ANSWERS.md"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn stop_ask_questions_present_line_continues_without_inventing() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let answers = "A local hello file is enough.\n";
+        fs::write(tmp.path().join("ANSWERS.md"), answers).unwrap();
+
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(!r.stop, "non-empty ANSWERS.md is not STOP-ASK QUESTIONS");
+        assert_eq!(r.exit, 0);
+
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "continue must not floor_write STOP-ASK QUESTIONS"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "continue must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "present ANSWERS is not a halt: {ev:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            answers,
+            "kernel must not invent or rewrite answers"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
     }
 }
