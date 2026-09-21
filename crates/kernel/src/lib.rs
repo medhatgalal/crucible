@@ -587,6 +587,106 @@ mod tests {
     }
 
     #[test]
+    fn go_questions_need_ask_beats_injected_red_program() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "QUESTIONS must win over CRUCIBLE_RED_PROGRAM: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert!(
+            r.stdout.contains("STOP-ASK QUESTIONS"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to NEXT RED when QUESTIONS need ask: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "next_red must not mint a worktree when QUESTIONS need ask: {}",
+            wt.display()
+        );
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "injected red program must not write FALSIFIER before STOP-ASK QUESTIONS"
+        );
+        assert!(
+            !wt.join("marker").exists(),
+            "injected red program must not run (no worktree marker)"
+        );
+        assert!(!tmp.path().join("marker").exists());
+        assert!(!tmp.path().join("ANSWERS.md").exists());
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt
+                    && e.card.as_deref() == Some("STOP-ASK QUESTIONS")),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::InvokeEnd),
+            "next_red must not invoke when QUESTIONS need ask: {ev:?}"
+        );
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Card && e.card.as_deref() == Some("NEXT RED")),
+            "no NEXT RED card when QUESTIONS need ask: {ev:?}"
+        );
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        fs::write(tmp.path().join("ANSWERS.md"), "").unwrap();
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "zero-byte ANSWERS.md is POSIX ! -s; QUESTIONS still beats red env"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            "",
+            "must not invent answers"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(
+            !tmp.wm().join("worktrees").join("s1").join(".git").is_file(),
+            "empty ANSWERS must not reach next_red"
+        );
+        assert!(!tmp.wm().join("FALSIFIER").is_file());
+    }
+
+    #[test]
     fn go_idea_env_red_program_floor_next_red_build() {
         let _lock = lock_red_env();
         let tmp = Tmp::new();

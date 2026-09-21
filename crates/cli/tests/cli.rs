@@ -421,6 +421,55 @@ fn go_idea_questions_without_answers_stop_ask() {
 }
 
 #[test]
+fn go_questions_need_ask_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    fs::write(tmp.root.join("QUESTIONS.md"), "What should we build?\n").unwrap();
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "QUESTIONS must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK QUESTIONS"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT "),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when QUESTIONS need ask"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(!tmp.root.join("ANSWERS.md").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
 fn go_idea_env_red_program_floor_next_red_build() {
     let tmp = Tmp::new();
     init_git_product(&tmp.root);
