@@ -32,3 +32,9 @@ decisions/
 
 # reproducible release output; published assets are not source
 dist/
+
+# design WIP; landed decisions live in architecture/adr/
+architecture/wip/
+
+# Rust workspace build
+target/

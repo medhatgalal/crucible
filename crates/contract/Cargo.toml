@@ -1,0 +1,11 @@
+[package]
+name = "crucible-contract"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "crucible.walk/v1 and crucible.stats/v1 file parsers"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
