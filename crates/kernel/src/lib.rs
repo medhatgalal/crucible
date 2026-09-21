@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. `go` wires QUESTIONS then injected `next_red` (no grok, no auto-close). No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. `go` wires QUESTIONS then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -747,6 +747,91 @@ mod tests {
             !ev.iter().any(|e| e.kind == EventKind::Halt),
             "one-card NEXT RED must not halt/close: {ev:?}"
         );
+    }
+
+    #[test]
+    fn go_second_brick_does_not_floor_next_red_from_leftover_falsifier() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        // First child writes product .wm/FALSIFIER; second child writes none.
+        // A leftover FALSIFIER (or reused live s1) must not floor NEXT RED.
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some(
+                "-c\nif [ -f .wm/red-once ]; then pwd > marker2; else echo FAIL > .wm/FALSIFIER; echo 1 > .wm/red-once; pwd > marker; fi",
+            ),
+        );
+
+        let first = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            first.exit, 0,
+            "first go still NEXT RED when child writes FALSIFIER: stderr={:?} stdout={:?}",
+            first.stderr, first.stdout
+        );
+        assert!(
+            first.stdout.contains("NEXT RED"),
+            "first go stdout={:?} stderr={:?}",
+            first.stdout,
+            first.stderr
+        );
+        let floor1 = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor1.contains("card: NEXT RED\n"), "{floor1}");
+        assert!(floor1.contains("station: BUILD\n"), "{floor1}");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk after first go"
+        );
+
+        let second = go(tmp.path(), &clock()).unwrap();
+        let floor2 = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            !floor2.contains("card: NEXT RED\n"),
+            "second go must not floor NEXT RED from leftover FALSIFIER: {floor2}"
+        );
+        assert!(
+            !floor2.contains("station: BUILD\n"),
+            "second go must not floor BUILD from leftover FALSIFIER: {floor2}"
+        );
+        assert!(
+            floor2.contains("station: ANDON\n"),
+            "missing FALSIFIER this brick is ANDON: {floor2}"
+        );
+        assert!(
+            second.stdout.contains("STOP-ASK red refused"),
+            "POSIX missing-falsifier path: stdout={:?} stderr={:?} floor={floor2}",
+            second.stdout,
+            second.stderr
+        );
+        assert!(floor2.contains("card: STOP-ASK red refused\n"), "{floor2}");
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "second child writes no FALSIFIER; leftover must not remain as this run's success"
+        );
+        assert!(
+            !wt.join("marker").is_file(),
+            "next brick must not reuse a live s1 worktree (first child's marker would remain): {}",
+            wt.display()
+        );
+        let marker2 = wt.join("marker2");
+        assert!(
+            marker2.is_file(),
+            "second child must run in a minted cwd: {}",
+            wt.display()
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
     }
 
     #[test]
