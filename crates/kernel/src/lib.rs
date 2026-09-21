@@ -3,6 +3,7 @@
 mod error;
 mod events;
 mod floor;
+mod metrics;
 mod paths;
 mod station;
 mod trace;
@@ -10,6 +11,7 @@ mod trace;
 pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
+pub use metrics::{metrics_append, METRICS_HEADER};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
 
@@ -223,6 +225,10 @@ mod tests {
             fs::read_to_string(tmp.wm().join("t0")).unwrap().trim(),
             &(t0() + 12).to_string()
         );
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1, "archive then walk_start; no extra events");
+        assert_eq!(ev[0].kind, EventKind::WalkStart);
+        assert_eq!(ev[0].t0, Some(t0() + 12));
     }
 
     #[test]
@@ -249,25 +255,22 @@ mod tests {
     }
 
     #[test]
-    fn events_jsonl_appends_all_walker_kinds() {
+    fn events_jsonl_appends_design_wal_kinds() {
         let tmp = Tmp::new();
         let t = format_rfc3339_z(t0() + 12);
         append_event(tmp.path(), &Event::walk_start(&t, t0() + 12)).unwrap();
         append_event(tmp.path(), &Event::card(&t, "NEXT RED", "BUILD")).unwrap();
         append_event(
             tmp.path(),
-            &Event::dispatch(&t, "NEXT RUN maker-build", "sess-1"),
+            &Event::invoke_end(&t, "NEXT RUN maker-build", "sess-1", 7, 0),
         )
         .unwrap();
+        append_event(tmp.path(), &Event::halt(&t, "STOP-ASK QUESTIONS", 90, 3)).unwrap();
+        append_event(tmp.path(), &Event::halt(&t, "ESCALATE BOUND", 90, 3)).unwrap();
+        append_event(tmp.path(), &Event::halt(&t, "CLOSED PASS", 90, 3)).unwrap();
         append_event(
             tmp.path(),
-            &Event::stop_ask(&t, "STOP-ASK QUESTIONS", 90, 3),
-        )
-        .unwrap();
-        append_event(tmp.path(), &Event::escalate(&t, "ESCALATE BOUND", 90, 3)).unwrap();
-        append_event(
-            tmp.path(),
-            &Event::closed(&t, "CLOSED PASS", "SUBAGENT-ISOLATED", 90),
+            &Event::halt(&t, "INDEPENDENCE_UNAVAILABLE", 12, 1),
         )
         .unwrap();
         append_event(
@@ -278,7 +281,7 @@ mod tests {
 
         let text = fs::read_to_string(tmp.wm().join("EVENTS")).unwrap();
         let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 7);
+        assert_eq!(lines.len(), 8);
         let kinds: Vec<EventKind> = read_events(tmp.path())
             .unwrap()
             .into_iter()
@@ -289,22 +292,68 @@ mod tests {
             vec![
                 EventKind::WalkStart,
                 EventKind::Card,
-                EventKind::Dispatch,
-                EventKind::StopAsk,
-                EventKind::Escalate,
-                EventKind::Closed,
+                EventKind::InvokeEnd,
+                EventKind::Halt,
+                EventKind::Halt,
+                EventKind::Halt,
+                EventKind::Halt,
                 EventKind::Lesson,
             ]
         );
+        assert!(text.contains("\"kind\":\"card\""));
+        assert!(text.contains("\"kind\":\"invoke_end\""));
+        assert!(text.contains("\"kind\":\"halt\""));
         assert!(text.contains("\"kind\":\"walk_start\""));
-        assert!(text.contains("\"kind\":\"dispatch\""));
-        assert!(text.contains("\"kind\":\"stop_ask\""));
         assert!(text.contains("\"session\":\"sess-1\""));
+        assert!(text.contains("\"exit\":0"));
+        assert!(text.contains("STOP-ASK QUESTIONS"));
+        assert!(text.contains("INDEPENDENCE_UNAVAILABLE"));
+        assert!(!text.contains("\"kind\":\"dispatch\""));
+        assert!(!text.contains("\"kind\":\"stop_ask\""));
 
         let n = text.len();
         append_event(tmp.path(), &Event::lesson(&t, "second")).unwrap();
         let text2 = fs::read_to_string(tmp.wm().join("EVENTS")).unwrap();
         assert!(text2.len() > n, "EVENTS is append-only");
+    }
+
+    #[test]
+    fn metrics_append_tsv_columns_and_halt_event() {
+        let tmp = Tmp::new();
+        fs::write(
+            tmp.path().join("slices.tsv"),
+            "id\ttitle\ns1\ta\ns2\tb\n# skip\n\n",
+        )
+        .unwrap();
+        metrics_append(tmp.path(), "STOP-ASK QUESTIONS", "-", 40, 90, 3, &clock()).unwrap();
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let row = metrics.lines().nth(1).unwrap();
+        let cols: Vec<&str> = row.split('\t').collect();
+        assert_eq!(cols.len(), 5, "when/outcome/slices/bound/note");
+        assert_eq!(cols[0], format_rfc3339_z(t0() + 12));
+        assert_eq!(cols[1], "STOP-ASK QUESTIONS");
+        assert_eq!(cols[2], "2");
+        assert_eq!(cols[3], "40");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].kind, EventKind::Halt);
+        assert_eq!(ev[0].card.as_deref(), Some("STOP-ASK QUESTIONS"));
+        assert_eq!(ev[0].elapsed_s, Some(90));
+        assert_eq!(ev[0].iterations, Some(3));
+
+        metrics_append(tmp.path(), "CLOSED PASS", "ok", 40, 12, 1, &clock()).unwrap();
+        let metrics2 = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert_eq!(metrics2.lines().filter(|l| !l.is_empty()).count(), 3);
+        let ev2 = read_events(tmp.path()).unwrap();
+        assert_eq!(ev2.len(), 2);
+        assert_eq!(ev2[1].kind, EventKind::Halt);
+        assert_eq!(ev2[1].card.as_deref(), Some("CLOSED PASS"));
+        assert!(fs::read_to_string(tmp.wm().join("EVENTS"))
+            .unwrap()
+            .contains("\"kind\":\"halt\""));
     }
 
     #[test]

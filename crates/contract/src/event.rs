@@ -2,17 +2,19 @@ use serde::{Deserialize, Serialize};
 
 /// JSONL `kind` values written to `.wm/EVENTS`.
 ///
-/// Design WAL table names `card` / `invoke_end` / `halt`. Slice 1 uses the
-/// walker-facing set `go` will emit; see kernel tests / task-2 report Ruling.
+/// Design WAL table (binding): `card`, `invoke_end`, `halt`.
+/// Extra kinds `walk_start` and `lesson` are walker bookkeeping, not replacements.
+///
+/// Mapping: dispatch → [`EventKind::InvokeEnd`] (`session`, `card`, `elapsed_s`, `exit`);
+/// stop_ask / escalate / closed / independence unavailable → [`EventKind::Halt`]
+/// with [`Event::card`] holding the outcome string (e.g. `STOP-ASK QUESTIONS`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
     WalkStart,
     Card,
-    Dispatch,
-    StopAsk,
-    Escalate,
-    Closed,
+    InvokeEnd,
+    Halt,
     Lesson,
 }
 
@@ -74,53 +76,34 @@ impl Event {
         e
     }
 
-    pub fn dispatch(
+    /// Walker `dispatch` → design `invoke_end`.
+    pub fn invoke_end(
         t: impl Into<String>,
         card: impl Into<String>,
         session: impl Into<String>,
+        elapsed_s: i64,
+        exit: i32,
     ) -> Self {
-        let mut e = Self::base(t, EventKind::Dispatch);
+        let mut e = Self::base(t, EventKind::InvokeEnd);
         e.card = Some(card.into());
         e.session = Some(session.into());
+        e.elapsed_s = Some(elapsed_s);
+        e.exit = Some(exit);
         e
     }
 
-    pub fn stop_ask(
+    /// Walker stop_ask / escalate / closed / independence unavailable → design `halt`.
+    /// `outcome` is stored in `card` (e.g. `STOP-ASK QUESTIONS`, `CLOSED PASS`).
+    pub fn halt(
         t: impl Into<String>,
-        card: impl Into<String>,
+        outcome: impl Into<String>,
         elapsed_s: i64,
         iterations: i64,
     ) -> Self {
-        let mut e = Self::base(t, EventKind::StopAsk);
-        e.card = Some(card.into());
+        let mut e = Self::base(t, EventKind::Halt);
+        e.card = Some(outcome.into());
         e.elapsed_s = Some(elapsed_s);
         e.iterations = Some(iterations);
-        e
-    }
-
-    pub fn escalate(
-        t: impl Into<String>,
-        card: impl Into<String>,
-        elapsed_s: i64,
-        iterations: i64,
-    ) -> Self {
-        let mut e = Self::base(t, EventKind::Escalate);
-        e.card = Some(card.into());
-        e.elapsed_s = Some(elapsed_s);
-        e.iterations = Some(iterations);
-        e
-    }
-
-    pub fn closed(
-        t: impl Into<String>,
-        card: impl Into<String>,
-        independence: impl Into<String>,
-        elapsed_s: i64,
-    ) -> Self {
-        let mut e = Self::base(t, EventKind::Closed);
-        e.card = Some(card.into());
-        e.independence = Some(independence.into());
-        e.elapsed_s = Some(elapsed_s);
         e
     }
 
@@ -144,13 +127,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn jsonl_kind_names_are_snake_case() {
-        let e = Event::card("2026-09-20T12:00:00Z", "NEXT RED", "BUILD");
-        let line = e.to_jsonl_line().unwrap();
-        assert!(line.contains("\"kind\":\"card\""));
-        assert!(!line.contains("invoke_end"));
-        assert!(!line.contains("halt"));
-        let back = Event::from_jsonl_line(&line).unwrap();
-        assert_eq!(back, e);
+    fn jsonl_kind_names_include_design_wal_table() {
+        let card = Event::card("2026-09-20T12:00:00Z", "NEXT RED", "BUILD");
+        let inv = Event::invoke_end(
+            "2026-09-20T12:01:00Z",
+            "NEXT RUN maker-build",
+            "sess-1",
+            7,
+            0,
+        );
+        let halt = Event::halt("2026-09-20T12:02:00Z", "STOP-ASK QUESTIONS", 90, 3);
+        let card_l = card.to_jsonl_line().unwrap();
+        let inv_l = inv.to_jsonl_line().unwrap();
+        let halt_l = halt.to_jsonl_line().unwrap();
+        assert!(card_l.contains("\"kind\":\"card\""));
+        assert!(inv_l.contains("\"kind\":\"invoke_end\""));
+        assert!(inv_l.contains("\"session\":\"sess-1\""));
+        assert!(inv_l.contains("\"elapsed_s\":7"));
+        assert!(inv_l.contains("\"exit\":0"));
+        assert!(halt_l.contains("\"kind\":\"halt\""));
+        assert!(halt_l.contains("\"card\":\"STOP-ASK QUESTIONS\""));
+        assert!(halt_l.contains("\"elapsed_s\":90"));
+        assert!(halt_l.contains("\"iterations\":3"));
+        assert_eq!(Event::from_jsonl_line(&inv_l).unwrap(), inv);
+        assert_eq!(Event::from_jsonl_line(&halt_l).unwrap(), halt);
     }
 }
