@@ -253,4 +253,37 @@ when\toutcome\tslices\tbound\tnote
         let err = StatsWindow::from_wm_dir(&tmp.root, "yesterday", &FixedClock::new(now_unix()));
         assert!(err.is_err());
     }
+
+    #[test]
+    fn stats_ignores_events_wal_inside_window() {
+        let tmp = Tmp::new();
+        write_metrics(&tmp.root, METRICS);
+        fs::write(
+            tmp.root.join(".wm").join("EVENTS"),
+            concat!(
+                r#"{"t":"2026-09-20T11:30:00Z","kind":"card","card":"NEXT RED","station":"BUILD"}"#,
+                "\n",
+                r#"{"t":"2026-09-20T11:31:00Z","kind":"invoke_end","session":"00000000-0000-0000-0000-000000000001","card":"NEXT RUN maker-build","elapsed_s":7,"exit":0}"#,
+                "\n",
+                r#"{"t":"2026-09-20T11:32:00Z","kind":"halt","card":"STOP-ASK FROM-EVENTS","elapsed_s":90,"iterations":3}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let now = now_unix();
+        let w = StatsWindow::from_wm_dir(&tmp.root, "8h", &FixedClock::new(now)).unwrap();
+        assert!(w.available);
+        assert_eq!(w.source, "metrics");
+        assert_eq!(w.halts.len(), 1);
+        assert_eq!(w.halts[0].outcome, "CLOSED PASS");
+        assert_eq!(w.halts[0].slices, 1);
+        assert_eq!(w.halts[0].bound, 40);
+        assert!(!w
+            .halts
+            .iter()
+            .any(|h| h.outcome.contains("FROM-EVENTS") || h.t == "2026-09-20T11:32:00Z"));
+        assert_eq!(w.counts.halt, 1);
+        assert_eq!(w.counts.card, 0);
+        assert_eq!(w.counts.invoke_end, 0);
+    }
 }

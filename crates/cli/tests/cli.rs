@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crucible_contract::{format_rfc3339_z, Clock, SystemClock};
+
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 struct Tmp {
@@ -117,9 +119,20 @@ fn stats_since_json_from_metrics_only() {
     let tmp = Tmp::new();
     let wm = tmp.root.join(".wm");
     fs::create_dir_all(&wm).unwrap();
+    // SystemClock in the binary: stamp METRICS/EVENTS at "now" so 8h|24h|7d include the row.
+    let when = format_rfc3339_z(SystemClock.now_unix());
     fs::write(
         wm.join("METRICS.tsv"),
-        "when\toutcome\tslices\tbound\tnote\n2026-09-20T01:00:00Z\tSTOP-ASK QUESTIONS\t0\t40\t-\n",
+        format!("when\toutcome\tslices\tbound\tnote\n{when}\tSTOP-ASK QUESTIONS\t0\t40\t-\n"),
+    )
+    .unwrap();
+    fs::write(
+        wm.join("EVENTS"),
+        format!(
+            "{{\"t\":\"{when}\",\"kind\":\"card\",\"card\":\"NEXT RED\",\"station\":\"BUILD\"}}\n\
+             {{\"t\":\"{when}\",\"kind\":\"invoke_end\",\"session\":\"00000000-0000-0000-0000-000000000001\",\"card\":\"NEXT RUN maker-build\",\"elapsed_s\":7,\"exit\":0}}\n\
+             {{\"t\":\"{when}\",\"kind\":\"halt\",\"card\":\"STOP-ASK FROM-EVENTS\",\"elapsed_s\":90,\"iterations\":3}}\n"
+        ),
     )
     .unwrap();
     for window in ["8h", "24h", "7d"] {
@@ -135,9 +148,23 @@ fn stats_since_json_from_metrics_only() {
         );
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(v["schema"], "crucible.stats/v1");
+        assert_eq!(v["available"], true);
         assert_eq!(v["source"], "metrics");
-        assert!(v["available"].is_boolean());
-        assert!(!wm.join("EVENTS").exists());
+        let halts = v["halts"].as_array().expect("halts array");
+        assert_eq!(halts.len(), 1, "window {window}: METRICS row only");
+        assert_eq!(halts[0]["outcome"], "STOP-ASK QUESTIONS");
+        assert_eq!(halts[0]["slices"], 0);
+        assert_eq!(halts[0]["bound"], 40);
+        assert_eq!(halts[0]["t"], when);
+        assert_eq!(v["counts"]["halt"], 1);
+        assert_eq!(v["counts"]["card"], 0);
+        assert_eq!(v["counts"]["invoke_end"], 0);
+        let dumped = serde_json::to_string(&v).unwrap();
+        assert!(
+            !dumped.contains("FROM-EVENTS"),
+            "EVENTS halt must not appear in stats"
+        );
+        assert!(!dumped.contains("NEXT RED"));
     }
 }
 
