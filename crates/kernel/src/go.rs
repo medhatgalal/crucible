@@ -11,6 +11,7 @@ use crate::paths::first_nonempty_line;
 use crate::questions::stop_ask_questions;
 use crate::red::next_red;
 use crate::trace::{go_start, GoStart};
+use crate::worktree::remove_worktree;
 
 const INDEPENDENCE: &str = "SUBAGENT-ISOLATED";
 const SLICE_ID: &str = "s1";
@@ -26,7 +27,8 @@ pub struct GoRun {
 }
 
 /// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
-/// gate, then one injected `next_red` (no `close_walk`).
+/// gate, then one injected `next_red` (no `close_walk`). Leftover product
+/// FALSIFIER and a live `s1` worktree are dropped before that brick.
 ///
 /// Production has no grok: without `CRUCIBLE_RED_PROGRAM` the brick loop
 /// still refuses. Stays in-process (no daemon).
@@ -77,6 +79,7 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         });
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    reset_brick(dir, SLICE_ID)?;
     let red = next_red(dir, SLICE_ID, &program, &arg_refs, RED_SESSION, clock)?;
     Ok(GoRun {
         exit: red.exit,
@@ -84,6 +87,20 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         stderr: String::new(),
         archived: started.archived.or(red.archived),
     })
+}
+
+/// Drop leftover product FALSIFIER and the live bet worktree before a new brick.
+/// Keep-on-failure still leaves a failed child's tree until the next `go`.
+fn reset_brick(dir: &Path, slice_id: &str) -> Result<(), KernelError> {
+    let (_repo, wm) = resolve_wm(dir);
+    for name in ["FALSIFIER", "FALSIFIER.meta", "FALSIFIER.sha256"] {
+        let p = wm.join(name);
+        if p.is_file() {
+            fs::remove_file(p)?;
+        }
+    }
+    remove_worktree(dir, slice_id)?;
+    Ok(())
 }
 
 /// Injected NEXT RED child. Unset/empty `CRUCIBLE_RED_PROGRAM` means not

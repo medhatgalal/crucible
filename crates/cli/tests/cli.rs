@@ -516,6 +516,89 @@ fn go_idea_env_red_program_floor_next_red_build() {
 }
 
 #[test]
+fn go_second_brick_does_not_floor_next_red_from_leftover_falsifier() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let sh = posix_tool("sh");
+    let args =
+        "-c\nif [ -f .wm/red-once ]; then pwd > marker2; else echo FAIL > .wm/FALSIFIER; echo 1 > .wm/red-once; pwd > marker; fi";
+
+    let first = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env("CRUCIBLE_RED_ARGS", args)
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "first go still NEXT RED when child writes FALSIFIER: stderr={} stdout={}",
+        String::from_utf8_lossy(&first.stderr),
+        String::from_utf8_lossy(&first.stdout)
+    );
+    let stdout1 = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        stdout1.contains("NEXT RED"),
+        "stdout={stdout1:?} stderr={}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let floor1 = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor1.contains("card: NEXT RED\n"), "{floor1}");
+    assert!(floor1.contains("station: BUILD\n"), "{floor1}");
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/FALSIFIER"))
+            .unwrap()
+            .trim(),
+        "FAIL"
+    );
+
+    let second = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env("CRUCIBLE_RED_ARGS", args)
+        .arg("go")
+        .output()
+        .unwrap();
+    let stdout2 = String::from_utf8_lossy(&second.stdout);
+    let stderr2 = String::from_utf8_lossy(&second.stderr);
+    let floor2 = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(
+        !floor2.contains("card: NEXT RED\n"),
+        "second go must not floor NEXT RED from leftover FALSIFIER: {floor2}"
+    );
+    assert!(
+        !floor2.contains("station: BUILD\n"),
+        "second go must not floor BUILD from leftover FALSIFIER: {floor2}"
+    );
+    assert!(
+        floor2.contains("station: ANDON\n"),
+        "missing FALSIFIER this brick is ANDON: {floor2}"
+    );
+    assert!(
+        stdout2.contains("STOP-ASK red refused"),
+        "POSIX missing-falsifier path: stdout={stdout2:?} stderr={stderr2:?} floor={floor2}"
+    );
+    assert!(floor2.contains("card: STOP-ASK red refused\n"), "{floor2}");
+    assert!(
+        !tmp.root.join(".wm/FALSIFIER").is_file(),
+        "second child writes no FALSIFIER; leftover must not remain as this run's success"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join("marker").is_file(),
+        "next brick must not reuse a live s1 worktree (first child's marker would remain)"
+    );
+    assert!(
+        wt.join("marker2").is_file(),
+        "second child must run in a minted cwd"
+    );
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
 fn go_next_is_not_ported() {
     let tmp = Tmp::new();
     let out = bin()
