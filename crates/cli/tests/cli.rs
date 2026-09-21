@@ -311,6 +311,59 @@ fn help_lists_go_and_query_verbs_not_serve_room() {
 }
 
 #[test]
+fn go_empty_idea_stop_ask_intake() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("IDEA.md"), "").unwrap();
+    let out = bin().current_dir(&tmp.root).arg("go").output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "zero-byte IDEA.md must STOP-ASK INTAKE: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("STOP-ASK INTAKE"));
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK INTAKE\n"));
+    assert!(floor.contains("station: ANDON\n"));
+}
+
+#[test]
+fn go_idea_without_closed_refuses_brick_loop() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let out = bin().current_dir(&tmp.root).arg("go").output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("go: brick loop not ported"),
+        "stderr={stderr:?} stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_next_is_not_ported() {
+    let tmp = Tmp::new();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .args(["go", "--next"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("go --next is not ported"),
+        "stderr={stderr:?}"
+    );
+    assert!(
+        !tmp.root.join(".wm").exists(),
+        "--next refuse is argv-only; must not go_start"
+    );
+}
+
+#[test]
 fn go_closed_with_idea_is_foreground_noop() {
     let tmp = Tmp::new();
     let wm = tmp.root.join(".wm");
@@ -333,6 +386,21 @@ fn go_closed_with_idea_is_foreground_noop() {
         "stdout={stdout:?} stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("card: CLOSED PASS\n"),
+        "CLI FLOOR must be CLOSED PASS, got:\n{floor}"
+    );
+    assert!(
+        !wm.join("METRICS.tsv").is_file(),
+        "CLOSED no-op must not write METRICS halt"
+    );
+    let events = fs::read_to_string(wm.join("EVENTS")).unwrap_or_default();
+    assert!(
+        !events.contains("\"kind\":\"halt\""),
+        "CLOSED no-op must not write EVENTS halt: {events}"
+    );
+    assert!(!wm.join("go.pid").exists());
 }
 
 #[test]

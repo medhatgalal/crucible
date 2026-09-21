@@ -439,6 +439,50 @@ mod tests {
     }
 
     #[test]
+    fn go_empty_idea_stop_ask_intake() {
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("IDEA.md"), "").unwrap();
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "zero-byte IDEA.md is POSIX ! -s, same as missing"
+        );
+        assert!(r.stdout.contains("STOP-ASK INTAKE"));
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK INTAKE\n"));
+        assert!(floor.contains("station: ANDON\n"));
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(ev
+            .iter()
+            .any(|e| e.kind == EventKind::Halt && e.card.as_deref() == Some("STOP-ASK INTAKE")));
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.contains("STOP-ASK INTAKE"));
+    }
+
+    #[test]
+    fn go_idea_without_closed_refuses_brick_loop() {
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 2);
+        assert!(
+            r.stderr.contains("go: brick loop not ported"),
+            "stderr={:?}",
+            r.stderr
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "brick refuse must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "brick refuse is not a halt: {ev:?}"
+        );
+    }
+
+    #[test]
     fn go_closed_with_idea_is_noop() {
         let tmp = Tmp::new();
         fs::create_dir_all(tmp.wm()).unwrap();
@@ -454,5 +498,15 @@ mod tests {
         let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
         assert!(floor.contains("card: CLOSED PASS\n"));
         assert!(floor.contains("station: DONE\n"));
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "CLOSED no-op must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "CLOSED no-op must not write EVENTS halt: {ev:?}"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
     }
 }
