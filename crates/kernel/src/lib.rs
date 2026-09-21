@@ -721,6 +721,31 @@ mod tests {
         git(dir, &["commit", "-qm", "init"]);
     }
 
+    /// Lock child cwd as the minted worktree. `.wm/FALSIFIER` via the product
+    /// symlink also succeeds from the repo root.
+    fn assert_minted_cwd_marker(repo: &Path, wt: &Path) {
+        let marker = wt.join("marker");
+        assert!(
+            marker.is_file(),
+            "child must write marker in .wm/worktrees/<id> (echo FAIL > .wm/FALSIFIER stays green from repo cwd): {}",
+            wt.display()
+        );
+        assert!(
+            !repo.join("marker").exists(),
+            "marker must not land on the repo root"
+        );
+        let pwd = fs::read_to_string(&marker).unwrap();
+        let pwd_path = PathBuf::from(pwd.trim());
+        let pwd_c = fs::canonicalize(&pwd_path).unwrap_or(pwd_path);
+        let wt_c = fs::canonicalize(wt).unwrap_or_else(|_| wt.to_path_buf());
+        assert_eq!(
+            pwd_c,
+            wt_c,
+            "pwd must be the minted worktree, not the repo root: {}",
+            pwd.trim()
+        );
+    }
+
     #[test]
     fn mint_worktree_under_wm_run_writes_cwd_events_on_repo() {
         let tmp = Tmp::new();
@@ -811,7 +836,7 @@ mod tests {
             tmp.path(),
             "s1",
             posix_tool("sh"),
-            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            &["-c", "echo FAIL > .wm/FALSIFIER; pwd > marker"],
             "sess-red",
             &clock(),
         )
@@ -827,6 +852,7 @@ mod tests {
         assert_eq!(r.exit, 0);
         assert_eq!(r.card, "NEXT RED");
         assert_eq!(r.station, "BUILD");
+        assert_minted_cwd_marker(tmp.path(), &wt);
 
         let fals = tmp.wm().join("FALSIFIER");
         assert!(
@@ -889,15 +915,18 @@ mod tests {
         let r = next_red(
             tmp.path(),
             "s1",
-            posix_tool("true"),
-            &[],
+            posix_tool("sh"),
+            &["-c", "pwd > marker"],
             "sess-nofals",
             &clock(),
         )
         .unwrap();
 
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_eq!(r.worktree, wt);
         assert_eq!(r.exit, 0);
         assert_eq!(r.station, "ANDON");
+        assert_minted_cwd_marker(tmp.path(), &wt);
         assert!(
             r.card.starts_with("STOP-ASK"),
             "POSIX missing FALSIFIER refuses red → STOP-ASK / ANDON, got {}",
@@ -945,13 +974,14 @@ mod tests {
             tmp.path(),
             "s1",
             posix_tool("sh"),
-            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            &["-c", "echo FAIL > .wm/FALSIFIER; pwd > marker"],
             "sess-live",
             &clock(),
         )
         .unwrap();
         assert_eq!(r.card, "NEXT RED");
         assert_eq!(r.station, "BUILD");
+        assert_minted_cwd_marker(tmp.path(), &r.worktree);
         assert!(r.archived.is_none(), "live walk must not archive TRACE");
         assert_eq!(
             fs::read_to_string(tmp.wm().join("t0")).unwrap().trim(),
