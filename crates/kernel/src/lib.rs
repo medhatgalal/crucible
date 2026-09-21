@@ -1,5 +1,6 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. No HTTP. No Herdr / Grok / EngOS types.
 
+mod close;
 mod error;
 mod events;
 mod floor;
@@ -12,6 +13,7 @@ mod station;
 mod trace;
 mod worktree;
 
+pub use close::{close_walk, CloseWalk};
 pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
@@ -1230,5 +1232,158 @@ mod tests {
             floor.contains("independence: SUBAGENT-ISOLATED\n"),
             "{floor}"
         );
+    }
+
+    #[test]
+    fn close_walk_pass_stamps_closed_halt_lesson_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let wt = mint_worktree(tmp.path(), "s1").unwrap();
+        assert!(wt.join(".git").is_file());
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let r = close_walk(
+            tmp.path(),
+            "PASS",
+            Some("prefer keep worktree on close"),
+            3,
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.card, "CLOSED PASS");
+        assert_eq!(r.station, "DONE");
+        assert_eq!(r.elapsed_s, 12);
+
+        let closed = fs::read_to_string(tmp.wm().join("CLOSED")).unwrap();
+        assert!(
+            closed.starts_with("CLOSED PASS\n"),
+            "first line is CLOSED PASS: {closed}"
+        );
+        assert!(
+            closed.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{closed}"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: DONE\n"), "{floor}");
+        assert!(floor.contains("card: CLOSED PASS\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let row = metrics.lines().nth(1).unwrap();
+        let cols: Vec<&str> = row.split('\t').collect();
+        assert_eq!(cols[1], "CLOSED PASS");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("CLOSED PASS")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(3)),
+            "halt CLOSED PASS elapsed_s/iterations: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Lesson
+                && e.note.as_deref() == Some("prefer keep worktree on close")),
+            "EVENTS lesson line: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn close_walk_nobuild_stamps_closed_and_halt() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let r = close_walk(tmp.path(), "NO-BUILD", Some("no product path"), 1, &clock()).unwrap();
+        assert_eq!(r.card, "CLOSED NO-BUILD");
+        assert_eq!(r.station, "DONE");
+        assert_eq!(r.elapsed_s, 12);
+
+        let closed = fs::read_to_string(tmp.wm().join("CLOSED")).unwrap();
+        assert!(closed.starts_with("CLOSED NO-BUILD\n"), "{closed}");
+        assert!(
+            closed.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{closed}"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: DONE\n"), "{floor}");
+        assert!(floor.contains("card: CLOSED NO-BUILD\n"), "{floor}");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("CLOSED NO-BUILD")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(1)),
+            "halt CLOSED NO-BUILD: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(
+                |e| e.kind == EventKind::Lesson && e.note.as_deref() == Some("no product path")
+            ),
+            "{ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn close_walk_missing_lesson_refuses_and_does_not_write_closed() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let err = close_walk(tmp.path(), "PASS", None, 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("close without a lesson line"),
+            "POSIX cmd_close dies without a lesson: {err}"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "missing lesson must not write CLOSED"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "missing lesson must not metrics_append"
+        );
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "missing lesson must not floor_write"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Halt || e.kind == EventKind::Lesson),
+            "refuse must not halt/lesson: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+
+        let err = close_walk(tmp.path(), "PASS", Some(""), 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("close without a lesson line"),
+            "empty lesson: {err}"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+
+        let err = close_walk(tmp.path(), "PASS", Some("one\ntwo"), 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("lesson must be one line"),
+            "POSIX close_append_lesson / cmd_close one-line: {err}"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert_worktree_kept(tmp.path(), "s1");
     }
 }
