@@ -10,7 +10,6 @@ use crate::paths::kv_get;
 
 const INDEPENDENCE: &str = "SUBAGENT-ISOLATED";
 const CAP: i64 = 2;
-const CARD_STOP: &str = "STOP-ASK";
 const CARD_STOP_ASK: &str = "STOP-ASK NEXT MAP";
 const CARD_ESCALATE: &str = "ESCALATE MAP_REVISE";
 
@@ -26,14 +25,13 @@ pub struct MapReviseCheck {
 }
 
 /// Halt when POSIX would send MAP-REVISE back (under cap: `STOP-ASK NEXT MAP`
-/// because specifier is not ported; at cap: `ESCALATE MAP_REVISE`) or
-/// `MAP-STOP-ASK` (`STOP-ASK`).
+/// because specifier is not ported; at cap: `ESCALATE MAP_REVISE`).
 ///
 /// Missing `.wm/map-verdict`, missing/empty WORD, MAP-ACCEPT, and any WORD
-/// other than MAP-REVISE / MAP-STOP-ASK continue. This function does not
-/// invent `map-verdict` or increment `map-revise-count`. Does not
-/// `git worktree remove`. Isolation is `SUBAGENT-ISOLATED`. Does not
-/// invoke grok.
+/// other than MAP-REVISE continue (MAP-STOP-ASK is out of scope this slice).
+/// This function does not invent `map-verdict` or increment
+/// `map-revise-count`. Does not `git worktree remove`. Isolation is
+/// `SUBAGENT-ISOLATED`. Does not invoke grok.
 pub fn check_map_revise(
     dir: impl AsRef<Path>,
     clock: &dyn Clock,
@@ -41,20 +39,20 @@ pub fn check_map_revise(
     let dir = dir.as_ref();
     let (repo, wm) = resolve_wm(dir);
 
-    let word = map_word_recorded(&wm);
-    let card = match word.as_deref() {
-        Some("MAP-STOP-ASK") => CARD_STOP,
-        Some("MAP-REVISE") if map_revise_count(&wm) >= CAP => CARD_ESCALATE,
-        Some("MAP-REVISE") => CARD_STOP_ASK,
-        _ => {
-            return Ok(MapReviseCheck {
-                stop: false,
-                card: String::new(),
-                station: String::new(),
-                elapsed_s: 0,
-                exit: 0,
-            });
-        }
+    if map_word_recorded(&wm).as_deref() != Some("MAP-REVISE") {
+        return Ok(MapReviseCheck {
+            stop: false,
+            card: String::new(),
+            station: String::new(),
+            elapsed_s: 0,
+            exit: 0,
+        });
+    }
+
+    let card = if map_revise_count(&wm) >= CAP {
+        CARD_ESCALATE
+    } else {
+        CARD_STOP_ASK
     };
     let floor = floor_write(dir, card, INDEPENDENCE, clock)?;
     let bound = posix_loop_bound(&repo);

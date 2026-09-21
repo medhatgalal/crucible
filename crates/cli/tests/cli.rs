@@ -1103,7 +1103,7 @@ fn go_map_accept_continues_to_injected_red() {
 }
 
 #[test]
-fn go_map_stop_ask_beats_injected_red_program() {
+fn go_map_stop_ask_continues_to_injected_red() {
     let tmp = Tmp::new();
     init_git_product(&tmp.root);
     fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
@@ -1121,19 +1121,26 @@ fn go_map_stop_ask_beats_injected_red_program() {
         .unwrap();
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "MAP-STOP-ASK must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        Some(0),
+        "MAP-STOP-ASK continues this slice: stderr={} stdout={}",
         String::from_utf8_lossy(&out.stderr),
         String::from_utf8_lossy(&out.stdout)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("STOP-ASK"), "stdout={stdout:?}");
+    assert!(
+        stdout.contains("NEXT RED"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
-    assert!(floor.contains("card: STOP-ASK\n"), "{floor}");
-    assert!(!floor.contains("NEXT RED"), "{floor}");
-    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
-    assert!(!tmp.root.join(".wm/worktrees/s1").join(".git").is_file());
-    assert!(!tmp.root.join(".wm/map-revise-count").exists());
+    assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+    assert!(floor.contains("station: BUILD\n"), "{floor}");
+    assert!(!floor.contains("card: STOP-ASK\n"), "{floor}");
+    assert!(!floor.contains("STOP-ASK NEXT MAP"), "{floor}");
+    assert!(!floor.contains("ESCALATE MAP_REVISE"), "{floor}");
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(wt.join("marker").is_file());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
     assert!(!tmp.root.join(".wm/go.pid").exists());
 }
 

@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. Independence CHECK: same-agent / empty worker halt `INDEPENDENCE_UNAVAILABLE`; missing panel and one-kind continue. MAP-REVISE CHECK: send-back cap halt `ESCALATE MAP_REVISE`; under cap `STOP-ASK NEXT MAP` (specifier not ported); missing/MAP-ACCEPT continue. `go` wires QUESTIONS then MAP-HUMAN then independence then MAP-REVISE then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. Independence CHECK: same-agent / empty worker halt `INDEPENDENCE_UNAVAILABLE`; missing panel and one-kind continue. MAP-REVISE CHECK: send-back cap halt `ESCALATE MAP_REVISE`; under cap `STOP-ASK NEXT MAP` (specifier not ported); missing/MAP-ACCEPT/MAP-STOP-ASK continue. `go` wires QUESTIONS then MAP-HUMAN then independence then MAP-REVISE then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -2695,35 +2695,36 @@ s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
     }
 
     #[test]
-    fn check_map_revise_stop_ask_word_halts_without_counting() {
+    fn check_map_revise_stop_ask_word_continues_without_inventing() {
         let tmp = Tmp::new();
         init_git_product(tmp.path());
         let _wt = mint_worktree(tmp.path(), "s1").unwrap();
         fs::create_dir_all(tmp.wm()).unwrap();
-        fs::write(
-            tmp.wm().join("t0"),
-            format!(
-                "{}
-",
-                t0()
-            ),
-        )
-        .unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
         plant_map_verdict(tmp.path(), "MAP-STOP-ASK");
         let before = fs::read_to_string(tmp.wm().join("map-verdict")).unwrap();
 
         let r = check_map_revise(tmp.path(), &clock()).unwrap();
-        assert!(r.stop, "POSIX MAP-STOP-ASK is STOP-ASK");
-        assert_eq!(r.exit, 1);
-        assert_eq!(r.card, "STOP-ASK");
-        assert_eq!(r.station, "ANDON");
-        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
-        assert!(floor.contains("card: STOP-ASK\n"), "{floor}");
-        assert!(!floor.contains("NEXT RED"), "{floor}");
+        assert!(
+            !r.stop,
+            "MAP-STOP-ASK continues this slice (not a MAP-REVISE halt)"
+        );
+        assert_eq!(r.exit, 0);
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "MAP-STOP-ASK must not floor STOP-ASK this slice"
+        );
+        assert!(!tmp.wm().join("METRICS.tsv").is_file());
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "MAP-STOP-ASK is not a halt this slice: {ev:?}"
+        );
         assert!(!tmp.wm().join("map-revise-count").exists());
         assert_eq!(
             fs::read_to_string(tmp.wm().join("map-verdict")).unwrap(),
-            before
+            before,
+            "kernel must not invent or rewrite map-verdict"
         );
         assert_worktree_kept(tmp.path(), "s1");
         assert!(!tmp.wm().join("go.pid").exists());
@@ -2923,35 +2924,50 @@ s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
     }
 
     #[test]
-    fn go_map_stop_ask_beats_injected_red_program() {
+    fn go_map_stop_ask_continues_to_injected_red() {
         let _lock = lock_red_env();
         let tmp = Tmp::new();
         init_git_product(tmp.path());
         fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
         plant_map_verdict(tmp.path(), "MAP-STOP-ASK");
+        let before = fs::read_to_string(tmp.wm().join("map-verdict")).unwrap();
         let sh = posix_tool("sh");
         let _clear = ClearRedEnv;
         set_red_env(
             Some(sh.as_os_str()),
             Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
         );
+
         let r = go(tmp.path(), &clock()).unwrap();
-        assert_eq!(r.exit, 1, "stdout={:?} stderr={:?}", r.stdout, r.stderr);
-        assert_eq!(r.stdout, "STOP-ASK\n");
+        assert_eq!(r.exit, 0, "stderr={:?} stdout={:?}", r.stderr, r.stdout);
+        assert!(
+            r.stdout.contains("NEXT RED"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
         let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
-        assert!(floor.contains("card: STOP-ASK\n"), "{floor}");
-        assert!(!floor.contains("NEXT RED"), "{floor}");
-        assert!(!tmp.wm().join("FALSIFIER").is_file());
-        assert!(!tmp.wm().join("worktrees").join("s1").join(".git").is_file());
-        assert!(!tmp.wm().join("map-revise-count").is_file());
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(!floor.contains("card: STOP-ASK\n"), "{floor}");
+        assert!(!floor.contains("STOP-ASK NEXT MAP"), "{floor}");
+        assert!(!floor.contains("ESCALATE MAP_REVISE"), "{floor}");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("map-verdict")).unwrap(),
+            before,
+            "kernel must not rewrite map-verdict"
+        );
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
         assert!(!tmp.wm().join("CLOSED").exists());
         assert!(!tmp.wm().join("go.pid").exists());
-        let ev = read_events(tmp.path()).unwrap();
-        assert!(
-            ev.iter()
-                .any(|e| e.kind == EventKind::Halt && e.card.as_deref() == Some("STOP-ASK")),
-            "halt STOP-ASK: {ev:?}"
-        );
-        assert!(!ev.iter().any(|e| e.kind == EventKind::InvokeEnd));
     }
 }
