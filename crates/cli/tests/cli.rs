@@ -511,6 +511,25 @@ fn write_valid_map_human(dir: &Path) {
     .unwrap();
 }
 
+fn plant_panel(
+    dir: &Path,
+    maker: &str,
+    maker_kind: &str,
+    maker_cmd: &str,
+    reviewer: &str,
+    reviewer_kind: &str,
+    reviewer_cmd: &str,
+) {
+    fs::create_dir_all(dir.join(".wm")).unwrap();
+    fs::write(
+        dir.join(".wm").join("PANEL.tsv"),
+        format!(
+            "maker\t{maker}\t{maker_kind}\t{maker_cmd}\nreviewer\t{reviewer}\t{reviewer_kind}\t{reviewer_cmd}\n"
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn go_map_human_missing_beats_injected_red_program() {
     let tmp = Tmp::new();
@@ -626,6 +645,119 @@ fn go_map_human_present_continues_to_brick_refuse() {
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
     assert!(!tmp.root.join(".wm/CLOSED").exists());
+}
+
+#[test]
+fn go_independence_same_agent_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_panel(
+        &tmp.root,
+        "carol",
+        "grok",
+        "./tools/maker.sh",
+        "carol",
+        "grok",
+        "./tools/reviewer.sh",
+    );
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "same-agent panel must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("INDEPENDENCE_UNAVAILABLE"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !stdout.contains("CROSS-FAMILY"),
+        "must not print CROSS-FAMILY as the card: {stdout:?}"
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("card: INDEPENDENCE_UNAVAILABLE\n"),
+        "{floor}"
+    );
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT "),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when independence refuses"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(!tmp.root.join("PANEL.ASSIGN.tsv").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_independence_one_kind_continues_to_injected_red() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_panel(
+        &tmp.root,
+        "carol",
+        "grok",
+        "./tools/maker.sh",
+        "dave",
+        "grok",
+        "./tools/reviewer.sh",
+    );
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "one-kind panel must continue to red: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("NEXT RED"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!stdout.contains("CROSS-FAMILY"), "{stdout:?}");
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+    assert!(floor.contains("station: BUILD\n"), "{floor}");
+    assert!(!floor.contains("INDEPENDENCE_UNAVAILABLE"), "{floor}");
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(wt.join("marker").is_file());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
 }
 
 #[test]

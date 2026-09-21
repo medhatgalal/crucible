@@ -1,10 +1,11 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. `go` wires QUESTIONS then MAP-HUMAN then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. Independence CHECK: same-agent / empty worker halt `INDEPENDENCE_UNAVAILABLE`; missing panel and one-kind continue. `go` wires QUESTIONS then MAP-HUMAN then independence then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
 mod events;
 mod floor;
 mod go;
+mod independence;
 mod invoke;
 mod map_human;
 mod metrics;
@@ -20,6 +21,7 @@ pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
+pub use independence::{check_independence, IndependenceCheck};
 pub use invoke::{run, InvokeRun};
 pub use map_human::{stop_ask_map_human, StopAskMapHuman};
 pub use metrics::{metrics_append, METRICS_HEADER};
@@ -1255,6 +1257,26 @@ s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
         .unwrap();
     }
 
+    /// Working-mode panel (`.wm/PANEL.tsv`), not guided `PANEL.ASSIGN.tsv`.
+    fn plant_panel(
+        dir: &Path,
+        maker: &str,
+        maker_kind: &str,
+        maker_cmd: &str,
+        reviewer: &str,
+        reviewer_kind: &str,
+        reviewer_cmd: &str,
+    ) {
+        fs::create_dir_all(dir.join(".wm")).unwrap();
+        fs::write(
+            dir.join(".wm").join("PANEL.tsv"),
+            format!(
+                "maker\t{maker}\t{maker_kind}\t{maker_cmd}\nreviewer\t{reviewer}\t{reviewer_kind}\t{reviewer_cmd}\n"
+            ),
+        )
+        .unwrap();
+    }
+
     /// Lock child cwd as the minted worktree. `.wm/FALSIFIER` via the product
     /// symlink also succeeds from the repo root.
     fn assert_minted_cwd_marker(repo: &Path, wt: &Path) {
@@ -2140,6 +2162,346 @@ s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
             "kernel must not invent or rewrite MAP-HUMAN"
         );
         assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn check_independence_same_agent_floor_halt_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_panel(
+            tmp.path(),
+            "carol",
+            "grok",
+            "./tools/maker.sh",
+            "carol",
+            "grok",
+            "./tools/reviewer.sh",
+        );
+        let before = fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap();
+
+        let r = check_independence(tmp.path(), &clock()).unwrap();
+        assert!(r.stop, "POSIX maker=reviewer must halt");
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "INDEPENDENCE_UNAVAILABLE");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("card: INDEPENDENCE_UNAVAILABLE\n"),
+            "{floor}"
+        );
+        assert!(
+            floor.contains("andon: INDEPENDENCE_UNAVAILABLE\n"),
+            "{floor}"
+        );
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "one-kind same agent is never CROSS-FAMILY: {floor}"
+        );
+        assert!(
+            !floor.contains("CROSS-FAMILY"),
+            "must not print CROSS-FAMILY on the card/FLOOR: {floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to next card: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let cols: Vec<&str> = metrics.lines().nth(1).unwrap().split('\t').collect();
+        assert_eq!(cols[1], "INDEPENDENCE_UNAVAILABLE");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("INDEPENDENCE_UNAVAILABLE")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt INDEPENDENCE_UNAVAILABLE: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap(),
+            before,
+            "must not invent or rewrite the panel"
+        );
+        assert!(
+            !tmp.path().join("PANEL.ASSIGN.tsv").exists(),
+            "must not invent guided PANEL.ASSIGN.tsv"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_panel(
+            tmp.path(),
+            "carol",
+            "grok",
+            "-",
+            "dave",
+            "grok",
+            "./tools/reviewer.sh",
+        );
+        let r = check_independence(tmp.path(), &clock()).unwrap();
+        assert!(
+            r.stop,
+            "POSIX maker/reviewer with no CLI worker is INDEPENDENCE_UNAVAILABLE"
+        );
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "INDEPENDENCE_UNAVAILABLE");
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("card: INDEPENDENCE_UNAVAILABLE\n"),
+            "{floor}"
+        );
+        assert!(!floor.contains("CROSS-FAMILY"), "{floor}");
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.path().join("PANEL.ASSIGN.tsv").exists());
+    }
+
+    #[test]
+    fn check_independence_one_kind_or_missing_panel_continues_without_inventing() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_panel(
+            tmp.path(),
+            "carol",
+            "grok",
+            "./tools/maker.sh",
+            "dave",
+            "grok",
+            "./tools/reviewer.sh",
+        );
+        let before = fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap();
+
+        let r = check_independence(tmp.path(), &clock()).unwrap();
+        assert!(
+            !r.stop,
+            "POSIX one-kind distinct agents proceeds SUBAGENT-ISOLATED"
+        );
+        assert_eq!(r.exit, 0);
+
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "continue must not floor_write INDEPENDENCE_UNAVAILABLE"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "continue must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "one-kind is not a halt: {ev:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap(),
+            before,
+            "kernel must not invent or rewrite the panel"
+        );
+        assert!(!tmp.path().join("PANEL.ASSIGN.tsv").exists());
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        let r = check_independence(tmp.path(), &clock()).unwrap();
+        assert!(
+            !r.stop,
+            "missing panel/cast is one-kind continue (do not invent panel)"
+        );
+        assert_eq!(r.exit, 0);
+        assert!(!tmp.wm().join("PANEL.tsv").is_file());
+        assert!(!tmp.path().join("PANEL.ASSIGN.tsv").exists());
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "missing panel must not floor INDEPENDENCE_UNAVAILABLE"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn go_independence_same_agent_beats_injected_red_program() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        plant_panel(
+            tmp.path(),
+            "carol",
+            "grok",
+            "./tools/maker.sh",
+            "carol",
+            "grok",
+            "./tools/reviewer.sh",
+        );
+        let before = fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "same-agent panel must win over CRUCIBLE_RED_PROGRAM: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert!(
+            r.stdout.contains("INDEPENDENCE_UNAVAILABLE"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+        assert!(
+            !r.stdout.contains("CROSS-FAMILY"),
+            "one-kind / two families must not appear as the card: stdout={:?}",
+            r.stdout
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("card: INDEPENDENCE_UNAVAILABLE\n"),
+            "{floor}"
+        );
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.contains("CROSS-FAMILY"), "{floor}");
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to NEXT RED when POSIX would refuse: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "next_red must not mint a worktree when independence refuses: {}",
+            wt.display()
+        );
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "injected red program must not write FALSIFIER before independence CHECK"
+        );
+        assert!(!wt.join("marker").exists());
+        assert!(!tmp.path().join("marker").exists());
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap(),
+            before,
+            "must not invent or rewrite the panel"
+        );
+        assert!(!tmp.path().join("PANEL.ASSIGN.tsv").exists());
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("INDEPENDENCE_UNAVAILABLE")),
+            "halt INDEPENDENCE_UNAVAILABLE: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::InvokeEnd),
+            "next_red must not invoke when independence refuses: {ev:?}"
+        );
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Card && e.card.as_deref() == Some("NEXT RED")),
+            "no NEXT RED card when independence refuses: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn go_independence_one_kind_continues_to_injected_red() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        plant_panel(
+            tmp.path(),
+            "carol",
+            "grok",
+            "./tools/maker.sh",
+            "dave",
+            "grok",
+            "./tools/reviewer.sh",
+        );
+        let before = fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 0, "stderr={:?} stdout={:?}", r.stderr, r.stdout);
+        assert!(
+            r.stdout.contains("NEXT RED"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+        assert!(
+            !r.stdout.contains("CROSS-FAMILY"),
+            "one-kind must not fake CROSS-FAMILY as a card: stdout={:?}",
+            r.stdout
+        );
+        assert!(
+            !r.stdout.contains("INDEPENDENCE_UNAVAILABLE"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.contains("CROSS-FAMILY"), "{floor}");
+        assert!(!floor.contains("INDEPENDENCE_UNAVAILABLE"), "{floor}");
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("PANEL.tsv")).unwrap(),
+            before,
+            "kernel must not invent or rewrite the panel"
+        );
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
         assert!(!tmp.wm().join("go.pid").exists());
     }
 }
