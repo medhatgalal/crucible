@@ -8,6 +8,7 @@ use crate::error::KernelError;
 use crate::floor::floor_write;
 use crate::independence::check_independence;
 use crate::map_human::stop_ask_map_human;
+use crate::map_revise::check_map_revise;
 use crate::metrics::metrics_append;
 use crate::paths::first_nonempty_line;
 use crate::questions::stop_ask_questions;
@@ -29,8 +30,8 @@ pub struct GoRun {
 }
 
 /// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
-/// gate, MAP-HUMAN gate, independence CHECK, then one injected `next_red`
-/// (no `close_walk`).
+/// gate, MAP-HUMAN gate, independence CHECK, MAP-REVISE CHECK, then one
+/// injected `next_red` (no `close_walk`).
 /// Leftover product FALSIFIER and a live `s1` worktree are dropped before
 /// that brick.
 ///
@@ -89,6 +90,16 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         return Ok(GoRun {
             exit: indep.exit,
             stdout: format!("{}\n", indep.card),
+            stderr: String::new(),
+            archived: started.archived,
+        });
+    }
+
+    let revise = check_map_revise(dir, clock)?;
+    if revise.stop {
+        return Ok(GoRun {
+            exit: revise.exit,
+            stdout: format!("{}\n", revise.card),
             stderr: String::new(),
             archived: started.archived,
         });
