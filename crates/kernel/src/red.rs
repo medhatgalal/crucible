@@ -10,13 +10,13 @@ use crate::floor::floor_write;
 use crate::invoke::run;
 use crate::paths::{ensure_wm, parse_t0};
 use crate::trace::go_start;
-use crate::worktree::mint_worktree;
+use crate::worktree::{mint_worktree, remove_worktree};
 
 const INDEPENDENCE: &str = "SUBAGENT-ISOLATED";
 const CARD_RED: &str = "NEXT RED";
 const CARD_ANDON: &str = "STOP-ASK red refused";
 
-/// One-card NEXT RED stub (no MAP-REVISE / keep-on-failure).
+/// One-card NEXT RED stub (keep-on-failure; no MAP-REVISE).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NextRed {
     pub worktree: PathBuf,
@@ -27,12 +27,33 @@ pub struct NextRed {
     pub archived: Option<PathBuf>,
 }
 
+/// Policy for mint cleanup after [`next_red_with`].
+///
+/// `keep_on_failure` defaults true: a nonzero child never calls
+/// [`remove_worktree`]. `prune_on_success` may drop the worktree only when
+/// `exit == 0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NextRedOpts {
+    pub keep_on_failure: bool,
+    pub prune_on_success: bool,
+}
+
+impl Default for NextRedOpts {
+    fn default() -> Self {
+        Self {
+            keep_on_failure: true,
+            prune_on_success: false,
+        }
+    }
+}
+
 /// `go_start` if `t0` is missing, mint `.wm/worktrees/<id>`, run injected
 /// `program`/`args` in that cwd, then `floor_write` NEXT RED / BUILD when
 /// FALSIFIER is present, or STOP-ASK / ANDON when it is not.
 ///
-/// FALSIFIER path matches POSIX bet worktree: `<wt>/.wm` → product `.wm`.
-/// EVENTS stay on the repo `.wm` via [`run`]. Does not invoke grok.
+/// Keep-on-failure: the minted worktree is not removed when the child exits
+/// nonzero. FALSIFIER path matches POSIX bet worktree: `<wt>/.wm` → product
+/// `.wm`. EVENTS stay on the repo `.wm` via [`run`]. Does not invoke grok.
 pub fn next_red(
     dir: impl AsRef<Path>,
     slice_id: &str,
@@ -40,6 +61,28 @@ pub fn next_red(
     args: &[&str],
     session: &str,
     clock: &dyn Clock,
+) -> Result<NextRed, KernelError> {
+    next_red_with(
+        dir,
+        slice_id,
+        program,
+        args,
+        session,
+        clock,
+        &NextRedOpts::default(),
+    )
+}
+
+/// [`next_red`] with optional `prune_on_success` (still never prunes a
+/// nonzero child while `keep_on_failure` is true).
+pub fn next_red_with(
+    dir: impl AsRef<Path>,
+    slice_id: &str,
+    program: impl AsRef<OsStr>,
+    args: &[&str],
+    session: &str,
+    clock: &dyn Clock,
+    opts: &NextRedOpts,
 ) -> Result<NextRed, KernelError> {
     let dir = dir.as_ref();
     let (repo, _) = resolve_wm(dir);
@@ -64,6 +107,8 @@ pub fn next_red(
     };
     let floor = floor_write(dir, card, INDEPENDENCE, clock)?;
 
+    maybe_remove_worktree(dir, slice_id, invoked.exit, opts)?;
+
     Ok(NextRed {
         worktree,
         exit: invoked.exit,
@@ -72,6 +117,25 @@ pub fn next_red(
         station: floor.station,
         archived,
     })
+}
+
+fn maybe_remove_worktree(
+    dir: &Path,
+    slice_id: &str,
+    exit: i32,
+    opts: &NextRedOpts,
+) -> Result<(), KernelError> {
+    let prune = if exit == 0 {
+        opts.prune_on_success
+    } else if opts.keep_on_failure {
+        false
+    } else {
+        opts.prune_on_success
+    };
+    if prune {
+        remove_worktree(dir, slice_id)?;
+    }
+    Ok(())
 }
 
 fn falsifier_present(wm: &Path, wt: &Path) -> bool {

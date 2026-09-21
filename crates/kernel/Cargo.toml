@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "FLOOR/TRACE/EVENTS writers, foreground go, invoke/run, git worktree mint, NEXT RED stub (no HTTP)"
+description = "FLOOR/TRACE/EVENTS writers, foreground go (QUESTIONS then injected next_red), invoke/run, git worktree mint/remove, NEXT RED keep-on-failure, close_walk, STOP-ASK QUESTIONS (no HTTP)"
 
 [dependencies]
 crucible-contract = { path = "../contract" }

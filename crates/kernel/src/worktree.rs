@@ -49,6 +49,37 @@ pub fn mint_worktree(dir: impl AsRef<Path>, id: &str) -> Result<PathBuf, KernelE
     Ok(path)
 }
 
+/// Remove the kernel-owned git worktree at `<repo>/.wm/worktrees/<id>`.
+///
+/// Uses `git worktree remove --force` (not a raw `rm` of `.git`). Callers must
+/// invoke this only on success paths; keep-on-failure never uses it after a
+/// nonzero child.
+pub fn remove_worktree(dir: impl AsRef<Path>, id: &str) -> Result<(), KernelError> {
+    if !slice_id_ok(id) {
+        return Err(KernelError::Message(format!("invalid slice id: {id}")));
+    }
+    let dir = dir.as_ref();
+    let (repo, _) = resolve_wm(dir);
+    let wm = ensure_wm(&repo)?;
+    let path = wm.join("worktrees").join(id);
+    if !path.exists() && !path.join(".git").is_file() {
+        return Ok(());
+    }
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["worktree", "remove", "--force"])
+        .arg(&path)
+        .output()?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(KernelError::Message(format!(
+            "git worktree remove failed: {err}"
+        )));
+    }
+    Ok(())
+}
+
 fn slice_id_ok(id: &str) -> bool {
     if id.is_empty() || id == "." || id == ".." {
         return false;

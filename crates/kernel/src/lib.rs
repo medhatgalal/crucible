@@ -1,5 +1,6 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. `go` wires QUESTIONS then injected `next_red` (no grok, no auto-close). No HTTP. No Herdr / Grok / EngOS types.
 
+mod close;
 mod error;
 mod events;
 mod floor;
@@ -7,21 +8,24 @@ mod go;
 mod invoke;
 mod metrics;
 mod paths;
+mod questions;
 mod red;
 mod station;
 mod trace;
 mod worktree;
 
+pub use close::{close_walk, CloseWalk};
 pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
-pub use red::{next_red, NextRed};
+pub use questions::{stop_ask_questions, StopAskQuestions};
+pub use red::{next_red, next_red_with, NextRed, NextRedOpts};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
-pub use worktree::mint_worktree;
+pub use worktree::{mint_worktree, remove_worktree};
 
 pub use crucible_contract::{
     format_rfc3339_z, parse_rfc3339_z, Clock, Event, EventKind, FixedClock, SystemClock,
@@ -31,10 +35,14 @@ pub use crucible_contract::{
 mod tests {
     use super::*;
     use crucible_contract::WalkSnapshot;
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, MutexGuard};
+
+    static RED_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -476,8 +484,36 @@ mod tests {
         assert!(metrics.contains("STOP-ASK INTAKE"));
     }
 
+    fn lock_red_env() -> MutexGuard<'static, ()> {
+        RED_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_red_env(program: Option<&OsStr>, args: Option<&str>) {
+        // SAFETY: callers hold RED_ENV_LOCK; tests do not read/write these
+        // keys from other threads while the guard is live.
+        unsafe {
+            match program {
+                Some(p) => std::env::set_var("CRUCIBLE_RED_PROGRAM", p),
+                None => std::env::remove_var("CRUCIBLE_RED_PROGRAM"),
+            }
+            match args {
+                Some(a) => std::env::set_var("CRUCIBLE_RED_ARGS", a),
+                None => std::env::remove_var("CRUCIBLE_RED_ARGS"),
+            }
+        }
+    }
+
+    struct ClearRedEnv;
+    impl Drop for ClearRedEnv {
+        fn drop(&mut self) {
+            set_red_env(None, None);
+        }
+    }
+
     #[test]
     fn go_idea_without_closed_refuses_brick_loop() {
+        let _lock = lock_red_env();
+        set_red_env(None, None);
         let tmp = Tmp::new();
         fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
         let r = go(tmp.path(), &clock()).unwrap();
@@ -496,6 +532,220 @@ mod tests {
         assert!(
             !ev.iter().any(|e| e.kind == EventKind::Halt),
             "brick refuse is not a halt: {ev:?}"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "brick refuse must not close_walk"
+        );
+    }
+
+    #[test]
+    fn go_idea_questions_without_answers_stop_ask() {
+        let _lock = lock_red_env();
+        set_red_env(None, None);
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 1);
+        assert!(
+            r.stdout.contains("STOP-ASK QUESTIONS"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "QUESTIONS gate must not proceed to NEXT RED: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt
+                    && e.card.as_deref() == Some("STOP-ASK QUESTIONS")),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.contains("STOP-ASK QUESTIONS"));
+        assert!(
+            !tmp.path().join("ANSWERS.md").exists(),
+            "must not invent ANSWERS.md"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn go_questions_need_ask_beats_injected_red_program() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "QUESTIONS must win over CRUCIBLE_RED_PROGRAM: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert!(
+            r.stdout.contains("STOP-ASK QUESTIONS"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to NEXT RED when QUESTIONS need ask: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "next_red must not mint a worktree when QUESTIONS need ask: {}",
+            wt.display()
+        );
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "injected red program must not write FALSIFIER before STOP-ASK QUESTIONS"
+        );
+        assert!(
+            !wt.join("marker").exists(),
+            "injected red program must not run (no worktree marker)"
+        );
+        assert!(!tmp.path().join("marker").exists());
+        assert!(!tmp.path().join("ANSWERS.md").exists());
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt
+                    && e.card.as_deref() == Some("STOP-ASK QUESTIONS")),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::InvokeEnd),
+            "next_red must not invoke when QUESTIONS need ask: {ev:?}"
+        );
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Card && e.card.as_deref() == Some("NEXT RED")),
+            "no NEXT RED card when QUESTIONS need ask: {ev:?}"
+        );
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        fs::write(tmp.path().join("ANSWERS.md"), "").unwrap();
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "zero-byte ANSWERS.md is POSIX ! -s; QUESTIONS still beats red env"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            "",
+            "must not invent answers"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(
+            !tmp.wm().join("worktrees").join("s1").join(".git").is_file(),
+            "empty ANSWERS must not reach next_red"
+        );
+        assert!(!tmp.wm().join("FALSIFIER").is_file());
+    }
+
+    #[test]
+    fn go_idea_env_red_program_floor_next_red_build() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 0, "stderr={:?} stdout={:?}", r.stderr, r.stdout);
+        assert!(
+            r.stdout.contains("NEXT RED"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk after NEXT RED"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "card NEXT RED / BUILD: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(0)),
+            "invoke_end NEXT RED: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "one-card NEXT RED must not halt/close: {ev:?}"
         );
     }
 
@@ -1015,5 +1265,485 @@ mod tests {
             ),
             "{ev:?}"
         );
+    }
+
+    fn worktree_list(repo: &Path) -> String {
+        let list = Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(repo)
+            .output()
+            .expect("git worktree list");
+        assert!(
+            list.status.success(),
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&list.stderr)
+        );
+        String::from_utf8_lossy(&list.stdout).into_owned()
+    }
+
+    fn assert_worktree_kept(repo: &Path, id: &str) {
+        let wt = repo.join(".wm").join("worktrees").join(id);
+        assert!(
+            wt.exists(),
+            "worktree dir must remain after nonzero exit (remove_worktree on failure would delete it): {}",
+            wt.display()
+        );
+        assert!(
+            wt.join(".git").is_file(),
+            "git worktree .git file must remain after nonzero exit: {}",
+            wt.display()
+        );
+        let list = worktree_list(repo);
+        let needle = format!("worktrees/{id}");
+        assert!(
+            list.contains(&needle),
+            "git worktree list must still contain {needle} after nonzero (git worktree remove on failure would drop it): {list}"
+        );
+    }
+
+    #[test]
+    fn next_red_nonzero_exit_keeps_worktree_and_records_invoke_end() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("false"),
+            &[],
+            "sess-fail",
+            &clock(),
+        )
+        .unwrap();
+
+        assert_eq!(r.exit, 1, "posix false must exit nonzero");
+        assert_eq!(r.worktree, tmp.wm().join("worktrees").join("s1"));
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(r.station, "ANDON");
+        assert!(
+            r.card.starts_with("STOP-ASK"),
+            "false writes no FALSIFIER → STOP-ASK / ANDON, got {}",
+            r.card
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-fail")
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(1)),
+            "invoke_end with nonzero exit must still land on repo .wm: {ev:?}"
+        );
+        assert!(tmp.wm().join("EVENTS").is_file());
+        assert!(
+            !r.worktree.join(".wm").join("EVENTS").exists()
+                || fs::canonicalize(r.worktree.join(".wm")).ok() == fs::canonicalize(tmp.wm()).ok(),
+            "EVENTS stay on the product .wm"
+        );
+    }
+
+    #[test]
+    fn next_red_nonzero_with_falsifier_keeps_next_red_floor_and_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER; exit 1"],
+            "sess-red-fail",
+            &clock(),
+        )
+        .unwrap();
+
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-red-fail")
+                && e.exit == Some(1)),
+            "invoke_end nonzero on repo .wm: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "child failure must not skip NEXT RED FLOOR: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn next_red_prune_on_success_removes_worktree_only_when_exit_zero() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let opts = NextRedOpts {
+            keep_on_failure: true,
+            prune_on_success: true,
+        };
+
+        let r = next_red_with(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            "sess-prune",
+            &clock(),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "prune_on_success must git worktree remove after exit 0: {}",
+            wt.display()
+        );
+        let list = worktree_list(tmp.path());
+        assert!(
+            !list.contains("worktrees/s1"),
+            "git worktree list must not contain worktrees/s1 after prune_on_success: {list}"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-prune")
+                && e.exit == Some(0)),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn next_red_prune_on_success_does_not_remove_on_nonzero() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let opts = NextRedOpts {
+            keep_on_failure: true,
+            prune_on_success: true,
+        };
+
+        let r = next_red_with(
+            tmp.path(),
+            "s1",
+            posix_tool("false"),
+            &[],
+            "sess-prune-fail",
+            &clock(),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(r.exit, 1);
+        assert_worktree_kept(tmp.path(), "s1");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-prune-fail")
+                && e.exit == Some(1)),
+            "failure path must not skip invoke_end: {ev:?}"
+        );
+        assert!(
+            tmp.wm().join("FLOOR.md").is_file(),
+            "NEXT RED FLOOR write still happens on failure"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+    }
+
+    #[test]
+    fn close_walk_pass_stamps_closed_halt_lesson_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let wt = mint_worktree(tmp.path(), "s1").unwrap();
+        assert!(wt.join(".git").is_file());
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let r = close_walk(
+            tmp.path(),
+            "PASS",
+            Some("prefer keep worktree on close"),
+            3,
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.card, "CLOSED PASS");
+        assert_eq!(r.station, "DONE");
+        assert_eq!(r.elapsed_s, 12);
+
+        let closed = fs::read_to_string(tmp.wm().join("CLOSED")).unwrap();
+        assert!(
+            closed.starts_with("CLOSED PASS\n"),
+            "first line is CLOSED PASS: {closed}"
+        );
+        assert!(
+            closed.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{closed}"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: DONE\n"), "{floor}");
+        assert!(floor.contains("card: CLOSED PASS\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let row = metrics.lines().nth(1).unwrap();
+        let cols: Vec<&str> = row.split('\t').collect();
+        assert_eq!(cols[1], "CLOSED PASS");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("CLOSED PASS")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(3)),
+            "halt CLOSED PASS elapsed_s/iterations: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Lesson
+                && e.note.as_deref() == Some("prefer keep worktree on close")),
+            "EVENTS lesson line: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn close_walk_nobuild_stamps_closed_and_halt() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let r = close_walk(tmp.path(), "NO-BUILD", Some("no product path"), 1, &clock()).unwrap();
+        assert_eq!(r.card, "CLOSED NO-BUILD");
+        assert_eq!(r.station, "DONE");
+        assert_eq!(r.elapsed_s, 12);
+
+        let closed = fs::read_to_string(tmp.wm().join("CLOSED")).unwrap();
+        assert!(closed.starts_with("CLOSED NO-BUILD\n"), "{closed}");
+        assert!(
+            closed.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{closed}"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: DONE\n"), "{floor}");
+        assert!(floor.contains("card: CLOSED NO-BUILD\n"), "{floor}");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("CLOSED NO-BUILD")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(1)),
+            "halt CLOSED NO-BUILD: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(
+                |e| e.kind == EventKind::Lesson && e.note.as_deref() == Some("no product path")
+            ),
+            "{ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn close_walk_missing_lesson_refuses_and_does_not_write_closed() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+
+        let err = close_walk(tmp.path(), "PASS", None, 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("close without a lesson line"),
+            "POSIX cmd_close dies without a lesson: {err}"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "missing lesson must not write CLOSED"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "missing lesson must not metrics_append"
+        );
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "missing lesson must not floor_write"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Halt || e.kind == EventKind::Lesson),
+            "refuse must not halt/lesson: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+
+        let err = close_walk(tmp.path(), "PASS", Some(""), 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("close without a lesson line"),
+            "empty lesson: {err}"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+
+        let err = close_walk(tmp.path(), "PASS", Some("one\ntwo"), 1, &clock()).unwrap_err();
+        assert!(
+            err.to_string().contains("lesson must be one line"),
+            "POSIX close_append_lesson / cmd_close one-line: {err}"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn stop_ask_questions_missing_or_empty_answers_floor_halt_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(r.stop);
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK QUESTIONS");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("andon: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to next card: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let cols: Vec<&str> = metrics.lines().nth(1).unwrap().split('\t').collect();
+        assert_eq!(cols[1], "STOP-ASK QUESTIONS");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("STOP-ASK QUESTIONS")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(
+            !tmp.path().join("ANSWERS.md").exists(),
+            "kernel must not invent ANSWERS.md"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        fs::write(tmp.path().join("ANSWERS.md"), "").unwrap();
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(
+            r.stop,
+            "zero-byte ANSWERS.md is POSIX ! -s, same as missing"
+        );
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK QUESTIONS");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            "",
+            "must not invent answers into an empty ANSWERS.md"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn stop_ask_questions_present_line_continues_without_inventing() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let answers = "A local hello file is enough.\n";
+        fs::write(tmp.path().join("ANSWERS.md"), answers).unwrap();
+
+        let r = stop_ask_questions(tmp.path(), &clock()).unwrap();
+        assert!(!r.stop, "non-empty ANSWERS.md is not STOP-ASK QUESTIONS");
+        assert_eq!(r.exit, 0);
+
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "continue must not floor_write STOP-ASK QUESTIONS"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "continue must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "present ANSWERS is not a halt: {ev:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
+            answers,
+            "kernel must not invent or rewrite answers"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
     }
 }

@@ -1,7 +1,7 @@
 //! CLI: query verbs stay read-only; `go` writes FLOOR/TRACE via kernel (foreground).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,6 +33,44 @@ impl Drop for Tmp {
 
 fn bin() -> Command {
     Command::new(env!("CARGO_BIN_EXE_crucible"))
+}
+
+fn posix_tool(name: &str) -> PathBuf {
+    for p in [format!("/bin/{name}"), format!("/usr/bin/{name}")] {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return p;
+        }
+    }
+    panic!("{name} not found in /bin or /usr/bin");
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let o = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_AUTHOR_NAME", "crucible")
+        .env("GIT_AUTHOR_EMAIL", "crucible@example.test")
+        .env("GIT_COMMITTER_NAME", "crucible")
+        .env("GIT_COMMITTER_EMAIL", "crucible@example.test")
+        .output()
+        .expect("spawn git");
+    assert!(
+        o.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+fn init_git_product(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    git(dir, &["config", "user.name", "crucible"]);
+    git(dir, &["config", "user.email", "crucible@example.test"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+    fs::write(dir.join(".gitignore"), ".wm/\n").unwrap();
+    fs::write(dir.join("README"), "product\n").unwrap();
+    git(dir, &["add", ".gitignore", "README"]);
+    git(dir, &["commit", "-qm", "init"]);
 }
 
 fn golden_board(root: &std::path::Path) -> String {
@@ -332,13 +370,147 @@ fn go_empty_idea_stop_ask_intake() {
 fn go_idea_without_closed_refuses_brick_loop() {
     let tmp = Tmp::new();
     fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-    let out = bin().current_dir(&tmp.root).arg("go").output().unwrap();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env_remove("CRUCIBLE_RED_PROGRAM")
+        .env_remove("CRUCIBLE_RED_ARGS")
+        .arg("go")
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("go: brick loop not ported"),
         "stderr={stderr:?} stdout={}",
         String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+}
+
+#[test]
+fn go_idea_questions_without_answers_stop_ask() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    fs::write(tmp.root.join("QUESTIONS.md"), "What should we build?\n").unwrap();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env_remove("CRUCIBLE_RED_PROGRAM")
+        .env_remove("CRUCIBLE_RED_ARGS")
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "QUESTIONS without ANSWERS must STOP-ASK: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK QUESTIONS"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(!tmp.root.join("ANSWERS.md").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_questions_need_ask_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    fs::write(tmp.root.join("QUESTIONS.md"), "What should we build?\n").unwrap();
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "QUESTIONS must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK QUESTIONS"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT "),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when QUESTIONS need ask"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(!tmp.root.join("ANSWERS.md").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_idea_env_red_program_floor_next_red_build() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "injected red program: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+    assert!(floor.contains("station: BUILD\n"), "{floor}");
+    assert!(!floor.to_ascii_lowercase().contains("grok"));
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        wt.join("marker").is_file(),
+        "child must write marker in minted cwd"
+    );
+    assert!(!tmp.root.join("marker").exists());
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/FALSIFIER"))
+            .unwrap()
+            .trim(),
+        "FAIL"
+    );
+    assert!(
+        !tmp.root.join(".wm/CLOSED").exists(),
+        "must not auto close_walk"
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
 }
