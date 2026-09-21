@@ -511,6 +511,15 @@ fn write_valid_map_human(dir: &Path) {
     .unwrap();
 }
 
+fn plant_map_verdict(dir: &Path, word: &str) {
+    fs::create_dir_all(dir.join(".wm")).unwrap();
+    fs::write(
+        dir.join(".wm").join("map-verdict"),
+        format!("WORD: {word}\nAGENT: bob\nMAP: MAP.md\nwhen: 2026-09-21T00:00:00Z\n"),
+    )
+    .unwrap();
+}
+
 fn plant_panel(
     dir: &Path,
     maker: &str,
@@ -947,6 +956,185 @@ fn go_closed_with_idea_is_foreground_noop() {
         "CLOSED no-op must not write EVENTS halt: {events}"
     );
     assert!(!wm.join("go.pid").exists());
+}
+
+#[test]
+fn go_map_revise_under_cap_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_map_verdict(&tmp.root, "MAP-REVISE");
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "MAP-REVISE under cap must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK NEXT MAP"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK NEXT MAP\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT RED"),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when MAP-REVISE under cap"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_map_revise_at_cap_escalates_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_map_verdict(&tmp.root, "MAP-REVISE");
+    fs::write(tmp.root.join(".wm").join("map-revise-count"), "2\n").unwrap();
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "MAP-REVISE at cap must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ESCALATE MAP_REVISE"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: ESCALATE MAP_REVISE\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT RED"),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when MAP-REVISE is at cap"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_map_accept_continues_to_injected_red() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_map_verdict(&tmp.root, "MAP-ACCEPT");
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "MAP-ACCEPT must continue to red: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("NEXT RED"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+    assert!(floor.contains("station: BUILD\n"), "{floor}");
+    assert!(!floor.contains("STOP-ASK NEXT MAP"), "{floor}");
+    assert!(!floor.contains("ESCALATE MAP_REVISE"), "{floor}");
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(wt.join("marker").is_file());
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/FALSIFIER"))
+            .unwrap()
+            .trim(),
+        "FAIL"
+    );
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_map_stop_ask_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_map_verdict(&tmp.root, "MAP-STOP-ASK");
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "MAP-STOP-ASK must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("STOP-ASK"), "stdout={stdout:?}");
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK\n"), "{floor}");
+    assert!(!floor.contains("NEXT RED"), "{floor}");
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!tmp.root.join(".wm/worktrees/s1").join(".git").is_file());
+    assert!(!tmp.root.join(".wm/map-revise-count").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
 }
 
 #[test]
