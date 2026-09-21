@@ -1,9 +1,10 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go`. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. No HTTP. No Herdr / Grok / EngOS types.
 
 mod error;
 mod events;
 mod floor;
 mod go;
+mod invoke;
 mod metrics;
 mod paths;
 mod station;
@@ -13,6 +14,7 @@ pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
+pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
@@ -67,6 +69,16 @@ mod tests {
 
     fn clock() -> FixedClock {
         FixedClock::new(t0() + 12)
+    }
+
+    fn posix_tool(name: &str) -> PathBuf {
+        for p in [format!("/bin/{name}"), format!("/usr/bin/{name}")] {
+            let p = PathBuf::from(p);
+            if p.is_file() {
+                return p;
+            }
+        }
+        panic!("{name} not found in /bin or /usr/bin");
     }
 
     fn plant_trace(wm: &Path, card: &str) {
@@ -508,5 +520,139 @@ mod tests {
             "CLOSED no-op must not write EVENTS halt: {ev:?}"
         );
         assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn run_true_records_invoke_end_exit_zero() {
+        let tmp = Tmp::new();
+        let r = run(
+            tmp.path(),
+            tmp.path(),
+            posix_tool("true"),
+            &[],
+            "sess-1",
+            "NEXT RUN maker-build",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+        assert!(r.elapsed_s >= 0, "elapsed_s is measured, not absent");
+        assert!(
+            r.elapsed_s < 5,
+            "true must not hang: elapsed_s={}",
+            r.elapsed_s
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1, "one invoke_end, no extra kinds: {ev:?}");
+        assert_eq!(ev[0].kind, EventKind::InvokeEnd);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-1"));
+        assert_eq!(ev[0].card.as_deref(), Some("NEXT RUN maker-build"));
+        assert_eq!(ev[0].elapsed_s, Some(r.elapsed_s));
+        assert_eq!(ev[0].exit, Some(0));
+        let text = fs::read_to_string(tmp.wm().join("EVENTS")).unwrap();
+        assert!(text.contains("\"kind\":\"invoke_end\""));
+        assert!(text.contains("\"session\":\"sess-1\""));
+        assert!(text.contains("\"exit\":0"));
+        assert!(!text.contains("\"kind\":\"dispatch\""));
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn run_false_records_invoke_end_nonzero_exit() {
+        let tmp = Tmp::new();
+        let r = run(
+            tmp.path(),
+            tmp.path(),
+            posix_tool("false"),
+            &[],
+            "sess-fail",
+            "NEXT RUN maker-build",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.exit, 1);
+        assert!(r.elapsed_s >= 0);
+        assert!(r.elapsed_s < 5);
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].kind, EventKind::InvokeEnd);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-fail"));
+        assert_eq!(ev[0].card.as_deref(), Some("NEXT RUN maker-build"));
+        assert_eq!(ev[0].elapsed_s, Some(r.elapsed_s));
+        assert_eq!(ev[0].exit, Some(1));
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "nonzero worker exit is invoke_end, not halt: {ev:?}"
+        );
+        let text = fs::read_to_string(tmp.wm().join("EVENTS")).unwrap();
+        assert!(text.contains("\"kind\":\"invoke_end\""));
+        assert!(text.contains("\"exit\":1"));
+        assert!(!text.contains("\"kind\":\"halt\""));
+    }
+
+    #[test]
+    fn run_sleep_zero_waits_foreground() {
+        let tmp = Tmp::new();
+        let marker = tmp.path().join("waited");
+        let script = format!("sleep 0; printf ok > {}", marker.display());
+        let r = run(
+            tmp.path(),
+            tmp.path(),
+            "/bin/sh",
+            &["-c", &script],
+            "sess-wait",
+            "NEXT RUN maker-build",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+        assert!(
+            marker.is_file(),
+            "run must wait for the child; marker is written after sleep 0"
+        );
+        assert_eq!(fs::read_to_string(&marker).unwrap(), "ok");
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev[0].kind, EventKind::InvokeEnd);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-wait"));
+        assert_eq!(ev[0].exit, Some(0));
+        assert_eq!(ev[0].elapsed_s, Some(r.elapsed_s));
+        assert!(r.elapsed_s >= 0);
+        assert!(r.elapsed_s < 5);
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn run_uses_worktree_cwd_and_repo_events() {
+        let tmp = Tmp::new();
+        let wt = tmp.path().join("worktree");
+        fs::create_dir_all(&wt).unwrap();
+        let r = run(
+            tmp.path(),
+            &wt,
+            "/bin/sh",
+            &["-c", "printf x > here.txt"],
+            "sess-wt",
+            "NEXT RUN reviewer",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+        assert_eq!(fs::read_to_string(wt.join("here.txt")).unwrap(), "x");
+        assert!(
+            !tmp.path().join("here.txt").exists(),
+            "child cwd is the worktree, not the repo root"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].kind, EventKind::InvokeEnd);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-wt"));
+        assert_eq!(ev[0].card.as_deref(), Some("NEXT RUN reviewer"));
+        assert!(tmp.wm().join("EVENTS").is_file());
+        assert!(
+            !wt.join(".wm").exists(),
+            "EVENTS belong on the repo .wm, not a worktree .wm"
+        );
     }
 }
