@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. No HTTP. No Herdr / Grok / EngOS types.
 
 mod error;
 mod events;
@@ -18,10 +18,10 @@ pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
-pub use red::{next_red, NextRed};
+pub use red::{next_red, next_red_with, NextRed, NextRedOpts};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
-pub use worktree::mint_worktree;
+pub use worktree::{mint_worktree, remove_worktree};
 
 pub use crucible_contract::{
     format_rfc3339_z, parse_rfc3339_z, Clock, Event, EventKind, FixedClock, SystemClock,
@@ -1014,6 +1014,221 @@ mod tests {
                 |e| e.kind == EventKind::InvokeEnd && e.session.as_deref() == Some("sess-live")
             ),
             "{ev:?}"
+        );
+    }
+
+    fn worktree_list(repo: &Path) -> String {
+        let list = Command::new("git")
+            .args(["worktree", "list"])
+            .current_dir(repo)
+            .output()
+            .expect("git worktree list");
+        assert!(
+            list.status.success(),
+            "git worktree list failed: {}",
+            String::from_utf8_lossy(&list.stderr)
+        );
+        String::from_utf8_lossy(&list.stdout).into_owned()
+    }
+
+    fn assert_worktree_kept(repo: &Path, id: &str) {
+        let wt = repo.join(".wm").join("worktrees").join(id);
+        assert!(
+            wt.exists(),
+            "worktree dir must remain after nonzero exit (remove_worktree on failure would delete it): {}",
+            wt.display()
+        );
+        assert!(
+            wt.join(".git").is_file(),
+            "git worktree .git file must remain after nonzero exit: {}",
+            wt.display()
+        );
+        let list = worktree_list(repo);
+        let needle = format!("worktrees/{id}");
+        assert!(
+            list.contains(&needle),
+            "git worktree list must still contain {needle} after nonzero (git worktree remove on failure would drop it): {list}"
+        );
+    }
+
+    #[test]
+    fn next_red_nonzero_exit_keeps_worktree_and_records_invoke_end() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("false"),
+            &[],
+            "sess-fail",
+            &clock(),
+        )
+        .unwrap();
+
+        assert_eq!(r.exit, 1, "posix false must exit nonzero");
+        assert_eq!(r.worktree, tmp.wm().join("worktrees").join("s1"));
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(r.station, "ANDON");
+        assert!(
+            r.card.starts_with("STOP-ASK"),
+            "false writes no FALSIFIER → STOP-ASK / ANDON, got {}",
+            r.card
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-fail")
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(1)),
+            "invoke_end with nonzero exit must still land on repo .wm: {ev:?}"
+        );
+        assert!(tmp.wm().join("EVENTS").is_file());
+        assert!(
+            !r.worktree.join(".wm").join("EVENTS").exists()
+                || fs::canonicalize(r.worktree.join(".wm")).ok() == fs::canonicalize(tmp.wm()).ok(),
+            "EVENTS stay on the product .wm"
+        );
+    }
+
+    #[test]
+    fn next_red_nonzero_with_falsifier_keeps_next_red_floor_and_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER; exit 1"],
+            "sess-red-fail",
+            &clock(),
+        )
+        .unwrap();
+
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-red-fail")
+                && e.exit == Some(1)),
+            "invoke_end nonzero on repo .wm: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "child failure must not skip NEXT RED FLOOR: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn next_red_prune_on_success_removes_worktree_only_when_exit_zero() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let opts = NextRedOpts {
+            keep_on_failure: true,
+            prune_on_success: true,
+        };
+
+        let r = next_red_with(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            "sess-prune",
+            &clock(),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(r.exit, 0);
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "prune_on_success must git worktree remove after exit 0: {}",
+            wt.display()
+        );
+        let list = worktree_list(tmp.path());
+        assert!(
+            !list.contains("worktrees/s1"),
+            "git worktree list must not contain worktrees/s1 after prune_on_success: {list}"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-prune")
+                && e.exit == Some(0)),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn next_red_prune_on_success_does_not_remove_on_nonzero() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let opts = NextRedOpts {
+            keep_on_failure: true,
+            prune_on_success: true,
+        };
+
+        let r = next_red_with(
+            tmp.path(),
+            "s1",
+            posix_tool("false"),
+            &[],
+            "sess-prune-fail",
+            &clock(),
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(r.exit, 1);
+        assert_worktree_kept(tmp.path(), "s1");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-prune-fail")
+                && e.exit == Some(1)),
+            "failure path must not skip invoke_end: {ev:?}"
+        );
+        assert!(
+            tmp.wm().join("FLOOR.md").is_file(),
+            "NEXT RED FLOOR write still happens on failure"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
         );
     }
 }
