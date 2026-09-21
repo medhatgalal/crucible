@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub. No HTTP. No Herdr / Grok / EngOS types.
 
 mod error;
 mod events;
@@ -7,6 +7,7 @@ mod go;
 mod invoke;
 mod metrics;
 mod paths;
+mod red;
 mod station;
 mod trace;
 mod worktree;
@@ -17,6 +18,7 @@ pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use invoke::{run, InvokeRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
+pub use red::{next_red, NextRed};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
 pub use worktree::mint_worktree;
@@ -798,5 +800,190 @@ mod tests {
             "this slice has no panel; isolation stays SUBAGENT-ISOLATED: {floor}"
         );
         assert!(!floor.to_ascii_lowercase().contains("grok"));
+    }
+
+    #[test]
+    fn next_red_go_start_mints_runs_falsifier_next_red_build() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            "sess-red",
+            &clock(),
+        )
+        .unwrap();
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_eq!(r.worktree, wt);
+        assert!(
+            wt.join(".git").is_file(),
+            "minted path must be a git worktree: {}",
+            wt.display()
+        );
+        assert_eq!(r.exit, 0);
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+
+        let fals = tmp.wm().join("FALSIFIER");
+        assert!(
+            fals.is_file(),
+            "POSIX FALSIFIER lives on product .wm (worktree .wm is the same file): {}",
+            fals.display()
+        );
+        let body = fs::read_to_string(&fals).unwrap();
+        assert_eq!(body.trim(), "FAIL");
+        let wt_fals = wt.join(".wm").join("FALSIFIER");
+        assert!(
+            wt_fals.is_file(),
+            "worktree cwd echo FAIL > .wm/FALSIFIER must resolve (symlink or same path)"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(floor.contains("wip: s1\n"), "{floor}");
+        assert!(floor.contains("  .wm/FALSIFIER\n"), "{floor}");
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev[0].kind, EventKind::WalkStart);
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-red")
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(0)),
+            "invoke_end for NEXT RED: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "card NEXT RED / BUILD: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "present FALSIFIER is NEXT RED, not halt: {ev:?}"
+        );
+        assert!(tmp.wm().join("EVENTS").is_file());
+        assert!(
+            !wt.join(".wm").join("EVENTS").exists()
+                || fs::canonicalize(wt.join(".wm")).ok() == fs::canonicalize(tmp.wm()).ok(),
+            "EVENTS stay on the product .wm"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn next_red_missing_falsifier_floor_andon() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("true"),
+            &[],
+            "sess-nofals",
+            &clock(),
+        )
+        .unwrap();
+
+        assert_eq!(r.exit, 0);
+        assert_eq!(r.station, "ANDON");
+        assert!(
+            r.card.starts_with("STOP-ASK"),
+            "POSIX missing FALSIFIER refuses red → STOP-ASK / ANDON, got {}",
+            r.card
+        );
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "true must not invent FALSIFIER"
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(floor.contains(&format!("card: {}\n", r.card)), "{floor}");
+        assert!(floor.contains("andon: "), "{floor}");
+        assert!(!floor.contains("  .wm/FALSIFIER\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.session.as_deref() == Some("sess-nofals")
+                && e.exit == Some(0)),
+            "invoke_end still recorded: {ev:?}"
+        );
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Card && e.station.as_deref() == Some("ANDON")),
+            "ANDON card event: {ev:?}"
+        );
+        assert_eq!(ev[0].kind, EventKind::WalkStart);
+    }
+
+    #[test]
+    fn next_red_skips_go_start_when_t0_present() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        plant_trace(&tmp.wm(), "NEXT INTAKE");
+        let previous = fs::read_to_string(tmp.wm().join("TRACE.tsv")).unwrap();
+        assert!(previous.contains("NEXT INTAKE"));
+
+        let r = next_red(
+            tmp.path(),
+            "s1",
+            posix_tool("sh"),
+            &["-c", "echo FAIL > .wm/FALSIFIER"],
+            "sess-live",
+            &clock(),
+        )
+        .unwrap();
+        assert_eq!(r.card, "NEXT RED");
+        assert_eq!(r.station, "BUILD");
+        assert!(r.archived.is_none(), "live walk must not archive TRACE");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("t0")).unwrap().trim(),
+            &t0().to_string(),
+            "go_start would rewrite t0 to now"
+        );
+
+        let live = fs::read_to_string(tmp.wm().join("TRACE.tsv")).unwrap();
+        assert!(
+            live.contains("NEXT INTAKE"),
+            "skipping go_start keeps this-run TRACE: {live}"
+        );
+        assert!(live.contains("NEXT RED"));
+        assert!(
+            tmp.wm()
+                .join("archive")
+                .read_dir()
+                .ok()
+                .is_none_or(|rd| rd.count() == 0),
+            "no TRACE archive when t0 already exists"
+        );
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::WalkStart),
+            "go_start if needed: t0 present means no walk_start: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(
+                |e| e.kind == EventKind::InvokeEnd && e.session.as_deref() == Some("sess-live")
+            ),
+            "{ev:?}"
+        );
     }
 }
