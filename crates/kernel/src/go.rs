@@ -7,6 +7,7 @@ use crucible_contract::{resolve_wm, Clock};
 use crate::error::KernelError;
 use crate::floor::floor_write;
 use crate::independence::check_independence;
+use crate::inspect::check_inspect;
 use crate::map_human::stop_ask_map_human;
 use crate::map_revise::check_map_revise;
 use crate::metrics::metrics_append;
@@ -31,7 +32,8 @@ pub struct GoRun {
 
 /// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
 /// gate, MAP-HUMAN gate, independence CHECK, MAP-REVISE CHECK, then one
-/// injected `next_red` (no `close_walk`).
+/// injected `next_red` (no `close_walk`). After FALSIFIER, the inspect
+/// file-gate may halt (`STOP-ASK NEXT RUN reviewer` / `ESCALATE EARLY_IMPLEMENT`).
 /// Leftover product FALSIFIER and a live `s1` worktree are dropped before
 /// that brick.
 ///
@@ -116,6 +118,17 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     reset_brick(dir, SLICE_ID)?;
     let red = next_red(dir, SLICE_ID, &program, &arg_refs, RED_SESSION, clock)?;
+    if red.card == "NEXT RED" {
+        let inspect = check_inspect(dir, clock)?;
+        if inspect.stop {
+            return Ok(GoRun {
+                exit: inspect.exit,
+                stdout: format!("{}\n", inspect.card),
+                stderr: String::new(),
+                archived: started.archived.or(red.archived),
+            });
+        }
+    }
     Ok(GoRun {
         exit: red.exit,
         stdout: format!("{}\n", red.card),
