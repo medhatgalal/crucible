@@ -1,3 +1,4 @@
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,9 +8,13 @@ use crate::error::KernelError;
 use crate::floor::floor_write;
 use crate::metrics::metrics_append;
 use crate::paths::first_nonempty_line;
+use crate::questions::stop_ask_questions;
+use crate::red::next_red;
 use crate::trace::{go_start, GoStart};
 
 const INDEPENDENCE: &str = "SUBAGENT-ISOLATED";
+const SLICE_ID: &str = "s1";
+const RED_SESSION: &str = "go-red";
 
 /// Result of a foreground `go` walk (no daemon).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,9 +25,11 @@ pub struct GoRun {
     pub archived: Option<PathBuf>,
 }
 
-/// Minimal walker: `go_start`, then STOP-ASK INTAKE or CLOSED no-op.
+/// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
+/// gate, then one injected `next_red` (no `close_walk`).
 ///
-/// Does not port NEXT RED / BUILD. Stays in-process (no daemon).
+/// Production has no grok: without `CRUCIBLE_RED_PROGRAM` the brick loop
+/// still refuses. Stays in-process (no daemon).
 pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError> {
     let dir = dir.as_ref();
     let started = go_start(dir, clock)?;
@@ -51,13 +58,51 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         });
     }
 
-    // Brick loop (NEXT RED / BUILD) is a later slice. Honest refuse, foreground.
+    let asked = stop_ask_questions(dir, clock)?;
+    if asked.stop {
+        return Ok(GoRun {
+            exit: asked.exit,
+            stdout: format!("{}\n", asked.card),
+            stderr: String::new(),
+            archived: started.archived,
+        });
+    }
+
+    let Some((program, args)) = red_program_from_env() else {
+        return Ok(GoRun {
+            exit: 2,
+            stdout: String::new(),
+            stderr: "go: brick loop not ported\n".to_string(),
+            archived: started.archived,
+        });
+    };
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let red = next_red(dir, SLICE_ID, &program, &arg_refs, RED_SESSION, clock)?;
     Ok(GoRun {
-        exit: 2,
-        stdout: String::new(),
-        stderr: "go: brick loop not ported\n".to_string(),
-        archived: started.archived,
+        exit: red.exit,
+        stdout: format!("{}\n", red.card),
+        stderr: String::new(),
+        archived: started.archived.or(red.archived),
     })
+}
+
+/// Injected NEXT RED child. Unset/empty `CRUCIBLE_RED_PROGRAM` means not
+/// ported (do not default to grok). `CRUCIBLE_RED_ARGS` is newline-separated
+/// argv (`-c` then the `sh -c` body).
+fn red_program_from_env() -> Option<(String, Vec<String>)> {
+    let program = env::var("CRUCIBLE_RED_PROGRAM").ok()?;
+    if program.is_empty() {
+        return None;
+    }
+    let args = match env::var("CRUCIBLE_RED_ARGS") {
+        Ok(raw) if !raw.is_empty() => raw
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some((program, args))
 }
 
 fn idea_present(repo: &Path) -> bool {

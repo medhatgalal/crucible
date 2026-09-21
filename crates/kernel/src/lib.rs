@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. `go` wires QUESTIONS then injected `next_red` (no grok, no auto-close). No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -35,10 +35,14 @@ pub use crucible_contract::{
 mod tests {
     use super::*;
     use crucible_contract::WalkSnapshot;
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Mutex, MutexGuard};
+
+    static RED_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -480,8 +484,36 @@ mod tests {
         assert!(metrics.contains("STOP-ASK INTAKE"));
     }
 
+    fn lock_red_env() -> MutexGuard<'static, ()> {
+        RED_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn set_red_env(program: Option<&OsStr>, args: Option<&str>) {
+        // SAFETY: callers hold RED_ENV_LOCK; tests do not read/write these
+        // keys from other threads while the guard is live.
+        unsafe {
+            match program {
+                Some(p) => std::env::set_var("CRUCIBLE_RED_PROGRAM", p),
+                None => std::env::remove_var("CRUCIBLE_RED_PROGRAM"),
+            }
+            match args {
+                Some(a) => std::env::set_var("CRUCIBLE_RED_ARGS", a),
+                None => std::env::remove_var("CRUCIBLE_RED_ARGS"),
+            }
+        }
+    }
+
+    struct ClearRedEnv;
+    impl Drop for ClearRedEnv {
+        fn drop(&mut self) {
+            set_red_env(None, None);
+        }
+    }
+
     #[test]
     fn go_idea_without_closed_refuses_brick_loop() {
+        let _lock = lock_red_env();
+        set_red_env(None, None);
         let tmp = Tmp::new();
         fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
         let r = go(tmp.path(), &clock()).unwrap();
@@ -500,6 +532,120 @@ mod tests {
         assert!(
             !ev.iter().any(|e| e.kind == EventKind::Halt),
             "brick refuse is not a halt: {ev:?}"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "brick refuse must not close_walk"
+        );
+    }
+
+    #[test]
+    fn go_idea_questions_without_answers_stop_ask() {
+        let _lock = lock_red_env();
+        set_red_env(None, None);
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(tmp.path().join("QUESTIONS.md"), "What should we build?\n").unwrap();
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 1);
+        assert!(
+            r.stdout.contains("STOP-ASK QUESTIONS"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK QUESTIONS\n"), "{floor}");
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "QUESTIONS gate must not proceed to NEXT RED: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt
+                    && e.card.as_deref() == Some("STOP-ASK QUESTIONS")),
+            "halt STOP-ASK QUESTIONS: {ev:?}"
+        );
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.contains("STOP-ASK QUESTIONS"));
+        assert!(
+            !tmp.path().join("ANSWERS.md").exists(),
+            "must not invent ANSWERS.md"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn go_idea_env_red_program_floor_next_red_build() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 0, "stderr={:?} stdout={:?}", r.stderr, r.stdout);
+        assert!(
+            r.stdout.contains("NEXT RED"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk after NEXT RED"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "card NEXT RED / BUILD: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(0)),
+            "invoke_end NEXT RED: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "one-card NEXT RED must not halt/close: {ev:?}"
         );
     }
 
