@@ -1158,6 +1158,72 @@ fn go_map_stop_ask_beats_injected_red_program() {
 }
 
 #[test]
+fn go_env_red_success_no_build_cannot_skip_inspect_halt() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; echo no-build > .wm/red.status; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "env red success must not skip inspect halt: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout,
+        "STOP-ASK NEXT RUN reviewer\n",
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("card: STOP-ASK NEXT RUN reviewer\n"),
+        "{floor}"
+    );
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("card: NEXT RED\n"),
+        "final FLOOR must not stay BUILD: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        wt.join(".git").is_file(),
+        "inspect halt must keep the minted worktree: {}",
+        wt.display()
+    );
+    assert!(wt.join("marker").is_file());
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/FALSIFIER"))
+            .unwrap()
+            .trim(),
+        "FAIL"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/red.status"))
+            .unwrap()
+            .trim(),
+        "no-build"
+    );
+    assert!(
+        !tmp.root.join(".wm/CLOSED").exists(),
+        "must not auto close_walk"
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
 fn cargo_tree_has_no_herdr_grok_engos() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let out = Command::new("cargo")

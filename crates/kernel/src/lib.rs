@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. Independence CHECK: same-agent / empty worker halt `INDEPENDENCE_UNAVAILABLE`; missing panel and one-kind continue. MAP-REVISE CHECK: send-back cap halt `ESCALATE MAP_REVISE`; under cap `STOP-ASK NEXT MAP` (specifier not ported); `MAP-STOP-ASK` halt `STOP-ASK`; missing/MAP-ACCEPT continue. `go` wires QUESTIONS then MAP-HUMAN then independence then MAP-REVISE then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. Independence CHECK: same-agent / empty worker halt `INDEPENDENCE_UNAVAILABLE`; missing panel and one-kind continue. MAP-REVISE CHECK: send-back cap halt `ESCALATE MAP_REVISE`; under cap `STOP-ASK NEXT MAP` (specifier not ported); `MAP-STOP-ASK` halt `STOP-ASK`; missing/MAP-ACCEPT continue. After injected `next_red` succeeds (FALSIFIER present, FLOOR BUILD), inspect file-gate: `red.status=no-build` halt `STOP-ASK NEXT RUN reviewer`; `early-implement` halt `ESCALATE EARLY_IMPLEMENT`; missing/`red` continue. `go` wires QUESTIONS then MAP-HUMAN then independence then MAP-REVISE then injected `next_red` then inspect (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -6,6 +6,7 @@ mod events;
 mod floor;
 mod go;
 mod independence;
+mod inspect;
 mod invoke;
 mod map_human;
 mod map_revise;
@@ -23,6 +24,7 @@ pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use independence::{check_independence, IndependenceCheck};
+pub use inspect::{check_inspect, InspectCheck};
 pub use invoke::{run, InvokeRun};
 pub use map_human::{stop_ask_map_human, StopAskMapHuman};
 pub use map_revise::{check_map_revise, MapReviseCheck};
@@ -3024,5 +3026,307 @@ s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
                 .any(|e| e.kind == EventKind::Card && e.card.as_deref() == Some("NEXT RED")),
             "no NEXT RED card when MAP-STOP-ASK: {ev:?}"
         );
+    }
+
+    fn plant_red_status(dir: &Path, status: &str) {
+        fs::create_dir_all(dir.join(".wm")).unwrap();
+        fs::write(dir.join(".wm").join("red.status"), format!("{status}\n")).unwrap();
+    }
+
+    #[test]
+    fn check_inspect_no_build_stop_ask_reviewer_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.wm().join("FALSIFIER"), "FAIL\n").unwrap();
+        plant_red_status(tmp.path(), "no-build");
+        let before = fs::read_to_string(tmp.wm().join("red.status")).unwrap();
+
+        let r = check_inspect(tmp.path(), &clock()).unwrap();
+        assert!(
+            r.stop,
+            "POSIX no-build after FALSIFIER is INSPECT; reviewer not ported"
+        );
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK NEXT RUN reviewer");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("card: STOP-ASK NEXT RUN reviewer\n"),
+            "{floor}"
+        );
+        assert!(
+            floor.contains("andon: STOP-ASK NEXT RUN reviewer\n"),
+            "{floor}"
+        );
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("card: NEXT RED\n"),
+            "inspect halt must overwrite BUILD: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let cols: Vec<&str> = metrics.lines().nth(1).unwrap().split('\t').collect();
+        assert_eq!(cols[1], "STOP-ASK NEXT RUN reviewer");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("STOP-ASK NEXT RUN reviewer")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt STOP-ASK NEXT RUN reviewer: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("red.status")).unwrap(),
+            before,
+            "must not invent or rewrite red.status"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn check_inspect_early_implement_escalates_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.wm().join("FALSIFIER"), "FAIL\n").unwrap();
+        plant_red_status(tmp.path(), "early-implement");
+
+        let r = check_inspect(tmp.path(), &clock()).unwrap();
+        assert!(r.stop, "POSIX early-implement after red is ESCALATE");
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "ESCALATE EARLY_IMPLEMENT");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("card: ESCALATE EARLY_IMPLEMENT\n"),
+            "{floor}"
+        );
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(!floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("ESCALATE EARLY_IMPLEMENT")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt ESCALATE EARLY_IMPLEMENT: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn check_inspect_missing_or_red_status_continues_without_inventing() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        fs::write(tmp.wm().join("FALSIFIER"), "FAIL\n").unwrap();
+
+        let r = check_inspect(tmp.path(), &clock()).unwrap();
+        assert!(
+            !r.stop,
+            "missing red.status stays NEXT RED / BUILD (do not invent status)"
+        );
+        assert_eq!(r.exit, 0);
+        assert!(!tmp.wm().join("red.status").is_file());
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "missing red.status must not floor inspect"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "continue must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "missing red.status is not a halt: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+
+        plant_red_status(tmp.path(), "red");
+        let before = fs::read_to_string(tmp.wm().join("red.status")).unwrap();
+        let r = check_inspect(tmp.path(), &clock()).unwrap();
+        assert!(!r.stop, "red.status=red continues BUILD (maker-build)");
+        assert_eq!(r.exit, 0);
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "red.status=red must not floor inspect: {:?}",
+            tmp.wm().join("FLOOR.md")
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("red.status")).unwrap(),
+            before
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        plant_red_status(tmp.path(), "no-build");
+        let r = check_inspect(tmp.path(), &clock()).unwrap();
+        assert!(
+            !r.stop,
+            "no-build without FALSIFIER is not inspect (POSIX still maker-falsify)"
+        );
+        assert!(!tmp.wm().join("FALSIFIER").is_file());
+        assert!(!tmp.wm().join("FLOOR.md").is_file());
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn go_env_red_success_no_build_cannot_skip_inspect_halt() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; echo no-build > .wm/red.status; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "env red success (FALSIFIER) must not skip inspect halt: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert_eq!(
+            r.stdout, "STOP-ASK NEXT RUN reviewer\n",
+            "stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("card: STOP-ASK NEXT RUN reviewer\n"),
+            "{floor}"
+        );
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("card: NEXT RED\n"),
+            "final FLOOR must not stay BUILD after inspect halt: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("red.status"))
+                .unwrap()
+                .trim(),
+            "no-build"
+        );
+        assert!(
+            !tmp.wm().join("CLOSED").exists(),
+            "must not auto close_walk after inspect halt"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::InvokeEnd
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.exit == Some(0)),
+            "injected red must still run before inspect halt: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Card
+                && e.card.as_deref() == Some("NEXT RED")
+                && e.station.as_deref() == Some("BUILD")),
+            "FLOOR BUILD still happens on FALSIFIER before inspect: {ev:?}"
+        );
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("STOP-ASK NEXT RUN reviewer")),
+            "halt STOP-ASK NEXT RUN reviewer: {ev:?}"
+        );
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.contains("STOP-ASK NEXT RUN reviewer"));
+    }
+
+    #[test]
+    fn go_env_red_success_early_implement_cannot_skip_escalate() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some(
+                "-c\necho FAIL > .wm/FALSIFIER; echo early-implement > .wm/red.status; pwd > marker",
+            ),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "env red success must not skip ESCALATE EARLY_IMPLEMENT: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert_eq!(r.stdout, "ESCALATE EARLY_IMPLEMENT\n");
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(
+            floor.contains("card: ESCALATE EARLY_IMPLEMENT\n"),
+            "{floor}"
+        );
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(!floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+        assert_worktree_kept(tmp.path(), "s1");
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
     }
 }
