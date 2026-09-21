@@ -593,24 +593,43 @@ mod tests {
     }
 
     #[test]
-    fn run_sleep_zero_waits_foreground() {
+    fn run_sleep_one_waits_foreground() {
+        use std::time::{Duration, Instant};
+
         let tmp = Tmp::new();
         let marker = tmp.path().join("waited");
-        let script = format!("sleep 0; printf ok > {}", marker.display());
+        let sleep = posix_tool("sleep");
+        let script = format!("{} 1; printf ok > {}", sleep.display(), marker.display());
+        let started = Instant::now();
         let r = run(
             tmp.path(),
             tmp.path(),
-            "/bin/sh",
+            posix_tool("sh"),
             &["-c", &script],
             "sess-wait",
             "NEXT RUN maker-build",
             &clock(),
         )
         .unwrap();
+        let wall = started.elapsed();
         assert_eq!(r.exit, 0);
         assert!(
+            wall >= Duration::from_secs(1),
+            "run returned before sleep 1 finished: wall={wall:?} (spawn-without-wait + hardcoded exit 0 stays green on sleep 0)"
+        );
+        assert!(
+            r.elapsed_s >= 1,
+            "elapsed_s must reflect the waited child, not hardcoded 0: {}",
+            r.elapsed_s
+        );
+        assert!(
+            r.elapsed_s < 5,
+            "sleep 1 must not hang: elapsed_s={}",
+            r.elapsed_s
+        );
+        assert!(
             marker.is_file(),
-            "run must wait for the child; marker is written after sleep 0"
+            "marker is written at the end of sleep 1; must exist when run() returns"
         );
         assert_eq!(fs::read_to_string(&marker).unwrap(), "ok");
         let ev = read_events(tmp.path()).unwrap();
@@ -618,8 +637,7 @@ mod tests {
         assert_eq!(ev[0].session.as_deref(), Some("sess-wait"));
         assert_eq!(ev[0].exit, Some(0));
         assert_eq!(ev[0].elapsed_s, Some(r.elapsed_s));
-        assert!(r.elapsed_s >= 0);
-        assert!(r.elapsed_s < 5);
+        assert!(ev[0].elapsed_s.unwrap() >= 1);
         assert!(!tmp.wm().join("go.pid").exists());
     }
 
