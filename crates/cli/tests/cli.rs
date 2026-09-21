@@ -1,11 +1,11 @@
-//! CLI query verbs: read-only. Must not write FLOOR/TRACE.
+//! CLI: query verbs stay read-only; `go` writes FLOOR/TRACE via kernel (foreground).
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crucible_contract::{format_rfc3339_z, Clock, SystemClock};
+use crucible_contract::{format_rfc3339_z, parse_rfc3339_z, Clock, SystemClock};
 
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -175,4 +175,181 @@ fn status_without_json_does_not_write() {
     let _ = bin().current_dir(&tmp.root).arg("status").output().unwrap();
     let after = fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap();
     assert_eq!(after, before);
+}
+
+#[test]
+fn go_without_idea_stop_ask_intake_and_archives_trace() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let previous = "when\tcard\toutcome\n2026-09-20T12:00:00Z\tSTOP-ASK QUESTIONS\tANDON\n";
+    fs::write(wm.join("TRACE.tsv"), previous).unwrap();
+    let old_t0 = parse_rfc3339_z("2026-09-20T12:00:00Z").unwrap();
+    fs::write(wm.join("t0"), format!("{old_t0}\n")).unwrap();
+    fs::write(tmp.root.join("crucible"), "#!/bin/sh\n# posix sentinel\n").unwrap();
+    fs::write(tmp.root.join("VERSION"), "1.16.4\n").unwrap();
+
+    let out = bin()
+        .current_dir(&tmp.root)
+        .arg("go")
+        .output()
+        .expect("run go");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "STOP-ASK INTAKE is nonzero: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK INTAKE"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("card: STOP-ASK INTAKE\n"),
+        "FLOOR must be STOP-ASK INTAKE, got:\n{floor}"
+    );
+    assert!(floor.contains("station: ANDON\n"));
+
+    let archived = wm
+        .join("archive")
+        .join(format!("TRACE-{old_t0}-2026-09-20T12:00:00Z.tsv"));
+    assert!(
+        archived.is_file(),
+        "go_start must archive previous TRACE before rewrite; archive dir: {:?}",
+        fs::read_dir(wm.join("archive")).map(|rd| rd
+            .filter_map(|e| e.ok().map(|e| e.file_name()))
+            .collect::<Vec<_>>())
+    );
+    assert_eq!(fs::read_to_string(&archived).unwrap(), previous);
+
+    let live = fs::read_to_string(wm.join("TRACE.tsv")).unwrap();
+    assert!(live.starts_with("when\tcard\toutcome\n"));
+    assert!(live.contains("STOP-ASK INTAKE"));
+    assert!(
+        !live.contains("STOP-ASK QUESTIONS"),
+        "live TRACE is this run only"
+    );
+
+    let events = fs::read_to_string(wm.join("EVENTS")).unwrap();
+    assert!(events.contains("\"kind\":\"walk_start\""));
+    assert!(events.contains("\"kind\":\"halt\""));
+    assert!(events.contains("STOP-ASK INTAKE"));
+
+    let metrics = fs::read_to_string(wm.join("METRICS.tsv")).unwrap();
+    assert!(metrics.contains("STOP-ASK INTAKE"));
+
+    assert_eq!(
+        fs::read_to_string(tmp.root.join("crucible")).unwrap(),
+        "#!/bin/sh\n# posix sentinel\n",
+        "must not overwrite POSIX ./crucible"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.root.join("VERSION")).unwrap().trim(),
+        "1.16.4",
+        "must not bump VERSION"
+    );
+    assert!(
+        !wm.join("go.pid").exists(),
+        "go stays foreground (no pid file)"
+    );
+}
+
+#[test]
+fn go_does_not_overwrite_workspace_posix_or_version() {
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let posix_before = fs::read(repo.join("crucible")).expect("workspace POSIX ./crucible");
+    let ver_before = fs::read_to_string(repo.join("VERSION")).expect("VERSION");
+    assert!(
+        posix_before.starts_with(b"#!/bin/sh"),
+        "workspace ./crucible must remain the POSIX script"
+    );
+    assert_eq!(ver_before.trim(), "1.16.4");
+
+    let tmp = Tmp::new();
+    let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
+
+    let posix_after = fs::read(repo.join("crucible")).unwrap();
+    let ver_after = fs::read_to_string(repo.join("VERSION")).unwrap();
+    assert_eq!(posix_after, posix_before);
+    assert_eq!(ver_after, ver_before);
+}
+
+#[test]
+fn help_lists_go_and_query_verbs_not_serve_room() {
+    let out = bin().arg("help").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("go"), "help must list go: {stdout}");
+    assert!(stdout.contains("status"));
+    assert!(stdout.contains("debrief"));
+    assert!(stdout.contains("stats"));
+    assert!(
+        !stdout.to_ascii_lowercase().contains("serve"),
+        "do not list serve: {stdout}"
+    );
+    assert!(
+        !stdout.to_ascii_lowercase().contains("room"),
+        "do not list room: {stdout}"
+    );
+
+    let tmp = Tmp::new();
+    golden_board(&tmp.root);
+    let status = bin()
+        .current_dir(&tmp.root)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "query verbs still work: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+}
+
+#[test]
+fn go_closed_with_idea_is_foreground_noop() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    fs::write(tmp.root.join("IDEA.md"), "ship the intake receipt\n").unwrap();
+    fs::write(
+        wm.join("CLOSED"),
+        "CLOSED PASS\nindependence: SUBAGENT-ISOLATED\n",
+    )
+    .unwrap();
+    let out = bin().current_dir(&tmp.root).arg("go").output().unwrap();
+    assert!(
+        out.status.success(),
+        "already CLOSED is a no-op, not a hang: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("CLOSED PASS"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn cargo_tree_has_no_herdr_grok_engos() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = Command::new("cargo")
+        .args(["tree", "--workspace", "-e", "normal"])
+        .current_dir(&root)
+        .output()
+        .expect("cargo tree");
+    assert!(
+        out.status.success(),
+        "cargo tree failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let tree = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+    assert!(!tree.contains("herdr"), "herdr in cargo tree:\n{tree}");
+    assert!(!tree.contains("grok"), "grok in cargo tree:\n{tree}");
+    assert!(!tree.contains("engos"), "engos in cargo tree:\n{tree}");
 }

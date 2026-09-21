@@ -1,8 +1,9 @@
-//! File writers for FLOOR, TRACE, and EVENTS. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go`. No HTTP. No Herdr / Grok / EngOS types.
 
 mod error;
 mod events;
 mod floor;
+mod go;
 mod metrics;
 mod paths;
 mod station;
@@ -11,6 +12,7 @@ mod trace;
 pub use error::KernelError;
 pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
+pub use go::{go, GoRun};
 pub use metrics::{metrics_append, METRICS_HEADER};
 pub use station::floor_station;
 pub use trace::{go_start, GoStart, TRACE_HEADER};
@@ -398,5 +400,59 @@ mod tests {
             assert!(!l.contains("grok"), "forbidden dep token in {src}");
             assert!(!l.contains("engos"), "forbidden dep token in {src}");
         }
+    }
+
+    #[test]
+    fn go_without_idea_stop_ask_intake_archives_trace() {
+        let tmp = Tmp::new();
+        plant_trace(&tmp.wm(), "STOP-ASK QUESTIONS");
+        let previous = fs::read_to_string(tmp.wm().join("TRACE.tsv")).unwrap();
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 1);
+        assert!(r.stdout.contains("STOP-ASK INTAKE"));
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK INTAKE\n"));
+        assert!(floor.contains("station: ANDON\n"));
+
+        let archived = r
+            .archived
+            .as_ref()
+            .expect("go_start must archive previous TRACE");
+        assert_eq!(fs::read_to_string(archived).unwrap(), previous);
+
+        let live = fs::read_to_string(tmp.wm().join("TRACE.tsv")).unwrap();
+        assert!(live.starts_with(TRACE_HEADER));
+        assert!(live.contains("STOP-ASK INTAKE"));
+        assert!(!live.contains("STOP-ASK QUESTIONS"));
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev[0].kind, EventKind::WalkStart);
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt && e.card.as_deref() == Some("STOP-ASK INTAKE")),
+            "EVENTS halt for STOP-ASK INTAKE: {ev:?}"
+        );
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.contains("STOP-ASK INTAKE"));
+    }
+
+    #[test]
+    fn go_closed_with_idea_is_noop() {
+        let tmp = Tmp::new();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        fs::write(
+            tmp.wm().join("CLOSED"),
+            "CLOSED PASS\nindependence: SUBAGENT-ISOLATED\n",
+        )
+        .unwrap();
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 0);
+        assert!(r.stdout.contains("CLOSED PASS"));
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: CLOSED PASS\n"));
+        assert!(floor.contains("station: DONE\n"));
     }
 }

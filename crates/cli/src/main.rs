@@ -1,4 +1,4 @@
-//! Query-only CLI. Binary name is `crucible` under `target/` — never overwrite repo-root POSIX `./crucible`.
+//! Query verbs plus minimal foreground `go`. Binary name is `crucible` under `target/` — never overwrite repo-root POSIX `./crucible`.
 
 use std::env;
 use std::fs;
@@ -9,6 +9,7 @@ use std::process;
 use crucible_contract::{
     canonical_json, parse_rfc3339_z, Clock, StatsWindow, SystemClock, WalkSnapshot,
 };
+use crucible_kernel::go;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -22,6 +23,7 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         return 0;
     }
     match args[0].as_str() {
+        "go" => cmd_go(&args[1..], cwd, clock),
         "status" => cmd_status(&args[1..], cwd, clock),
         "debrief" => cmd_debrief(cwd),
         "stats" => cmd_stats(&args[1..], cwd, clock),
@@ -34,12 +36,66 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
 }
 
 fn help() {
-    println!("commands: status debrief stats help");
+    println!("commands: go status debrief stats help");
+    println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
     );
     println!("  debrief                           FLOOR + TRACE deltas (read-only)");
     println!("  stats --since 8h|24h|7d --json    METRICS.tsv window (PR-1; no EVENTS)");
+}
+
+fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
+    let mut idea_src: Option<&str> = None;
+    for a in args {
+        if a == "--next" {
+            let _ = writeln!(io::stderr(), "go --next is not ported");
+            return 2;
+        }
+        if a.starts_with('-') {
+            let _ = writeln!(io::stderr(), "idea path must not start with -");
+            return 2;
+        }
+        if idea_src.is_some() {
+            let _ = writeln!(io::stderr(), "usage: go [--next] [IDEA.md]");
+            return 2;
+        }
+        idea_src = Some(a.as_str());
+    }
+    if let Some(src) = idea_src {
+        let dest = cwd.join("IDEA.md");
+        let src_path = {
+            let p = Path::new(src);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                cwd.join(p)
+            }
+        };
+        if src_path.is_file() && !dest.is_file() {
+            if let Err(e) = fs::copy(&src_path, &dest) {
+                let _ = writeln!(io::stderr(), "{e}");
+                return 1;
+            }
+        }
+    }
+    match go(cwd, clock) {
+        Ok(r) => {
+            if !r.stdout.is_empty() {
+                print!("{}", r.stdout);
+                let _ = io::stdout().flush();
+            }
+            if !r.stderr.is_empty() {
+                eprint!("{}", r.stderr);
+                let _ = io::stderr().flush();
+            }
+            r.exit
+        }
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "{e}");
+            1
+        }
+    }
 }
 
 fn cmd_status(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
