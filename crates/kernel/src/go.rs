@@ -6,6 +6,7 @@ use crucible_contract::{resolve_wm, Clock};
 
 use crate::error::KernelError;
 use crate::floor::floor_write;
+use crate::independence::check_independence;
 use crate::map_human::stop_ask_map_human;
 use crate::metrics::metrics_append;
 use crate::paths::first_nonempty_line;
@@ -28,7 +29,8 @@ pub struct GoRun {
 }
 
 /// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
-/// gate, MAP-HUMAN gate, then one injected `next_red` (no `close_walk`).
+/// gate, MAP-HUMAN gate, independence CHECK, then one injected `next_red`
+/// (no `close_walk`).
 /// Leftover product FALSIFIER and a live `s1` worktree are dropped before
 /// that brick.
 ///
@@ -77,6 +79,16 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         return Ok(GoRun {
             exit: signed.exit,
             stdout: format!("{}\n", signed.card),
+            stderr: String::new(),
+            archived: started.archived,
+        });
+    }
+
+    let indep = check_independence(dir, clock)?;
+    if indep.stop {
+        return Ok(GoRun {
+            exit: indep.exit,
+            stdout: format!("{}\n", indep.card),
             stderr: String::new(),
             archived: started.archived,
         });
