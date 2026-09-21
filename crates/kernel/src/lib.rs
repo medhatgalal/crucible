@@ -720,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn mint_worktree_under_wm_run_true_events_on_repo() {
+    fn mint_worktree_under_wm_run_writes_cwd_events_on_repo() {
         let tmp = Tmp::new();
         init_git_product(tmp.path());
 
@@ -746,14 +746,34 @@ mod tests {
         let r = run(
             tmp.path(),
             &wt,
-            posix_tool("true"),
-            &[],
+            posix_tool("sh"),
+            &["-c", "pwd > marker"],
             "sess-mint",
             "NEXT RUN maker-build",
             &clock(),
         )
         .unwrap();
         assert_eq!(r.exit, 0);
+        let marker = wt.join("marker");
+        assert!(
+            marker.is_file(),
+            "child must write marker in .wm/worktrees/s1 (true would stay green if cwd were the repo): {}",
+            wt.display()
+        );
+        assert!(
+            !tmp.path().join("marker").exists(),
+            "marker must not land on the repo root"
+        );
+        let pwd = fs::read_to_string(&marker).unwrap();
+        let pwd_path = PathBuf::from(pwd.trim());
+        let pwd_c = fs::canonicalize(&pwd_path).unwrap_or(pwd_path);
+        let wt_c = fs::canonicalize(&wt).unwrap_or_else(|_| wt.clone());
+        assert_eq!(
+            pwd_c,
+            wt_c,
+            "pwd must be the minted worktree, not the repo root: {}",
+            pwd.trim()
+        );
 
         let ev = read_events(tmp.path()).unwrap();
         assert_eq!(ev.len(), 1, "one invoke_end on the repo .wm: {ev:?}");
