@@ -6,6 +6,7 @@ use crucible_contract::{resolve_wm, Clock};
 
 use crate::error::KernelError;
 use crate::floor::floor_write;
+use crate::map_human::stop_ask_map_human;
 use crate::metrics::metrics_append;
 use crate::paths::first_nonempty_line;
 use crate::questions::stop_ask_questions;
@@ -27,8 +28,9 @@ pub struct GoRun {
 }
 
 /// Minimal walker: `go_start`, STOP-ASK INTAKE, CLOSED no-op, QUESTIONS
-/// gate, then one injected `next_red` (no `close_walk`). Leftover product
-/// FALSIFIER and a live `s1` worktree are dropped before that brick.
+/// gate, MAP-HUMAN gate, then one injected `next_red` (no `close_walk`).
+/// Leftover product FALSIFIER and a live `s1` worktree are dropped before
+/// that brick.
 ///
 /// Production has no grok: without `CRUCIBLE_RED_PROGRAM` the brick loop
 /// still refuses. Stays in-process (no daemon).
@@ -65,6 +67,16 @@ pub fn go(dir: impl AsRef<Path>, clock: &dyn Clock) -> Result<GoRun, KernelError
         return Ok(GoRun {
             exit: asked.exit,
             stdout: format!("{}\n", asked.card),
+            stderr: String::new(),
+            archived: started.archived,
+        });
+    }
+
+    let signed = stop_ask_map_human(dir, clock)?;
+    if signed.stop {
+        return Ok(GoRun {
+            exit: signed.exit,
+            stdout: format!("{}\n", signed.card),
             stderr: String::new(),
             archived: started.archived,
         });

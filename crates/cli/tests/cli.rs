@@ -469,6 +469,165 @@ fn go_questions_need_ask_beats_injected_red_program() {
     assert!(!tmp.root.join(".wm/go.pid").exists());
 }
 
+fn plant_high_ready(dir: &Path) {
+    fs::write(
+        dir.join("slices.tsv"),
+        "id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n\
+s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
+    )
+    .unwrap();
+    fs::write(dir.join("MAP.md"), "slice s1 is HIGH\n").unwrap();
+}
+
+fn sha256_file(path: &Path) -> String {
+    for (bin, args) in [
+        ("sha256sum", &[] as &[&str]),
+        ("shasum", &["-a", "256"]),
+        ("openssl", &["dgst", "-sha256"]),
+    ] {
+        let mut cmd = Command::new(bin);
+        cmd.args(args).arg(path);
+        if let Ok(out) = cmd.output() {
+            if out.status.success() {
+                let s = String::from_utf8_lossy(&out.stdout);
+                if let Some(hex) = s
+                    .split_whitespace()
+                    .find(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
+                {
+                    return hex.to_ascii_lowercase();
+                }
+            }
+        }
+    }
+    panic!("no sha256 tool for {}", path.display());
+}
+
+fn write_valid_map_human(dir: &Path) {
+    let hash = sha256_file(&dir.join("MAP.md"));
+    fs::write(
+        dir.join("MAP-HUMAN"),
+        format!("SIGNED: operator\nMAP: MAP.md\nSHA256: {hash}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn go_map_human_missing_beats_injected_red_program() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_high_ready(&tmp.root);
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "MAP-HUMAN must win over CRUCIBLE_RED_PROGRAM: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("STOP-ASK MAP-HUMAN"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: STOP-ASK MAP-HUMAN\n"), "{floor}");
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(
+        !floor.contains("NEXT "),
+        "must not proceed to NEXT RED: {floor}"
+    );
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(
+        !wt.join(".git").is_file(),
+        "next_red must not mint when MAP-HUMAN is missing"
+    );
+    assert!(!tmp.root.join(".wm/FALSIFIER").is_file());
+    assert!(!wt.join("marker").exists());
+    assert!(
+        !tmp.root.join("MAP-HUMAN").exists(),
+        "must not invent MAP-HUMAN"
+    );
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_map_human_present_continues_to_injected_red() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_high_ready(&tmp.root);
+    write_valid_map_human(&tmp.root);
+    let sh = posix_tool("sh");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_RED_PROGRAM", &sh)
+        .env(
+            "CRUCIBLE_RED_ARGS",
+            "-c\necho FAIL > .wm/FALSIFIER; pwd > marker",
+        )
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "valid MAP-HUMAN must continue to red: stderr={} stdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("NEXT RED"),
+        "stdout={stdout:?} stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let floor = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+    assert!(floor.contains("station: BUILD\n"), "{floor}");
+    assert!(!floor.contains("STOP-ASK MAP-HUMAN"), "{floor}");
+    let wt = tmp.root.join(".wm/worktrees/s1");
+    assert!(wt.join("marker").is_file());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn go_map_human_present_continues_to_brick_refuse() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    plant_high_ready(&tmp.root);
+    write_valid_map_human(&tmp.root);
+    let out = bin()
+        .current_dir(&tmp.root)
+        .env_remove("CRUCIBLE_RED_PROGRAM")
+        .env_remove("CRUCIBLE_RED_ARGS")
+        .arg("go")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("go: brick loop not ported"),
+        "stderr={stderr:?} stdout={}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+    assert!(!tmp.root.join(".wm/CLOSED").exists());
+}
+
 #[test]
 fn go_idea_env_red_program_floor_next_red_build() {
     let tmp = Tmp::new();

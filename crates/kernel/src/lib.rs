@@ -1,4 +1,4 @@
-//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. `go` wires QUESTIONS then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
+//! File writers for FLOOR, TRACE, and EVENTS. Minimal foreground `go` and `run`. Git worktree mint. NEXT RED stub with keep-on-failure. CLOSE stamps CLOSED/halt/lesson without removing worktrees. STOP-ASK QUESTIONS when QUESTIONS.md has no ANSWERS.md. STOP-ASK MAP-HUMAN when HIGH/live is unsigned. `go` wires QUESTIONS then MAP-HUMAN then injected `next_red` (no grok, no auto-close). Each brick drops leftover product FALSIFIER and does not reuse a live `s1` worktree. No HTTP. No Herdr / Grok / EngOS types.
 
 mod close;
 mod error;
@@ -6,6 +6,7 @@ mod events;
 mod floor;
 mod go;
 mod invoke;
+mod map_human;
 mod metrics;
 mod paths;
 mod questions;
@@ -20,6 +21,7 @@ pub use events::{append_event, read_events};
 pub use floor::{floor_write, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use invoke::{run, InvokeRun};
+pub use map_human::{stop_ask_map_human, StopAskMapHuman};
 pub use metrics::{metrics_append, METRICS_HEADER};
 pub use questions::{stop_ask_questions, StopAskQuestions};
 pub use red::{next_red, next_red_with, NextRed, NextRedOpts};
@@ -687,6 +689,160 @@ mod tests {
     }
 
     #[test]
+    fn go_map_human_missing_beats_injected_red_program() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        plant_high_ready(tmp.path());
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(
+            r.exit, 1,
+            "MAP-HUMAN must win over CRUCIBLE_RED_PROGRAM: stdout={:?} stderr={:?}",
+            r.stdout, r.stderr
+        );
+        assert!(
+            r.stdout.contains("STOP-ASK MAP-HUMAN"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK MAP-HUMAN\n"), "{floor}");
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to NEXT RED when MAP-HUMAN is missing: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert!(
+            !wt.join(".git").is_file(),
+            "next_red must not mint a worktree when MAP-HUMAN is missing: {}",
+            wt.display()
+        );
+        assert!(
+            !tmp.wm().join("FALSIFIER").is_file(),
+            "injected red program must not write FALSIFIER before STOP-ASK MAP-HUMAN"
+        );
+        assert!(
+            !wt.join("marker").exists(),
+            "injected red program must not run (no worktree marker)"
+        );
+        assert!(!tmp.path().join("marker").exists());
+        assert!(
+            !tmp.path().join("MAP-HUMAN").exists(),
+            "kernel must not invent MAP-HUMAN"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter()
+                .any(|e| e.kind == EventKind::Halt
+                    && e.card.as_deref() == Some("STOP-ASK MAP-HUMAN")),
+            "halt STOP-ASK MAP-HUMAN: {ev:?}"
+        );
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::InvokeEnd),
+            "next_red must not invoke when MAP-HUMAN is missing: {ev:?}"
+        );
+        assert!(
+            !ev.iter()
+                .any(|e| e.kind == EventKind::Card && e.card.as_deref() == Some("NEXT RED")),
+            "no NEXT RED card when MAP-HUMAN is missing: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn go_map_human_present_continues_to_injected_red() {
+        let _lock = lock_red_env();
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        plant_high_ready(tmp.path());
+        write_valid_map_human(tmp.path());
+        let before = fs::read_to_string(tmp.path().join("MAP-HUMAN")).unwrap();
+        let sh = posix_tool("sh");
+        let _clear = ClearRedEnv;
+        set_red_env(
+            Some(sh.as_os_str()),
+            Some("-c\necho FAIL > .wm/FALSIFIER; pwd > marker"),
+        );
+
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 0, "stderr={:?} stdout={:?}", r.stderr, r.stdout);
+        assert!(
+            r.stdout.contains("NEXT RED"),
+            "stdout={:?} stderr={:?}",
+            r.stdout,
+            r.stderr
+        );
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: NEXT RED\n"), "{floor}");
+        assert!(floor.contains("station: BUILD\n"), "{floor}");
+        assert!(!floor.contains("STOP-ASK MAP-HUMAN"), "{floor}");
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("MAP-HUMAN")).unwrap(),
+            before,
+            "kernel must not invent or rewrite MAP-HUMAN"
+        );
+
+        let wt = tmp.wm().join("worktrees").join("s1");
+        assert_minted_cwd_marker(tmp.path(), &wt);
+        assert_eq!(
+            fs::read_to_string(tmp.wm().join("FALSIFIER"))
+                .unwrap()
+                .trim(),
+            "FAIL"
+        );
+        assert!(!tmp.wm().join("CLOSED").exists());
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn go_map_human_present_continues_to_brick_refuse() {
+        let _lock = lock_red_env();
+        set_red_env(None, None);
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("IDEA.md"), "receipt\n").unwrap();
+        plant_high_ready(tmp.path());
+        write_valid_map_human(tmp.path());
+        let r = go(tmp.path(), &clock()).unwrap();
+        assert_eq!(r.exit, 2);
+        assert!(
+            r.stderr.contains("go: brick loop not ported"),
+            "stderr={:?}",
+            r.stderr
+        );
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file()
+                || !fs::read_to_string(tmp.wm().join("FLOOR.md"))
+                    .unwrap()
+                    .contains("STOP-ASK MAP-HUMAN"),
+            "present MAP-HUMAN must not floor STOP-ASK MAP-HUMAN"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+        assert!(!tmp.wm().join("CLOSED").exists());
+    }
+
+    #[test]
     fn go_idea_env_red_program_floor_next_red_build() {
         let _lock = lock_red_env();
         let tmp = Tmp::new();
@@ -1054,6 +1210,49 @@ mod tests {
         fs::write(dir.join("README"), "product\n").unwrap();
         git(dir, &["add", ".gitignore", "README"]);
         git(dir, &["commit", "-qm", "init"]);
+    }
+
+    /// POSIX 8c: next READY HIGH (or live_write) needs MAP-HUMAN.
+    fn plant_high_ready(dir: &Path) {
+        fs::write(
+            dir.join("slices.tsv"),
+            "id\tmodule\towned_paths\tdepends_on\trisk\tstatus\n\
+s1\twidget\tsrc/widget/api.py\t-\tHIGH\tREADY\n",
+        )
+        .unwrap();
+        fs::write(dir.join("MAP.md"), "slice s1 is HIGH\n").unwrap();
+    }
+
+    fn sha256_file(path: &Path) -> String {
+        for (bin, args) in [
+            ("sha256sum", &[] as &[&str]),
+            ("shasum", &["-a", "256"]),
+            ("openssl", &["dgst", "-sha256"]),
+        ] {
+            let mut cmd = Command::new(bin);
+            cmd.args(args).arg(path);
+            if let Ok(out) = cmd.output() {
+                if out.status.success() {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if let Some(hex) = s
+                        .split_whitespace()
+                        .find(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()))
+                    {
+                        return hex.to_ascii_lowercase();
+                    }
+                }
+            }
+        }
+        panic!("no sha256 tool for {}", path.display());
+    }
+
+    fn write_valid_map_human(dir: &Path) {
+        let hash = sha256_file(&dir.join("MAP.md"));
+        fs::write(
+            dir.join("MAP-HUMAN"),
+            format!("SIGNED: operator\nMAP: MAP.md\nSHA256: {hash}\n"),
+        )
+        .unwrap();
     }
 
     /// Lock child cwd as the minted worktree. `.wm/FALSIFIER` via the product
@@ -1827,6 +2026,118 @@ mod tests {
             fs::read_to_string(tmp.path().join("ANSWERS.md")).unwrap(),
             answers,
             "kernel must not invent or rewrite answers"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(!tmp.wm().join("go.pid").exists());
+    }
+
+    #[test]
+    fn stop_ask_map_human_missing_or_empty_floor_halt_keeps_worktree() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_high_ready(tmp.path());
+
+        let r = stop_ask_map_human(tmp.path(), &clock()).unwrap();
+        assert!(r.stop);
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK MAP-HUMAN");
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.elapsed_s, 12);
+
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(floor.contains("card: STOP-ASK MAP-HUMAN\n"), "{floor}");
+        assert!(floor.contains("andon: STOP-ASK MAP-HUMAN\n"), "{floor}");
+        assert!(
+            floor.contains("independence: SUBAGENT-ISOLATED\n"),
+            "{floor}"
+        );
+        assert!(
+            !floor.contains("NEXT "),
+            "must not proceed to next card: {floor}"
+        );
+        assert!(!floor.to_ascii_lowercase().contains("grok"));
+
+        let metrics = fs::read_to_string(tmp.wm().join("METRICS.tsv")).unwrap();
+        assert!(metrics.starts_with(METRICS_HEADER));
+        let cols: Vec<&str> = metrics.lines().nth(1).unwrap().split('\t').collect();
+        assert_eq!(cols[1], "STOP-ASK MAP-HUMAN");
+        assert_eq!(cols[4], "-");
+
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            ev.iter().any(|e| e.kind == EventKind::Halt
+                && e.card.as_deref() == Some("STOP-ASK MAP-HUMAN")
+                && e.elapsed_s == Some(12)
+                && e.iterations == Some(0)),
+            "halt STOP-ASK MAP-HUMAN: {ev:?}"
+        );
+        assert_worktree_kept(tmp.path(), "s1");
+        assert!(
+            !tmp.path().join("MAP-HUMAN").exists(),
+            "kernel must not invent MAP-HUMAN"
+        );
+        assert!(!tmp.wm().join("go.pid").exists());
+
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_high_ready(tmp.path());
+        fs::write(tmp.path().join("MAP-HUMAN"), "").unwrap();
+        let r = stop_ask_map_human(tmp.path(), &clock()).unwrap();
+        assert!(
+            r.stop,
+            "empty MAP-HUMAN is not human_sign_present, same as missing"
+        );
+        assert_eq!(r.exit, 1);
+        assert_eq!(r.card, "STOP-ASK MAP-HUMAN");
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("MAP-HUMAN")).unwrap(),
+            "",
+            "must not invent a sign into an empty MAP-HUMAN"
+        );
+        let floor = fs::read_to_string(tmp.wm().join("FLOOR.md")).unwrap();
+        assert!(floor.contains("card: STOP-ASK MAP-HUMAN\n"), "{floor}");
+        assert_worktree_kept(tmp.path(), "s1");
+    }
+
+    #[test]
+    fn stop_ask_map_human_present_sign_continues_without_inventing() {
+        let tmp = Tmp::new();
+        init_git_product(tmp.path());
+        let _wt = mint_worktree(tmp.path(), "s1").unwrap();
+        fs::create_dir_all(tmp.wm()).unwrap();
+        fs::write(tmp.wm().join("t0"), format!("{}\n", t0())).unwrap();
+        plant_high_ready(tmp.path());
+        write_valid_map_human(tmp.path());
+        let signed = fs::read_to_string(tmp.path().join("MAP-HUMAN")).unwrap();
+
+        let r = stop_ask_map_human(tmp.path(), &clock()).unwrap();
+        assert!(!r.stop, "valid MAP-HUMAN is not STOP-ASK MAP-HUMAN");
+        assert_eq!(r.exit, 0);
+
+        assert!(
+            !tmp.wm().join("FLOOR.md").is_file(),
+            "continue must not floor_write STOP-ASK MAP-HUMAN"
+        );
+        assert!(
+            !tmp.wm().join("METRICS.tsv").is_file(),
+            "continue must not metrics_append"
+        );
+        let ev = read_events(tmp.path()).unwrap();
+        assert!(
+            !ev.iter().any(|e| e.kind == EventKind::Halt),
+            "present MAP-HUMAN is not a halt: {ev:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("MAP-HUMAN")).unwrap(),
+            signed,
+            "kernel must not invent or rewrite MAP-HUMAN"
         );
         assert_worktree_kept(tmp.path(), "s1");
         assert!(!tmp.wm().join("go.pid").exists());
