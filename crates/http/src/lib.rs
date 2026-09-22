@@ -489,7 +489,15 @@ mod tests {
     #[test]
     fn dispatch_stats_missing_since_is_400() {
         let tmp = Tmp::new();
-        let r = dispatch("GET", "/stats", "", &tmp.root, &clock(), "1.17.0", "127.0.0.1:0");
+        let r = dispatch(
+            "GET",
+            "/stats",
+            "",
+            &tmp.root,
+            &clock(),
+            "1.17.0",
+            "127.0.0.1:0",
+        );
         assert_eq!(r.status, 400);
         assert!(!tmp.root.join(".wm").exists());
     }
