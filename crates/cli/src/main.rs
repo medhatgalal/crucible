@@ -1,4 +1,4 @@
-//! Working-mode binary `crucible` (go/status/debrief/stats). Repo-root POSIX `./crucible` stays guided adopt.
+//! Working-mode binary `crucible` (go/status/debrief/stats/serve). Repo-root POSIX `./crucible` stays guided adopt.
 
 use std::env;
 use std::fs;
@@ -44,6 +44,7 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         "status" => cmd_status(&args[1..], cwd, clock),
         "debrief" => cmd_debrief(cwd),
         "stats" => cmd_stats(&args[1..], cwd, clock),
+        "serve" => cmd_serve(&args[1..], cwd, clock),
         other => exec_guided_or_unknown(other, args),
     }
 }
@@ -81,13 +82,16 @@ fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
 }
 
 fn help() {
-    println!("commands: go status debrief stats help");
+    println!("commands: go status debrief stats serve help");
     println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
     );
     println!("  debrief                           FLOOR + TRACE deltas (read-only)");
     println!("  stats --since 8h|24h|7d --json    METRICS.tsv window (PR-1; no EVENTS)");
+    println!(
+        "  serve [--bind 127.0.0.1:PORT]    GET /walk /stats /health (loopback; default 127.0.0.1:1734)"
+    );
     println!("  --version, -V                     product VERSION");
 }
 
@@ -216,6 +220,60 @@ fn cmd_stats(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         Err(e) => {
             let _ = writeln!(io::stderr(), "{e}");
             2
+        }
+    }
+}
+
+fn cmd_serve(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
+    let mut bind = crucible_http::DEFAULT_BIND.to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--bind" => {
+                i += 1;
+                if i >= args.len() {
+                    let _ = writeln!(
+                        io::stderr(),
+                        "serve: --bind needs 127.0.0.1:PORT or [::1]:PORT"
+                    );
+                    return 2;
+                }
+                bind = args[i].clone();
+            }
+            a if let Some(v) = a.strip_prefix("--bind=") => bind = v.to_string(),
+            other => {
+                let _ = writeln!(io::stderr(), "serve: unknown arg {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    match crucible_http::bind_listener(&bind) {
+        Ok(listener) => {
+            let addr = match listener.local_addr() {
+                Ok(a) => a,
+                Err(e) => {
+                    let _ = writeln!(io::stderr(), "serve: {e}");
+                    return 1;
+                }
+            };
+            println!("listening {addr}");
+            let _ = io::stdout().flush();
+            match crucible_http::serve_listener(listener, cwd, clock, product_version()) {
+                Ok(()) => 0,
+                Err(e) => {
+                    let _ = writeln!(io::stderr(), "serve: {e}");
+                    1
+                }
+            }
+        }
+        Err(crucible_http::ServeError::Usage(m)) => {
+            let _ = writeln!(io::stderr(), "{m}");
+            2
+        }
+        Err(crucible_http::ServeError::Io(m)) => {
+            let _ = writeln!(io::stderr(), "{m}");
+            1
         }
     }
 }
