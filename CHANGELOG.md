@@ -12,6 +12,11 @@ All notable changes to this project are documented here. This project follows
   and GET `/health`. Missing herdr: nonzero, no serve, no TRACE, no listen.
   Not a herdr-init copy. No `POST /go`. Kernel/contract stay Herdr-free.
 
+### Docs
+- `/crucible` skill forbids `/execute-plan` as the product walker for adopted
+  repos. Inner loop remains wrapper `.crucible/work/wm.sh go` (execs rust).
+  Product machines need no rustc. Loopback GET serve is a camera, not a walker.
+
 ### Observability
 - `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
   `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,

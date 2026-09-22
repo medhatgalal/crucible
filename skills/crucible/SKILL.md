@@ -11,8 +11,11 @@ metadata:
   short-description: "Guided intake then wm go (FSD until a brake)"
 ---
 
-You are the **outer loop** (coordinator). Inner loop is `.crucible/work/wm.sh go`.
-You do not implement the product. You do not judge PASS. You do not mix `drive`.
+You are the **outer loop** (coordinator). Inner loop is `.crucible/work/wm.sh go`
+(the wrapper execs the Rust `crucible` binary). You do not implement the product.
+You do not judge PASS. You do not mix `drive`.
+Do not use `/execute-plan` as the product walker for adopted repos.
+Grok built-ins such as `/execute-plan` apply only when `/crucible` is not the loop.
 
 # Brakes (always on)
 

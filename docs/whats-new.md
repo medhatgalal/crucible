@@ -15,9 +15,11 @@ watcher, reaper, dashboard), and GET `/health`. Missing herdr does not listen.
 ## 1.17.0 — Rust working-mode kernel
 
 `wm.sh` is an exec wrapper around the `crucible` binary. `go`, `status`,
-`debrief`, and `stats` run in Rust. `crucible --version` prints `1.17.0`.
-Adopt still copies the wrapper next to the binary as `.crucible/work/wm.sh`.
-Rollback is the previous tarball.
+`debrief`, and `stats` run in Rust. Inner loop remains `.crucible/work/wm.sh go`
+(the wrapper execs rust). `crucible --version` prints `1.17.0`. Adopt still
+copies the binary plus wrapper as `.crucible/work/crucible` and
+`.crucible/work/wm.sh`. Product machines need no rustc. `/execute-plan` is not
+the product walker. Rollback is the previous tarball.
 
 ## 1.16.4 — continue does not skip brick
 
@@ -171,3 +173,5 @@ CLI; do not put credentials in those files.
 - Working-mode is opt-in. Default adopt does not install `wm.sh` or skills.
 - Working-mode skills live in the target tree. Engine runtime is not `$HOME`. A dirty laptop that still has host `~/.grok/skills` is not CROSS-FAMILY isolation. Live kiro inherits host HOME (keychain); that CLI may also read `~/.kiro/skills`.
 - Live grok/kiro-cli/codex independence is unavailable when none of those CLIs are on `PATH` or cannot auth. grok/codex probe under empty HOME with copied auth files. kiro probe/exec inherit host HOME (keychain OIDC); empty HOME hang is not logout. One kind is `SUBAGENT-ISOLATED`; two kinds `CROSS-FAMILY`. Claude Code is not required. Fixture workers can still close. Adapters do not ship credentials.
+- `/crucible` inner loop is `.crucible/work/wm.sh go` (wrapper execs rust). `/execute-plan` is not the product walker for adopted repos. Product machines need no rustc.
+- Loopback GET serve (`/walk` `/stats` `/health`) does not start a walk; there is no POST `/go`. Non-loopback bind is refused.

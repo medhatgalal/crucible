@@ -74,6 +74,26 @@ if grep -q 'ask_user_question' "$SKILL_CRUCIBLE" \
 else
   bad 'skills/crucible/SKILL.md must name ask_user_question, request_user_input, and Kiro CLI fallback'
 fi
+if grep -F -q '.crucible/work/wm.sh go' "$SKILL_CRUCIBLE"; then
+  ok
+else
+  bad 'skills/crucible/SKILL.md inner loop must remain .crucible/work/wm.sh go'
+fi
+if grep -qi 'you do not implement the product' "$SKILL_CRUCIBLE"; then
+  ok
+else
+  bad 'skills/crucible/SKILL.md must say the coordinator does not implement the product'
+fi
+if grep -Fqi 'Grok-implement the product' "$SKILL_CRUCIBLE"; then
+  bad 'skill must not tell agents to Grok-implement the product'
+else
+  ok
+fi
+if grep -Eiq 'do not use `/execute-plan` as the product walker' "$SKILL_CRUCIBLE"; then
+  ok
+else
+  bad 'skills/crucible/SKILL.md must forbid /execute-plan as the product walker for adopted repos'
+fi
 LIVE_SH="$HERE/scripts/verify-working-mode-live.sh"
 if [ -f "$LIVE_SH" ] && grep -F -q 'need >=1' "$LIVE_SH"; then
   ok
