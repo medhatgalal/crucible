@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Room
+- `crucible room` requires `herdr` on PATH, then spawns this binary's
+  (`current_exe`) `serve --bind 127.0.0.1:0` — not PATH `wm`/`crucible` —
+  prints standing roles (chat, orchestrator, watcher, reaper, dashboard),
+  and GET `/health`. Missing herdr: nonzero, no serve, no TRACE, no listen.
+  Not a herdr-init copy. No `POST /go`. Kernel/contract stay Herdr-free.
+
 ### Observability
 - `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
   `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,

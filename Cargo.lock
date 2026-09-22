@@ -9,6 +9,7 @@ dependencies = [
  "crucible-contract",
  "crucible-http",
  "crucible-kernel",
+ "crucible-room",
  "serde_json",
 ]
 
@@ -35,6 +36,10 @@ version = "0.1.0"
 dependencies = [
  "crucible-contract",
 ]
+
+[[package]]
+name = "crucible-room"
+version = "0.1.0"
 
 [[package]]
 name = "itoa"

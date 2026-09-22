@@ -343,7 +343,7 @@ fn version_flag_prints_product_version() {
 }
 
 #[test]
-fn help_lists_go_query_and_serve_not_room() {
+fn help_lists_go_query_serve_and_room() {
     let out = bin().arg("help").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -356,8 +356,8 @@ fn help_lists_go_query_and_serve_not_room() {
         "help must list serve: {stdout}"
     );
     assert!(
-        !stdout.to_ascii_lowercase().contains("room"),
-        "do not list room: {stdout}"
+        stdout.to_ascii_lowercase().contains("room"),
+        "help must list room: {stdout}"
     );
 
     let tmp = Tmp::new();
@@ -1266,6 +1266,23 @@ fn cargo_tree_has_no_herdr_grok_engos() {
     assert!(!tree.contains("herdr"), "herdr in cargo tree:\n{tree}");
     assert!(!tree.contains("grok"), "grok in cargo tree:\n{tree}");
     assert!(!tree.contains("engos"), "engos in cargo tree:\n{tree}");
+    for pkg in ["crucible-kernel", "crucible-contract"] {
+        let out = Command::new("cargo")
+            .args(["tree", "-p", pkg, "-e", "normal"])
+            .current_dir(&root)
+            .output()
+            .expect("cargo tree -p");
+        assert!(
+            out.status.success(),
+            "cargo tree -p {pkg}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let tree = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+        assert!(
+            !tree.contains("herdr"),
+            "herdr in {pkg} cargo tree:\n{tree}"
+        );
+    }
 }
 
 struct ServeProc {
@@ -1539,4 +1556,189 @@ fn serve_second_on_busy_port_fails() {
         .unwrap();
     let st = wait_exit(&mut child, Duration::from_secs(2)).expect("second serve must exit");
     assert!(!st.success(), "busy port must fail (no SO_REUSEPORT)");
+}
+
+fn path_without_herdr() -> std::ffi::OsString {
+    let mut dirs = Vec::new();
+    for d in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
+        let p = PathBuf::from(d);
+        if p.join("herdr").is_file() {
+            continue;
+        }
+        if p.is_dir() {
+            dirs.push(p);
+        }
+    }
+    std::env::join_paths(dirs).expect("PATH without herdr")
+}
+
+fn path_prefix(first: &Path) -> std::ffi::OsString {
+    let mut dirs = vec![first.to_path_buf()];
+    for d in ["/usr/bin", "/bin"] {
+        dirs.push(PathBuf::from(d));
+    }
+    std::env::join_paths(dirs).expect("PATH")
+}
+
+fn write_exec(path: &Path, body: &str) {
+    fs::write(path, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = fs::metadata(path).unwrap().permissions();
+        p.set_mode(0o755);
+        fs::set_permissions(path, p).unwrap();
+    }
+}
+
+fn read_child_stdio(child: &mut Child) -> (String, String) {
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    if let Some(mut s) = child.stdout.take() {
+        let _ = s.read_to_string(&mut stdout);
+    }
+    if let Some(mut s) = child.stderr.take() {
+        let _ = s.read_to_string(&mut stderr);
+    }
+    (stdout, stderr)
+}
+
+fn assert_not_listening_on_printed_addrs(stdout: &str, stderr: &str) {
+    for line in stdout.lines().chain(stderr.lines()) {
+        let line = line.trim();
+        let Some(addr) = line.strip_prefix("listening ") else {
+            continue;
+        };
+        let addr = addr.trim();
+        if addr.is_empty() {
+            continue;
+        }
+        let sock: std::net::SocketAddr = match addr.parse() {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        assert!(
+            TcpStream::connect_timeout(&sock, Duration::from_millis(200)).is_err(),
+            "missing herdr still binds a port: {addr}"
+        );
+    }
+}
+
+#[test]
+fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
+    let tmp = Tmp::new();
+    let before = golden_board(&tmp.root);
+    let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    let path = path_without_herdr();
+    for d in std::env::split_paths(&path) {
+        assert!(
+            !d.join("herdr").is_file(),
+            "test PATH must not contain herdr: {}",
+            d.display()
+        );
+    }
+    let mut child = bin()
+        .current_dir(&tmp.root)
+        .env("PATH", &path)
+        .arg("room")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn room");
+    let st = wait_exit(&mut child, Duration::from_secs(3))
+        .expect("missing herdr must exit (must not hang in serve)");
+    let (stdout, stderr) = read_child_stdio(&mut child);
+    assert_ne!(
+        st.code(),
+        Some(0),
+        "missing herdr must be nonzero: stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        !stdout.to_ascii_lowercase().contains("listening"),
+        "must not start serve: stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        !stderr.to_ascii_lowercase().contains("listening"),
+        "must not start serve: stderr={stderr:?}"
+    );
+    assert!(
+        stderr.to_ascii_lowercase().contains("herdr"),
+        "stderr should name herdr: {stderr:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap(),
+        before
+    );
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(),
+        before_bytes
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+    assert_not_listening_on_printed_addrs(&stdout, &stderr);
+}
+
+#[test]
+fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
+    let tmp = Tmp::new();
+    let before = golden_board(&tmp.root);
+    let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let bindir = tmp.root.join("bin");
+    fs::create_dir(&bindir).unwrap();
+    write_exec(&bindir.join("herdr"), "#!/bin/sh\nexit 0\n");
+    write_exec(
+        &bindir.join("crucible"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CRUCIBLE_ROOM_MARKER/path-crucible\"\nexit 1\n",
+    );
+    write_exec(
+        &bindir.join("wm"),
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CRUCIBLE_ROOM_MARKER/path-wm\"\nexit 1\n",
+    );
+    let mut child = bin()
+        .current_dir(&tmp.root)
+        .env("PATH", path_prefix(&bindir))
+        .env("CRUCIBLE_ROOM_MARKER", &tmp.root)
+        .arg("room")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn room");
+    let st = wait_exit(&mut child, Duration::from_secs(8))
+        .expect("room must exit after health GET (must not hang)");
+    let (stdout, stderr) = read_child_stdio(&mut child);
+    assert_eq!(
+        st.code(),
+        Some(0),
+        "room with herdr: stdout={stdout:?} stderr={stderr:?}"
+    );
+    for role in ["chat", "orchestrator", "watcher", "reaper", "dashboard"] {
+        assert!(
+            stdout.contains(role),
+            "standing role {role} missing: {stdout:?}"
+        );
+    }
+    assert!(
+        stdout.contains("GET /health"),
+        "must GET /health: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
+        "health body: {stdout:?}"
+    );
+    assert!(stdout.contains("1.17.0"), "health version: {stdout:?}");
+    assert!(
+        !tmp.root.join("path-crucible").exists(),
+        "must spawn current_exe, not PATH crucible"
+    );
+    assert!(!tmp.root.join("path-wm").exists(), "must not spawn PATH wm");
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(),
+        before_bytes,
+        "room must not write TRACE (no POST /go)"
+    );
+    assert_eq!(
+        fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap(),
+        before
+    );
+    assert!(!tmp.root.join(".wm/go.pid").exists());
 }
