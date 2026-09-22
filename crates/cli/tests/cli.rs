@@ -305,7 +305,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.16.4");
+    assert_eq!(ver_before.trim(), "1.17.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -314,6 +314,28 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
     let ver_after = fs::read_to_string(repo.join("VERSION")).unwrap();
     assert_eq!(posix_after, posix_before);
     assert_eq!(ver_after, ver_before);
+}
+
+#[test]
+fn version_flag_prints_product_version() {
+    let want = fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../VERSION"))
+        .expect("VERSION")
+        .trim()
+        .to_string();
+    assert_eq!(want, "1.17.0");
+    for flag in ["--version", "-V"] {
+        let out = bin().arg(flag).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{flag} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            want,
+            "{flag} stdout"
+        );
+    }
 }
 
 #[test]

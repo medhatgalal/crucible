@@ -4,6 +4,13 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+## 1.17.0 — Rust working-mode kernel
+
+`wm.sh` is an exec wrapper around the `crucible` binary. `go`, `status`,
+`debrief`, and `stats` run in Rust. `crucible --version` prints `1.17.0`.
+Adopt still copies the wrapper next to the binary as `.crucible/work/wm.sh`.
+Rollback is the previous tarball.
+
 ## 1.16.4 — continue does not skip brick
 
 `go` clears closeable PASS/NO-BUILD receipts only when CLOSED is missing

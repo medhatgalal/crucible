@@ -1,9 +1,11 @@
 # Working-mode (opt-in)
 
-On **1.16.4**, default adopt is still the guided cycle (1.6.6 **layout**): no
-`wm.sh` unless `--working-mode`. This page is the how-to for a **user and an
-AI**. The harness card next to `wm.sh` is `WORKING-MODE.md` (short). Guided
-`cycle` / `drive` stay on [START.md](../START.md).
+On **1.17.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. Working-mode `go` is the Rust `crucible`
+binary; `wm.sh` is an exec wrapper so old docs `wm.sh go` still work. This
+page is the how-to for a **user and an AI**. The harness card next to `wm.sh`
+is `WORKING-MODE.md` (short). Guided `cycle` / `drive` stay on
+[START.md](../START.md).
 
 ## Two repos, two loops
 

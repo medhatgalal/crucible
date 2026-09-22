@@ -22,6 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: every shell file parses under /bin/sh
         run: |
           for f in crucible scripts/*.sh; do
@@ -117,6 +119,7 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: demand pairing holds under BSD grep
         run: ./scripts/verify-demand.sh
       - name: every shell file parses under /bin/sh

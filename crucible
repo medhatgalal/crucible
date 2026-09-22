@@ -4744,9 +4744,16 @@ adopt_install_engine() {
   src=$1
   dst=$2
   mkdir -p "$dst/items" "$dst/scripts" "$dst/docs" "$dst/roles"
-  for f in crucible BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md VERSION; do
+  for f in crucible crucible-guided BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md VERSION; do
     [ -f "$src/$f" ] && cp "$src/$f" "$dst/"
   done
+  # Tarball product binary is rust `crucible`; keep POSIX cycle/drive as crucible-guided
+  # and as `crucible` when the source file is still the guided script.
+  if [ -f "$src/crucible-guided" ] && [ -f "$dst/crucible" ]; then
+    if ! adopt_is_script "$dst/crucible"; then
+      cp "$src/crucible-guided" "$dst/crucible-guided"
+    fi
+  fi
   if [ -d "$src/roles" ]; then
     for f in "$src/roles"/*.md; do
       [ -f "$f" ] && cp "$f" "$dst/roles/"
@@ -4762,6 +4769,7 @@ adopt_install_engine() {
     done
   fi
   chmod +x "$dst/crucible" 2>/dev/null || true
+  chmod +x "$dst/crucible-guided" 2>/dev/null || true
   chmod +x "$dst/scripts/"*.sh 2>/dev/null || true
 }
 
@@ -4770,6 +4778,11 @@ adopt_src_sha256() {
   {
     [ -f "$_as_src/VERSION" ] && cat "$_as_src/VERSION"
     [ -f "$_as_src/wm.sh" ] && cat "$_as_src/wm.sh"
+    if [ -f "$_as_src/crucible" ] && ! adopt_is_script "$_as_src/crucible"; then
+      cat "$_as_src/crucible"
+    elif [ -x "$_as_src/target/release/crucible" ]; then
+      cat "$_as_src/target/release/crucible"
+    fi
     [ -f "$_as_src/ROUTING.tsv" ] && cat "$_as_src/ROUTING.tsv"
     if [ -d "$_as_src/skills" ]; then
       find "$_as_src/skills" -type f | sort | while IFS= read -r _as_f; do
@@ -4854,6 +4867,37 @@ adopt_restore_kept_batteries() {
   rm -rf "$_rk_keep"
 }
 
+adopt_is_script() {
+  [ -f "$1" ] || return 1
+  _ais=$(dd if="$1" bs=2 count=1 2>/dev/null || true)
+  [ "$_ais" = '#!' ]
+}
+
+adopt_find_rust_bin() {
+  _fr_src=$1
+  if [ -n "${CRUCIBLE_RUST_BIN:-}" ] && [ -x "$CRUCIBLE_RUST_BIN" ]; then
+    printf '%s\n' "$CRUCIBLE_RUST_BIN"
+    return 0
+  fi
+  if [ -f "$_fr_src/crucible" ] && [ -x "$_fr_src/crucible" ] && ! adopt_is_script "$_fr_src/crucible"; then
+    printf '%s\n' "$_fr_src/crucible"
+    return 0
+  fi
+  if [ -x "$_fr_src/target/release/crucible" ]; then
+    printf '%s\n' "$_fr_src/target/release/crucible"
+    return 0
+  fi
+  if [ -f "$_fr_src/Cargo.toml" ]; then
+    ( CDPATH=; cd -- "$_fr_src" && cargo build --release --locked ) >&2 \
+      || ( CDPATH=; cd -- "$_fr_src" && cargo build --release ) >&2 \
+      || return 1
+    [ -x "$_fr_src/target/release/crucible" ] || return 1
+    printf '%s\n' "$_fr_src/target/release/crucible"
+    return 0
+  fi
+  return 1
+}
+
 adopt_install_working_mode() {
   _wm_src=$1
   _wm_dst=$2
@@ -4869,9 +4913,19 @@ adopt_install_working_mode() {
   [ -f "$_wm_src/ROUTING.tsv" ] || die 'refused: ROUTING.tsv missing'
   adopt_check_required_batteries "$_wm_src/ROUTING.tsv" "$_wm_src/skills"
 
+  _wm_bin=$(adopt_find_rust_bin "$_wm_src") \
+    || die 'refused: working-mode source is missing the crucible binary (cargo build --release)'
+  cp "$_wm_bin" "$_wm_dst/crucible"
+  chmod +x "$_wm_dst/crucible" 2>/dev/null || true
+  if [ -f "$_wm_src/crucible-guided" ]; then
+    cp "$_wm_src/crucible-guided" "$_wm_dst/crucible-guided"
+    chmod +x "$_wm_dst/crucible-guided" 2>/dev/null || true
+  elif [ -f "$_wm_src/crucible" ] && adopt_is_script "$_wm_src/crucible"; then
+    cp "$_wm_src/crucible" "$_wm_dst/crucible-guided"
+    chmod +x "$_wm_dst/crucible-guided" 2>/dev/null || true
+  fi
   cp "$_wm_src/wm.sh" "$_wm_dst/wm.sh"
   chmod +x "$_wm_dst/wm.sh" 2>/dev/null || true
-  [ -f "$_wm_src/wm-go.sh" ] && cp "$_wm_src/wm-go.sh" "$_wm_dst/wm-go.sh"
   [ -f "$_wm_src/WORKING-MODE.md" ] && cp "$_wm_src/WORKING-MODE.md" "$_wm_dst/WORKING-MODE.md"
   cp "$_wm_src/ROUTING.tsv" "$_wm_dst/ROUTING.tsv"
   mkdir -p "$_wm_repo/.crucible"

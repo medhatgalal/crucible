@@ -76,8 +76,9 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 ## Opt-in working-mode
 
-On **1.16.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
-`wm.sh` unless `--working-mode`. To also install the working-mode runner and
+On **1.17.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. Working-mode installs the Rust `crucible`
+binary plus an exec-wrapper `wm.sh`. To also install the working-mode runner and
 batteries into the **target** (no `$HOME` skill trees):
 
 ```sh

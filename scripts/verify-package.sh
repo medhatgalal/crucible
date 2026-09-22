@@ -1,29 +1,13 @@
 #!/bin/sh
-# Prove the release package is reproducible, minimal, executable, and cold-start capable.
+# Prove the release package is minimal, executable, and cold-start capable.
+# POSIX/source members are byte-compared across two builds; the host-built
+# `crucible` binary is sha256'd separately (not cmp'd as part of the tarball).
 set -eu
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 VERSION=$(cat "$ROOT/VERSION")
 REF=${1:-HEAD}
 
-# Assert if this tree is the repository, skip if it is not, and the asymmetry is the point.
-#
-# Every assertion runs through package-release.sh, which archives a commit, so the suite needs THIS
-# tree's object database. The script also ships inside the release package, which has none and which
-# no `REF` argument can rescue, so demanding a commit unconditionally made it fail in every tree but
-# a maintainer checkout for a reason that was not about the tree it ran in. Presence is unchanged:
-# inside a checkout a genuinely broken package still refuses.
-#
-# The test is that `$ROOT` IS a repository's top level, not that some ancestor is one, because
-# `rev-parse` searches upward: a package unpacked inside an existing repo — the likeliest install
-# location — would otherwise be checked against the enclosing objects and report `HEAD has no
-# VERSION`, the exact false alarm this guard removes. Both paths go through `pwd -P` because on
-# macOS `/var` is a symlink to `/private/var` and a textual compare would misread a checkout.
-#
-# Not a `.git` path test: a linked worktree keeps a `.git` FILE, and `--show-toplevel` reports that
-# worktree's own root, so the suite still runs there where a path test would skip it — a silent
-# pass, the one failure mode a verification script must never have. Git absent from the machine
-# fails the command and skips too, correctly: without git there is no commit to archive.
 ROOT_REAL=$(unset CDPATH; cd -- "$ROOT" && pwd -P)
 if ! TOP=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null) \
   || [ "$(unset CDPATH; cd -- "$TOP" && pwd -P)" != "$ROOT_REAL" ]; then
@@ -32,18 +16,12 @@ if ! TOP=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null) \
 fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/crucible-package.XXXXXX")
-# Cleanup must never mask the exit status. The `0` handler removes and returns, so a normal run
-# still reports its own result. Each signal handler removes and then exits 128+signal, because a
-# handler that only removes lets the shell resume and reach a `0` exit — an interrupted or
-# timed-out run would then be recorded as a pass.
 trap 'rm -rf "$TMP"' 0
 trap 'rm -rf "$TMP"; exit 129' 1
 trap 'rm -rf "$TMP"; exit 130' 2
 trap 'rm -rf "$TMP"; exit 143' 15
 
 package_has_whats_new() { [ -f "$1/docs/whats-new.md" ]; }
-# Mutation-test the extracted-path predicate before real archive checks, so the proof still runs
-# when an intentionally incomplete package produces the expected red result below.
 PACKAGE_FIXTURE="$TMP/package-fixture"
 mkdir -p "$PACKAGE_FIXTURE/docs"
 printf '# fixture\n' > "$PACKAGE_FIXTURE/docs/whats-new.md"
@@ -58,19 +36,44 @@ fi
 "$ROOT/scripts/package-release.sh" "$VERSION" "$REF" "$TMP/one" >/dev/null
 "$ROOT/scripts/package-release.sh" "$VERSION" "$REF" "$TMP/two" >/dev/null
 NAME="crucible-$VERSION.tar.gz"
-cmp "$TMP/one/$NAME" "$TMP/two/$NAME"
-cmp "$TMP/one/$NAME.sha256" "$TMP/two/$NAME.sha256"
+
+sha256_file() {
+  f=$1
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$f" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$f" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$f" | awk '{print $NF}'
+  fi
+}
+
+mkdir "$TMP/extract-one" "$TMP/extract-two"
+tar -xzf "$TMP/one/$NAME" -C "$TMP/extract-one"
+tar -xzf "$TMP/two/$NAME" -C "$TMP/extract-two"
+ONE="$TMP/extract-one/crucible-$VERSION"
+TWO="$TMP/extract-two/crucible-$VERSION"
+[ -f "$ONE/crucible" ] || { echo "verify-package: missing crucible binary" >&2; exit 1; }
+[ -f "$TWO/crucible" ] || { echo "verify-package: missing crucible binary in second package" >&2; exit 1; }
+
+# POSIX/source members must match; do not cmp the host-built binary.
+( CDPATH=; cd -- "$ONE" && find . -type f ! -path './crucible' | sort ) > "$TMP/list-one"
+( CDPATH=; cd -- "$TWO" && find . -type f ! -path './crucible' | sort ) > "$TMP/list-two"
+cmp "$TMP/list-one" "$TMP/list-two" \
+  || { echo "verify-package: POSIX member lists differ" >&2; exit 1; }
+while IFS= read -r rel; do
+  cmp "$ONE/$rel" "$TWO/$rel" \
+    || { echo "verify-package: POSIX member differs: $rel" >&2; exit 1; }
+done < "$TMP/list-one"
+
+BIN_HASH=$(sha256_file "$ONE/crucible")
+printf 'verify-package: crucible binary sha256 %s\n' "$BIN_HASH"
 
 CONTENTS=$(tar -tzf "$TMP/one/$NAME")
-# One anchored pattern per required path, as before, but naming the one that is absent. A bare
-# `grep -q` under `set -e` exits 1 with nothing on stderr, so a genuine packaging failure inside a
-# checkout refused silently and the reader had to bisect the file to learn what was dropped. Every
-# previous path and anchored pattern remains; docs/whats-new.md adds the travelling release note.
 for REQUIRED in \
   BOOTSTRAP.md \
   crucible \
   wm.sh \
-  wm-go.sh \
   WORKING-MODE.md \
   ROUTING.tsv \
   scripts/project-skills.sh \
@@ -98,19 +101,27 @@ done
 if printf '%s\n' "$CONTENTS" | grep -Eq "^crucible-$VERSION/(reports|\.github|dist)/"; then
   echo "verify-package: package contains development-only paths" >&2; exit 1
 fi
+if printf '%s\n' "$CONTENTS" | grep -Eq "^crucible-$VERSION/target/"; then
+  echo "verify-package: package contains cargo target/" >&2; exit 1
+fi
 
-mkdir "$TMP/extract"
-tar -xzf "$TMP/one/$NAME" -C "$TMP/extract"
-PACKAGE="$TMP/extract/crucible-$VERSION"
+PACKAGE="$ONE"
 package_has_whats_new "$PACKAGE" \
   || { echo "verify-package: extracted package is missing docs/whats-new.md" >&2; exit 1; }
 [ -x "$PACKAGE/crucible" ]
+[ -x "$PACKAGE/wm.sh" ]
 [ -x "$PACKAGE/scripts/verify-agent-cycle.sh" ]
 [ -x "$PACKAGE/scripts/verify-coldstart-independence.sh" ]
+_sig=$(dd if="$PACKAGE/crucible" bs=2 count=1 2>/dev/null || true)
+[ "$_sig" != '#!' ] \
+  || { echo "verify-package: crucible must be the host-built binary, not a script" >&2; exit 1; }
+"$PACKAGE/crucible" --version | grep -q "$VERSION" \
+  || { echo "verify-package: crucible --version is not $VERSION" >&2; exit 1; }
 "$PACKAGE/crucible" help >/dev/null
+sh -n "$PACKAGE/wm.sh"
 "$PACKAGE/scripts/verify-agent-cycle.sh" >/dev/null
 "$PACKAGE/scripts/verify-coldstart-independence.sh" >/dev/null
 [ -x "$PACKAGE/scripts/verify-drive.sh" ]
 "$PACKAGE/scripts/verify-drive.sh" >/dev/null
 
-printf 'PACKAGE-OK %s %s\n' "$VERSION" "$(awk '{print $1}' "$TMP/one/$NAME.sha256")"
+printf 'PACKAGE-OK %s %s bin=%s\n' "$VERSION" "$(awk '{print $1}' "$TMP/one/$NAME.sha256")" "$BIN_HASH"

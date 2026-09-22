@@ -1,4 +1,4 @@
-//! Query verbs plus minimal foreground `go`. Binary name is `crucible` under `target/` — never overwrite repo-root POSIX `./crucible`.
+//! Working-mode binary `crucible` (go/status/debrief/stats). Repo-root POSIX `./crucible` stays guided adopt.
 
 use std::env;
 use std::fs;
@@ -11,6 +11,12 @@ use crucible_contract::{
 };
 use crucible_kernel::go;
 
+const PRODUCT_VERSION: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION"));
+
+fn product_version() -> &'static str {
+    PRODUCT_VERSION.trim()
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -18,7 +24,18 @@ fn main() {
 }
 
 fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
-    if args.is_empty() || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+        help();
+        return 0;
+    }
+    if args[0] == "--version" || args[0] == "-V" {
+        println!("{}", product_version());
+        return 0;
+    }
+    if args[0] == "help" {
+        if args.len() > 1 {
+            return exec_guided(args);
+        }
         help();
         return 0;
     }
@@ -27,12 +44,40 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         "status" => cmd_status(&args[1..], cwd, clock),
         "debrief" => cmd_debrief(cwd),
         "stats" => cmd_stats(&args[1..], cwd, clock),
-        other => {
-            let _ = writeln!(io::stderr(), "unknown command: {other}");
-            help();
-            2
+        other => exec_guided_or_unknown(other, args),
+    }
+}
+
+fn guided_path() -> Option<PathBuf> {
+    let exe = env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let p = dir.join("crucible-guided");
+    p.is_file().then_some(p)
+}
+
+fn exec_guided(args: &[String]) -> i32 {
+    let Some(guided) = guided_path() else {
+        let cmd = args.first().map(String::as_str).unwrap_or("help");
+        let _ = writeln!(io::stderr(), "unknown command: {cmd}");
+        help();
+        return 2;
+    };
+    match process::Command::new(guided).args(args).status() {
+        Ok(st) => st.code().unwrap_or(1),
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "{e}");
+            1
         }
     }
+}
+
+fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
+    if guided_path().is_some() {
+        return exec_guided(args);
+    }
+    let _ = writeln!(io::stderr(), "unknown command: {other}");
+    help();
+    2
 }
 
 fn help() {
@@ -43,6 +88,7 @@ fn help() {
     );
     println!("  debrief                           FLOOR + TRACE deltas (read-only)");
     println!("  stats --since 8h|24h|7d --json    METRICS.tsv window (PR-1; no EVENTS)");
+    println!("  --version, -V                     product VERSION");
 }
 
 fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
