@@ -129,7 +129,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` + POSIX guided entry + files + cargo for contributors. CHANGELOG 1.17.0 records the break from “POSIX sh is the **working-mode** engine.” |
 | D15 | **Grok router is required** (home `~/.grok/rules/loop-router.md`). Keep-current: doctor warn + optional `/loop` + **engine CI on `testdata/loop-router.md` vs this ADR** (never `$HOME` in CI). Must **not** force `/execute-plan` inside `/crucible`. |
-| D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Later hygiene may delete rotting `docs/superpowers/plans/`. |
+| D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Campaign WIP stays gitignored under `architecture/wip/`. Rotting `docs/superpowers/plans/` deleted. |
 | D17 | Web is a **client of GET JSON**, not a second kernel. **Not in the v1 workspace.** Later: kernel HTTP → room cameras and/or a small web UI crate. No walker logic in the UI. |
 | D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec wrapper (absolute sibling). Engine-tree POSIX `./crucible` is not overwritten by `cargo build`; the tarball installs Rust `crucible` beside `crucible-guided`. |
 | D19 | v1 Rust owns working-mode + `serve`. Guided `cycle`/`drive` (and `adopt`/`refresh` on the POSIX entry) stay on `./crucible` / `crucible-guided` until a later tag, same schema. `room` is the next crate. |
@@ -276,5 +276,5 @@ All rejected. Do not reopen without a new ADR.
 - **`crates/room`** and `crucible room` (D11). Help lists `serve`, not `room`, until that crate lands.
 - Grok router fixture `testdata/loop-router.md` vs D8 (D15). Never `$HOME` in CI.
 - `doctor`; stats from EVENTS when present; human `status` write in the Rust argv (D20).
-- Hygiene: rotting `docs/superpowers/plans/` (D16). CONTRIBUTING still states a POSIX-only identity; CHANGELOG 1.17.0 already records the kernel break.
+- CONTRIBUTING still states a POSIX-only identity; CHANGELOG 1.17.0 already records the kernel break. Rotting `docs/superpowers/plans/` deleted (D16).
 - Do not bump `VERSION` on this docs PR.
