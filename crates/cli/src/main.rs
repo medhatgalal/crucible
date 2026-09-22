@@ -311,7 +311,7 @@ fn cmd_doctor(args: &[String]) -> i32 {
     }
     let home = env::var_os("HOME").map(PathBuf::from);
     let router = doctor::home_router_path(home.as_deref());
-    let report = doctor::check_router(router.as_deref(), &doctor::adr_hash(doctor::ADR_0001));
+    let report = doctor::check_router(router.as_deref(), &doctor::fixture_adr_hash());
     let _ = report.write_lines(io::stdout());
     0
 }
