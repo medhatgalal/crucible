@@ -4,6 +4,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+`crucible room` requires `herdr` on PATH, then spawns this binary's
+`serve --bind 127.0.0.1:0`, prints standing roles (chat, orchestrator,
+watcher, reaper, dashboard), and GET `/health`. Missing herdr does not listen.
+
 `crucible serve --bind 127.0.0.1:PORT` (default `127.0.0.1:1734`) GET `/walk`,
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.

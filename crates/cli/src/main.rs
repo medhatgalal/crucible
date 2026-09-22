@@ -1,4 +1,4 @@
-//! Working-mode binary `crucible` (go/status/debrief/stats/serve). Repo-root POSIX `./crucible` stays guided adopt.
+//! Working-mode binary `crucible` (go/status/debrief/stats/serve/room). Repo-root POSIX `./crucible` stays guided adopt.
 
 use std::env;
 use std::fs;
@@ -45,6 +45,7 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         "debrief" => cmd_debrief(cwd),
         "stats" => cmd_stats(&args[1..], cwd, clock),
         "serve" => cmd_serve(&args[1..], cwd, clock),
+        "room" => cmd_room(&args[1..], cwd),
         other => exec_guided_or_unknown(other, args),
     }
 }
@@ -82,7 +83,7 @@ fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
 }
 
 fn help() {
-    println!("commands: go status debrief stats serve help");
+    println!("commands: go status debrief stats serve room help");
     println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
@@ -91,6 +92,9 @@ fn help() {
     println!("  stats --since 8h|24h|7d --json    METRICS.tsv window (PR-1; no EVENTS)");
     println!(
         "  serve [--bind 127.0.0.1:PORT]    GET /walk /stats /health (loopback; default 127.0.0.1:1734)"
+    );
+    println!(
+        "  room                              require herdr; spawn this binary serve --bind 127.0.0.1:0; standing roles; GET /health"
     );
     println!("  --version, -V                     product VERSION");
 }
@@ -276,6 +280,22 @@ fn cmd_serve(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
             1
         }
     }
+}
+
+fn cmd_room(args: &[String], cwd: &Path) -> i32 {
+    if !args.is_empty() {
+        let _ = writeln!(io::stderr(), "usage: room");
+        return 2;
+    }
+    let exe = match env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "room: current_exe: {e}");
+            return 1;
+        }
+    };
+    let path = env::var_os("PATH").unwrap_or_default();
+    crucible_room::run(&exe, cwd, &path)
 }
 
 fn cmd_debrief(cwd: &Path) -> i32 {

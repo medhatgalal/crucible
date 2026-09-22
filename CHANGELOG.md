@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Room
+- `crucible room` is a client of GET serve plus optional Herdr CLI (not a
+  herdr-init copy). Missing `herdr` on PATH exits nonzero: no serve, no TRACE,
+  no listen. When `herdr` is present, it spawns **this** binary
+  (`current_exe`) `serve --bind 127.0.0.1:0` — not PATH `wm`/`crucible` —
+  prints the standing role contract (chat, orchestrator, watcher, reaper,
+  dashboard), and GET `/health`. No `POST /go`. Kernel/contract stay Herdr-free.
+
 ### Observability
 - `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
   `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,
