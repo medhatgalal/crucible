@@ -316,7 +316,6 @@ fn cmd_doctor(args: &[String]) -> i32 {
     0
 }
 
-
 fn cmd_debrief(cwd: &Path) -> i32 {
     let wm = if cwd.file_name().is_some_and(|n| n == ".wm") {
         cwd.to_path_buf()
