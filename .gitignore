@@ -10,8 +10,10 @@ LESSONS.md
 
 .DS_Store
 
-# editor and local tooling
-.kiro/
+# editor and local tooling. Skill views under .kiro/skills are source (Kiro CLI
+# loads them ahead of ~/.kiro/skills). Other .kiro state stays local.
+.kiro/*
+!.kiro/skills/
 .vscode/
 .idea/
 docs/history/

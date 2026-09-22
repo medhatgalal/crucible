@@ -1,13 +1,22 @@
 #!/bin/sh
-# Project package skills into a target repo: one canonical tree plus harness views.
-# Views are relative symlinks to .crucible/skills/<name>/ (16a). No $HOME writes.
+# Project package skills into a target repo: one canonical tree plus real harness copies.
+# Product mode: copy into .crucible/skills/<name>/, then copy that tree into each
+# harness directory. No symlinks.
+# --engine: canonical tree is skills/. Copy each skill into .grok/.claude/.agents/.kiro.
+# Do not write .crucible/skills. No $HOME writes.
+# Codex discovery is .agents/skills. Do not also write .codex/skills (duplicate names).
 set -eu
 
 usage() {
-  printf 'usage: project-skills.sh SRC DST\n' >&2
+  printf 'usage: project-skills.sh [--engine] SRC DST\n' >&2
   exit 2
 }
 
+engine=0
+if [ "${1:-}" = "--engine" ]; then
+  engine=1
+  shift
+fi
 [ $# -eq 2 ] || usage
 
 absdir() {
@@ -26,6 +35,11 @@ DST=$(absdir "$2")
   exit 1
 }
 
+if [ "$engine" -eq 1 ] && [ "$SRC" != "$DST/skills" ]; then
+  printf 'project-skills: --engine requires SRC to be DST/skills\n' >&2
+  exit 1
+fi
+
 under_dst() {
   case $1 in
     "$DST"|"$DST"/*) ;;
@@ -43,13 +57,17 @@ rm_under_dst() {
   fi
 }
 
-link_view() {
-  view=$1
-  rel=$2
-  under_dst "$view"
-  mkdir -p "$(dirname "$view")"
-  rm_under_dst "$view"
-  ln -s "$rel" "$view"
+copy_tree() {
+  dest=$1
+  from=$2
+  under_dst "$dest"
+  [ -d "$from" ] && [ ! -L "$from" ] || {
+    printf 'project-skills: refusing to copy a non-directory: %s\n' "$from" >&2
+    exit 1
+  }
+  rm_under_dst "$dest"
+  mkdir -p "$dest"
+  cp -R "$from/." "$dest/"
 }
 
 found=0
@@ -62,17 +80,27 @@ for src in "$SRC"/*; do
   esac
   found=1
 
+  if [ "$engine" -eq 1 ]; then
+    copy_tree "$DST/.grok/skills/$name" "$src"
+    copy_tree "$DST/.claude/skills/$name" "$src"
+    copy_tree "$DST/.agents/skills/$name" "$src"
+    copy_tree "$DST/.kiro/skills/$name" "$src"
+    continue
+  fi
+
   canon="$DST/.crucible/skills/$name"
   rm_under_dst "$canon"
   mkdir -p "$canon"
   cp -R "$src/." "$canon/"
 
-  link_view "$DST/.crucible/.grok/skills/$name" "../../skills/$name"
-  link_view "$DST/.crucible/.claude/skills/$name" "../../skills/$name"
-  link_view "$DST/.crucible/.agents/skills/$name" "../../skills/$name"
-  link_view "$DST/.grok/skills/$name" "../../.crucible/skills/$name"
-  link_view "$DST/.claude/skills/$name" "../../.crucible/skills/$name"
-  link_view "$DST/.agents/skills/$name" "../../.crucible/skills/$name"
+  copy_tree "$DST/.crucible/.grok/skills/$name" "$canon"
+  copy_tree "$DST/.crucible/.claude/skills/$name" "$canon"
+  copy_tree "$DST/.crucible/.agents/skills/$name" "$canon"
+  copy_tree "$DST/.crucible/.kiro/skills/$name" "$canon"
+  copy_tree "$DST/.grok/skills/$name" "$canon"
+  copy_tree "$DST/.claude/skills/$name" "$canon"
+  copy_tree "$DST/.agents/skills/$name" "$canon"
+  copy_tree "$DST/.kiro/skills/$name" "$canon"
 done
 
 if [ "$found" -eq 0 ]; then

@@ -2,11 +2,11 @@
 
 How this machine launches Grok. Not a battery. Not the engine. No secrets.
 
-Working-mode does **not** read `$HOME/.grok/skills`. After
+Working-mode does **not** install skills under `$HOME/.grok/skills`. After
 `crucible adopt PROGRAM --managed --working-mode`, Grok discovers repo-root
-`.grok/skills/` (views of canonical `.crucible/skills/`). Nested
-`.crucible/.grok/skills/` is a projection copy; Grok does not scan it unless
-you point `--agent` at a file there.
+`.grok/skills/` (views of canonical `.crucible/skills/`) before `$HOME`.
+`$HOME` is not the source of truth. Nested `.crucible/.grok/skills/` is a
+projection copy; Grok does not scan it unless you point `--agent` at a file there.
 
 ## Invoke
 

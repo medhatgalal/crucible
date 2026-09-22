@@ -25,9 +25,11 @@ VIEWS='
 .crucible/.grok/skills
 .crucible/.claude/skills
 .crucible/.agents/skills
+.crucible/.kiro/skills
 .grok/skills
 .claude/skills
 .agents/skills
+.kiro/skills
 '
 
 BASE=$(mktemp -d "${TMPDIR:-/tmp}/wm-adopt-verify.XXXXXX")
@@ -66,6 +68,62 @@ if [ -z "$home_leftovers" ]; then
   ok
 else
   bad "wrote under HOME: $home_leftovers"
+fi
+
+# Engine repo harness dirs are real copies of skills/ (one canonical tree). Not symlinks. Not $HOME.
+# Kiro CLI: .kiro/skills wins over ~/.kiro/skills. Codex stays .agents (no .codex).
+engine_skills=0
+for src in "$HERE/skills"/*; do
+  [ -d "$src" ] || continue
+  [ -f "$src/SKILL.md" ] || continue
+  name=${src##*/}
+  engine_skills=$((engine_skills + 1))
+  for harness in .grok .claude .agents .kiro; do
+    view="$HERE/$harness/skills/$name"
+    if [ -L "$view" ] || [ ! -d "$view" ]; then
+      bad "engine view is not a real directory: $harness/skills/$name"
+      continue
+    fi
+    cmp -s "$src/SKILL.md" "$view/SKILL.md" \
+      && ok || bad "engine view drifted: $harness/skills/$name"
+  done
+done
+[ "$engine_skills" -gt 0 ] && ok || bad 'engine skills/ has no SKILL.md'
+[ ! -e "$HERE/.codex/skills" ] && ok || bad 'engine wrote .codex/skills (duplicate Codex tree)'
+if git -C "$HERE" check-ignore -q -- ".kiro/skills/crucible"; then
+  bad 'gitignore hides .kiro/skills (Kiro would not see a committed view)'
+else
+  ok
+fi
+
+ENG="$BASE/engine-layout"
+mkdir -p "$ENG/skills/demo"
+printf 'demo\n' > "$ENG/skills/demo/SKILL.md"
+if HOME="$EMPTY_HOME" "$PROJECT" --engine "$ENG/skills" "$ENG" >"$OUT" 2>"$ERR"; then
+  ok
+else
+  bad "project-skills --engine refused: $(cat "$OUT") $(cat "$ERR")"
+fi
+[ ! -e "$ENG/.crucible/skills" ] && ok || bad '--engine wrote .crucible/skills'
+if [ -d "$ENG/.kiro/skills/demo" ] && [ ! -L "$ENG/.kiro/skills/demo" ] \
+  && [ -d "$ENG/.grok/skills/demo" ] && [ ! -L "$ENG/.grok/skills/demo" ] \
+  && [ -d "$ENG/.agents/skills/demo" ] && [ ! -L "$ENG/.agents/skills/demo" ]; then
+  ok
+else
+  bad '--engine did not write real harness directories'
+fi
+cmp -s "$ENG/skills/demo/SKILL.md" "$ENG/.kiro/skills/demo/SKILL.md" \
+  && ok || bad '--engine kiro copy drifted'
+cmp -s "$ENG/skills/demo/SKILL.md" "$ENG/.grok/skills/demo/SKILL.md" \
+  && ok || bad '--engine grok copy drifted'
+cmp -s "$ENG/skills/demo/SKILL.md" "$ENG/.agents/skills/demo/SKILL.md" \
+  && ok || bad '--engine agents copy drifted'
+[ ! -e "$ENG/.codex/skills" ] && ok || bad '--engine wrote .codex/skills'
+home_leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
+if [ -z "$home_leftovers" ]; then
+  ok
+else
+  bad "engine mode wrote under HOME: $home_leftovers"
 fi
 
 # Package source: four batteries only, CONTRACT headings, ROUTING names them.
@@ -136,16 +194,10 @@ for name in $BATTERIES; do
     elif [ -f "$canon/CONTRACT.md" ]; then
       bad "view missing CONTRACT.md: $vdir/$name"
     fi
-    if [ -L "$view" ]; then
-      target=$(readlink "$view")
-      case $target in
-        /*) bad "absolute view symlink $vdir/$name -> $target" ;;
-        *) ok ;;
-      esac
-      case $target in
-        *"$EMPTY_HOME"*) bad "view symlink into HOME: $vdir/$name -> $target" ;;
-        *) ok ;;
-      esac
+    if [ -L "$view" ] || [ ! -d "$view" ]; then
+      bad "view is not a real directory: $vdir/$name"
+    else
+      ok
     fi
   done
 done
@@ -250,6 +302,7 @@ fi
 [ ! -e "$BASE/guided/.grok/skills" ] && ok || bad 'default adopt copied .grok/skills'
 [ ! -e "$BASE/guided/.claude/skills" ] && ok || bad 'default adopt copied .claude/skills'
 [ ! -e "$BASE/guided/.agents/skills" ] && ok || bad 'default adopt copied .agents/skills'
+[ ! -e "$BASE/guided/.kiro/skills" ] && ok || bad 'default adopt copied .kiro/skills'
 [ ! -f "$BASE/guided/.crucible/work/ENGINE-SOURCE" ] && ok || bad 'default adopt wrote ENGINE-SOURCE'
 assert_home_empty
 
@@ -278,7 +331,17 @@ _ad_ver=$("$AD/.crucible/work/crucible" --version 2>/dev/null || true)
 [ -f "$AD/.grok/skills/architecture/SKILL.md" ] && ok || bad '.grok/skills/architecture/SKILL.md projection missing'
 [ -f "$AD/.claude/skills/architecture/SKILL.md" ] && ok || bad '.claude/skills/architecture/SKILL.md projection missing'
 [ -f "$AD/.agents/skills/architecture/SKILL.md" ] && ok || bad '.agents/skills/architecture/SKILL.md projection missing'
+[ -f "$AD/.kiro/skills/architecture/SKILL.md" ] && ok || bad '.kiro/skills/architecture/SKILL.md projection missing'
+if [ -d "$AD/.kiro/skills/architecture" ] && [ ! -L "$AD/.kiro/skills/architecture" ]; then
+  ok
+else
+  bad '.kiro/skills/architecture is not a real directory'
+fi
+cmp -s "$AD/.crucible/skills/architecture/SKILL.md" "$AD/.kiro/skills/architecture/SKILL.md" \
+  && ok || bad '.kiro/skills/architecture copy drifted from canonical'
+[ ! -e "$AD/.codex/skills" ] && ok || bad 'adopt wrote .codex/skills'
 [ -f "$AD/.crucible/.grok/skills/architecture/SKILL.md" ] && ok || bad 'nested grok view missing'
+[ -f "$AD/.crucible/.kiro/skills/architecture/SKILL.md" ] && ok || bad 'nested kiro view missing'
 [ -f "$AD/.crucible/work/ROUTING.tsv" ] && ok || bad 'program ROUTING.tsv missing'
 [ -f "$AD/.crucible/ROUTING.tsv" ] && ok || bad '.crucible/ROUTING.tsv missing'
 [ -f "$AD/.crucible/work/ENGINE-SOURCE" ] && ok || bad 'ENGINE-SOURCE missing'
@@ -372,13 +435,13 @@ if awk '
   }
   insh { block = block $0 "\n" }
   END {
-    if (rec ~ /\.grok\/skills/ && rec ~ /\.claude\/skills/ && rec ~ /\.agents\/skills/) exit 0
+    if (rec ~ /\.grok\/skills/ && rec ~ /\.claude\/skills/ && rec ~ /\.agents\/skills/ && rec ~ /\.kiro\/skills/) exit 0
     exit 1
   }
 ' "$HERE/docs/install.md"; then
   ok
 else
-  bad 'docs/install.md commit recipe omits repo-root .{grok,claude,agents}/skills'
+  bad 'docs/install.md commit recipe omits repo-root .{grok,claude,agents,kiro}/skills'
 fi
 
 # KEEP snapshot must be restored if project-skills.sh fails after wiping canonical dirs.
@@ -556,6 +619,8 @@ if [ -f "$TAR" ]; then
     || bad 'tarball adopt missing canonical architecture'
   [ -f "$BASE/from-tar/.grok/skills/architecture/SKILL.md" ] && ok \
     || bad 'tarball adopt missing grok projection'
+  [ -f "$BASE/from-tar/.kiro/skills/architecture/SKILL.md" ] && ok \
+    || bad 'tarball adopt missing kiro projection'
   [ -f "$BASE/from-tar/.crucible/work/ENGINE-SOURCE" ] && ok \
     || bad 'tarball adopt missing ENGINE-SOURCE'
 else

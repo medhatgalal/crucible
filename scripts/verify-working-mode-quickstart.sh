@@ -124,7 +124,8 @@ assert_no_home_skills() {
     return
   fi
   hits=$(find "$EMPTY_HOME" \( -path '*/.grok/skills/*' -o -path '*/.claude/skills/*' \
-    -o -path '*/.agents/skills/*' \) -print 2>/dev/null || true)
+    -o -path '*/.agents/skills/*' -o -path '*/.kiro/skills/*' \
+    -o -path '*/.codex/skills/*' \) -print 2>/dev/null || true)
   if [ -n "$hits" ]; then
     bad "harness skill trees under HOME: $hits"
   else

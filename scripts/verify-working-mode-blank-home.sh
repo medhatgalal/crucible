@@ -217,7 +217,8 @@ assert_no_home_skills() {
     return
   fi
   hits=$(find "$EMPTY_HOME" \( -path '*/.grok/skills/*' -o -path '*/.claude/skills/*' \
-    -o -path '*/.agents/skills/*' \) -print 2>/dev/null || true)
+    -o -path '*/.agents/skills/*' -o -path '*/.kiro/skills/*' \
+    -o -path '*/.codex/skills/*' \) -print 2>/dev/null || true)
   if [ -n "$hits" ]; then
     bad "harness skill trees under HOME: $hits"
   else
@@ -303,6 +304,7 @@ if [ -n "$EXTRACT" ]; then
   [ ! -e "$G/.grok/skills" ] && ok || bad 'default adopt copied .grok/skills'
   [ ! -e "$G/.claude/skills" ] && ok || bad 'default adopt copied .claude/skills'
   [ ! -e "$G/.agents/skills" ] && ok || bad 'default adopt copied .agents/skills'
+  [ ! -e "$G/.kiro/skills" ] && ok || bad 'default adopt copied .kiro/skills'
   [ ! -d "$G/.crucible/work/adapters" ] && ok || bad 'default adopt copied adapters'
   assert_home_empty
   assert_no_home_skills
@@ -333,9 +335,19 @@ if [ -n "$EXTRACT" ]; then
   [ -f "$AD/.grok/skills/architecture/SKILL.md" ] && ok || bad 'repo-root grok view missing'
   [ -f "$AD/.claude/skills/architecture/SKILL.md" ] && ok || bad 'repo-root claude view missing'
   [ -f "$AD/.agents/skills/architecture/SKILL.md" ] && ok || bad 'repo-root agents view missing'
+  [ -f "$AD/.kiro/skills/architecture/SKILL.md" ] && ok || bad 'repo-root kiro view missing'
+  if [ -d "$AD/.kiro/skills/architecture" ] && [ ! -L "$AD/.kiro/skills/architecture" ]; then
+    ok
+  else
+    bad 'kiro view is not a real directory'
+  fi
+  cmp -s "$AD/.crucible/skills/architecture/SKILL.md" "$AD/.kiro/skills/architecture/SKILL.md" \
+    && ok || bad 'kiro view drifted from canonical'
+  [ ! -e "$AD/.codex/skills" ] && ok || bad 'adopt wrote .codex/skills'
   [ -f "$AD/.crucible/.grok/skills/architecture/SKILL.md" ] && ok || bad 'nested grok view missing'
   [ -f "$AD/.crucible/.claude/skills/architecture/SKILL.md" ] && ok || bad 'nested claude view missing'
   [ -f "$AD/.crucible/.agents/skills/architecture/SKILL.md" ] && ok || bad 'nested agents view missing'
+  [ -f "$AD/.crucible/.kiro/skills/architecture/SKILL.md" ] && ok || bad 'nested kiro view missing'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
     grep -q '^version: 1.17.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
       && ok || bad 'ENGINE-SOURCE version is not 1.17.0'
