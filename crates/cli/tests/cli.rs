@@ -359,6 +359,10 @@ fn help_lists_go_query_serve_and_room() {
         stdout.to_ascii_lowercase().contains("room"),
         "help must list room: {stdout}"
     );
+    assert!(
+        stdout.to_ascii_lowercase().contains("doctor"),
+        "help must list doctor: {stdout}"
+    );
 
     let tmp = Tmp::new();
     golden_board(&tmp.root);
@@ -372,6 +376,69 @@ fn help_lists_go_query_serve_and_room() {
         "query verbs still work: {}",
         String::from_utf8_lossy(&status.stderr)
     );
+}
+
+fn doctor_out(home: &Path) -> (i32, String, String) {
+    let out = bin()
+        .env("HOME", home)
+        .arg("doctor")
+        .output()
+        .expect("run doctor");
+    (
+        out.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn doctor_warns_missing_on_injected_home_not_process_home() {
+    let tmp = Tmp::new();
+    let (code, stdout, stderr) = doctor_out(&tmp.root);
+    assert_eq!(code, 0, "doctor warn is not a walk CHECK: stderr={stderr}");
+    assert!(
+        stdout.contains("warn:") && stdout.contains("missing"),
+        "stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        stdout.contains(tmp.root.to_string_lossy().as_ref()),
+        "must report injected HOME path, not process HOME: {stdout}"
+    );
+}
+
+#[test]
+fn doctor_warns_stale_router_on_injected_home() {
+    let tmp = Tmp::new();
+    let path = tmp.root.join(".grok/rules/loop-router.md");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        "ADR-HASH: 0000000000000000000000000000000000000000000000000000000000000000\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = doctor_out(&tmp.root);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(
+        stdout.contains("warn:") && stdout.contains("stale"),
+        "stdout={stdout:?} stderr={stderr:?}"
+    );
+}
+
+#[test]
+fn doctor_ok_when_injected_home_matches_fixture() {
+    let tmp = Tmp::new();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/loop-router.md");
+    let text = fs::read_to_string(&fixture).expect("testdata/loop-router.md");
+    let path = tmp.root.join(".grok/rules/loop-router.md");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, text).unwrap();
+    let (code, stdout, stderr) = doctor_out(&tmp.root);
+    assert_eq!(code, 0, "stderr={stderr}");
+    assert!(
+        stdout.contains("ok:") && stdout.contains("ADR-HASH"),
+        "stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(!stdout.contains("warn:"), "{stdout}");
 }
 
 #[test]

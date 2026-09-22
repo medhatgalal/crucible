@@ -1,4 +1,6 @@
-//! Working-mode binary `crucible` (go/status/debrief/stats/serve/room). Repo-root POSIX `./crucible` stays guided adopt.
+//! Working-mode binary `crucible` (go/status/debrief/stats/serve/room/doctor). Repo-root POSIX `./crucible` stays guided adopt.
+
+mod doctor;
 
 use std::env;
 use std::fs;
@@ -46,6 +48,7 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         "stats" => cmd_stats(&args[1..], cwd, clock),
         "serve" => cmd_serve(&args[1..], cwd, clock),
         "room" => cmd_room(&args[1..], cwd),
+        "doctor" => cmd_doctor(&args[1..]),
         other => exec_guided_or_unknown(other, args),
     }
 }
@@ -83,7 +86,7 @@ fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
 }
 
 fn help() {
-    println!("commands: go status debrief stats serve room help");
+    println!("commands: go status debrief stats serve room doctor help");
     println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
@@ -95,6 +98,9 @@ fn help() {
     );
     println!(
         "  room                              require herdr; spawn this binary serve --bind 127.0.0.1:0; standing roles; GET /health"
+    );
+    println!(
+        "  doctor                            warn if home loop-router is missing or stale vs ADR-HASH"
     );
     println!("  --version, -V                     product VERSION");
 }
@@ -296,6 +302,18 @@ fn cmd_room(args: &[String], cwd: &Path) -> i32 {
     };
     let path = env::var_os("PATH").unwrap_or_default();
     crucible_room::run(&exe, cwd, &path)
+}
+
+fn cmd_doctor(args: &[String]) -> i32 {
+    if let Some(other) = args.first() {
+        let _ = writeln!(io::stderr(), "doctor: unknown arg {other}");
+        return 2;
+    }
+    let home = env::var_os("HOME").map(PathBuf::from);
+    let router = doctor::home_router_path(home.as_deref());
+    let report = doctor::check_router(router.as_deref(), &doctor::fixture_adr_hash());
+    let _ = report.write_lines(io::stdout());
+    0
 }
 
 fn cmd_debrief(cwd: &Path) -> i32 {

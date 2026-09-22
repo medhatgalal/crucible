@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Working-mode binary crucible (go/status/debrief/stats/serve/room; --version from VERSION)"
+description = "Working-mode binary crucible (go/status/debrief/stats/serve/room/doctor; --version from VERSION)"
 
 [[bin]]
 name = "crucible"
