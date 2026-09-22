@@ -4744,15 +4744,17 @@ adopt_install_engine() {
   src=$1
   dst=$2
   mkdir -p "$dst/items" "$dst/scripts" "$dst/docs" "$dst/roles"
-  for f in crucible crucible-guided BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md VERSION; do
+  for f in BOOTSTRAP.md START.md RULES.md LOOP.md CONFIGURE.md VERSION; do
     [ -f "$src/$f" ] && cp "$src/$f" "$dst/"
   done
-  # Tarball product binary is rust `crucible`; keep POSIX cycle/drive as crucible-guided
-  # and as `crucible` when the source file is still the guided script.
-  if [ -f "$src/crucible-guided" ] && [ -f "$dst/crucible" ]; then
-    if ! adopt_is_script "$dst/crucible"; then
-      cp "$src/crucible-guided" "$dst/crucible-guided"
-    fi
+  # Guided cycle/drive stay POSIX. Tarball `crucible` is the rust product binary;
+  # copy crucible-guided onto dest/crucible so default adopt does not install a
+  # Mach-O as the cycle runner. Working-mode overwrites dest/crucible with rust.
+  if [ -f "$src/crucible-guided" ]; then
+    cp "$src/crucible-guided" "$dst/crucible"
+    cp "$src/crucible-guided" "$dst/crucible-guided"
+  elif [ -f "$src/crucible" ]; then
+    cp "$src/crucible" "$dst/crucible"
   fi
   if [ -d "$src/roles" ]; then
     for f in "$src/roles"/*.md; do
