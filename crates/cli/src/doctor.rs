@@ -220,8 +220,10 @@ mod tests {
                 && !body.contains("force /execute-plan inside /crucible"),
             "fixture must not force /execute-plan inside /crucible"
         );
+        let users = concat!("/", "Users/");
+        let home = concat!("/", "home/");
         assert!(
-            !ROUTER_FIXTURE.contains("/Users/") && !ROUTER_FIXTURE.contains("/home/"),
+            !ROUTER_FIXTURE.contains(users) && !ROUTER_FIXTURE.contains(home),
             "CI fixture must not embed machine home paths"
         );
         let payload = adr_keep_current_payload(ADR_0001);
