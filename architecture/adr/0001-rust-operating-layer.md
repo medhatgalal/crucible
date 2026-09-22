@@ -21,7 +21,8 @@ Honest snapshot of this repo after **1.17.0** (Rust working-mode cut-over) and t
 | Wrapper | Repo-root `wm.sh`: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
 | Guided POSIX | Repo-root `./crucible` is still adopt/cycle/drive. Release tarball copies that script to `crucible-guided` then installs the Rust binary as `crucible`. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** |
-| Room | **Next.** Not in the workspace. Help must not list `room`. |
+| Room | Landed: `crucible room` (require herdr; spawn this binary `serve`; standing roles). Help lists `room` and `doctor`. |
+| Doctor | `crucible doctor` warns if home `~/.grok/rules/loop-router.md` is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15). Never `$HOME` in CI. |
 | Web | Not in the v1 workspace. |
 | WAL | Kernel writes `.wm/EVENTS` (JSONL, no `.jsonl` suffix). |
 | Stats | `crucible.stats/v1` still reads `.wm/METRICS.tsv` (`source: "metrics"`). Prefer EVENTS when present is remaining, not a silent lie. |
@@ -273,7 +274,6 @@ All rejected. Do not reopen without a new ADR.
 
 ## Remaining (not this ADR)
 
-- Router fixture + `doctor` warn (D8/D15) landed: `testdata/loop-router.md` vs ADR-HASH; never `$HOME` in CI.
 - stats from EVENTS when present; human `status` write in the Rust argv (D20).
-- CONTRIBUTING still states a POSIX-only identity; CHANGELOG 1.17.0 already records the kernel break. Rotting `docs/superpowers/plans/` deleted (D16).
+- CONTRIBUTING still states a POSIX-only identity; CHANGELOG 1.17.0 already records the kernel break.
 - Do not bump `VERSION` on this PR.

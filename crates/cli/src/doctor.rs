@@ -1,7 +1,6 @@
-//! Home Grok loop-router keep-current (D8/D15).
+//! Keep-current for the home Grok loop-router.
 //!
-//! Doctor compares the home `ADR-HASH` token to the compile-time fixture.
-//! Callers inject the home path; unit tests never read process `$HOME`.
+//! Callers inject the home path so tests never read process `$HOME`.
 
 use std::fs;
 use std::io::{self, Write};
@@ -41,7 +40,6 @@ pub fn home_router_path(home: Option<&Path>) -> Option<PathBuf> {
     Some(home?.join(".grok").join("rules").join("loop-router.md"))
 }
 
-/// `ADR-HASH` baked into `testdata/loop-router.md` (CI keeps that line in sync with the ADR).
 pub fn fixture_adr_hash() -> String {
     parse_adr_hash(ROUTER_FIXTURE).expect("testdata/loop-router.md needs ADR-HASH")
 }
@@ -59,7 +57,6 @@ pub fn parse_adr_hash(text: &str) -> Option<String> {
     None
 }
 
-/// Compare an injected home path to the expected ADR hash (fixture is the golden copy).
 pub fn check_router(home_router: Option<&Path>, expected_hash: &str) -> DoctorReport {
     let mut report = DoctorReport {
         warnings: Vec::new(),

@@ -4,8 +4,8 @@ ADR: architecture/adr/0001-rust-operating-layer.md
 ADR-HASH: ef61196fb93aad0ff3c782506a2e49a7cd05a112d19c4aafe44ed272c17a295d
 
 This file is the engine fixture. Copy it to `~/.grok/rules/loop-router.md`.
-`crucible doctor` warns when the home copy is missing or stale versus ADR-HASH.
-Optional `/loop` refreshes the home copy from this fixture.
+Keep-current is `crucible doctor` (warn when the home copy is missing or stale versus ADR-HASH).
+Do not invent `/loop`.
 Engine CI hashes this file against the ADR (D8 + D15 + Signal). Never `$HOME`.
 
 ## Signal
