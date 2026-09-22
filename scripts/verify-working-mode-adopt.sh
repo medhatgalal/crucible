@@ -157,6 +157,15 @@ done
 CRUCIBLE="$HERE/crucible"
 VERSION=$(sed -n '1p' "$HERE/VERSION")
 WM="$HERE/wm.sh"
+# shellcheck disable=SC1091
+. "$HERE/scripts/cargo-env.sh"
+if ! ( CDPATH=; cd -- "$HERE" && cargo build --release --locked >/dev/null ); then
+  printf 'RED cargo build --release failed\n' >&2
+  exit 1
+fi
+RUST_BIN="$HERE/target/release/crucible"
+[ -x "$RUST_BIN" ] || { printf 'RED target/release/crucible missing\n' >&2; exit 1; }
+export CRUCIBLE_RUST_BIN="$RUST_BIN"
 
 assert_home_empty() {
   leftovers=$(find "$EMPTY_HOME" -mindepth 1 -print | sort || true)
@@ -254,7 +263,12 @@ fi
 AD="$BASE/adopted"
 [ -f "$AD/.crucible/work/wm.sh" ] && ok || bad 'adopt --working-mode missing .crucible/work/wm.sh'
 [ -x "$AD/.crucible/work/wm.sh" ] && ok || bad '.crucible/work/wm.sh is not executable'
-[ -f "$AD/.crucible/work/wm-go.sh" ] && ok || bad 'adopt --working-mode missing wm-go.sh'
+sh -n "$AD/.crucible/work/wm.sh" && ok || bad 'adopted wm.sh is not valid POSIX sh'
+[ -x "$AD/.crucible/work/crucible" ] && ok || bad 'adopt --working-mode missing rust crucible binary'
+_ad_sig=$(dd if="$AD/.crucible/work/crucible" bs=2 count=1 2>/dev/null || true)
+[ "$_ad_sig" != '#!' ] && ok || bad 'adopted .crucible/work/crucible must be the rust binary'
+_ad_ver=$("$AD/.crucible/work/crucible" --version 2>/dev/null || true)
+[ "$_ad_ver" = "$VERSION" ] && ok || bad "adopted crucible --version wanted $VERSION got $_ad_ver"
 [ -f "$AD/.crucible/work/WORKING-MODE.md" ] && ok || bad 'adopt --working-mode missing WORKING-MODE.md'
 [ -f "$AD/.crucible/skills/crucible/SKILL.md" ] && ok || bad 'adopt missing outer-loop skills/crucible'
 [ -f "$AD/.grok/skills/crucible/SKILL.md" ] && ok || bad 'adopt missing grok view skills/crucible'
@@ -373,6 +387,8 @@ mkdir -p "$KEEPFAIL_SRC/scripts" "$KEEPFAIL_SRC/skills"
 cp "$CRUCIBLE" "$KEEPFAIL_SRC/crucible"
 cp "$HERE/VERSION" "$KEEPFAIL_SRC/VERSION"
 cp "$WM" "$KEEPFAIL_SRC/wm.sh"
+mkdir -p "$KEEPFAIL_SRC/target/release"
+cp "$RUST_BIN" "$KEEPFAIL_SRC/target/release/crucible"
 cp "$HERE/ROUTING.tsv" "$KEEPFAIL_SRC/ROUTING.tsv"
 cp -R "$HERE/skills/." "$KEEPFAIL_SRC/skills/"
 cat > "$KEEPFAIL_SRC/scripts/project-skills.sh" <<'EOF'
@@ -431,6 +447,8 @@ mkdir -p "$FAKE/scripts" "$FAKE/skills"
 cp "$CRUCIBLE" "$FAKE/crucible"
 cp "$HERE/VERSION" "$FAKE/VERSION"
 cp "$WM" "$FAKE/wm.sh"
+mkdir -p "$FAKE/target/release"
+cp "$RUST_BIN" "$FAKE/target/release/crucible"
 cp "$PROJECT" "$FAKE/scripts/project-skills.sh"
 cp -R "$HERE/skills/." "$FAKE/skills/"
 {
@@ -467,6 +485,8 @@ mkdir -p "$FAKE_OPT/scripts" "$FAKE_OPT/skills"
 cp "$CRUCIBLE" "$FAKE_OPT/crucible"
 cp "$HERE/VERSION" "$FAKE_OPT/VERSION"
 cp "$WM" "$FAKE_OPT/wm.sh"
+mkdir -p "$FAKE_OPT/target/release"
+cp "$RUST_BIN" "$FAKE_OPT/target/release/crucible"
 cp "$PROJECT" "$FAKE_OPT/scripts/project-skills.sh"
 cp -R "$HERE/skills/." "$FAKE_OPT/skills/"
 rm -rf "$FAKE_OPT/skills/research"
@@ -487,28 +507,20 @@ fi
 [ ! -f "$BASE/missing-opt/.crucible/skills/research/SKILL.md" ] && ok \
   || bad 'optional missing research must not invent the battery'
 
-# wm ready: ROUTING present + missing required battery → refused; absent ROUTING stays Task 1.
-READY_MISS="$BASE/ready-miss"
-mkdir -p "$READY_MISS"
-write_ready_spec "$READY_MISS"
-{
-  printf 'phase\tjob\tbattery\trole\tstake\trequired\n'
-  printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n'
-  printf 'X\tmissing\tno-such-battery\toperator\tspec\tyes\n'
-} > "$READY_MISS/ROUTING.tsv"
-if ( CDPATH=; cd "$READY_MISS" && "$WM" ready >"$OUT" 2>"$ERR" ); then
-  bad "wm ready accepted missing required battery: $(cat "$OUT")"
-else
-  grep -E -q 'refused' "$ERR" "$OUT" 2>/dev/null && ok \
-    || bad "wm ready wanted refused, got out=$(cat "$OUT") err=$(cat "$ERR")"
-fi
+# wm ready is POSIX kernel (dumped). rust unknown command until later.
 READY_OK="$BASE/ready-ok"
 mkdir -p "$READY_OK"
 write_ready_spec "$READY_OK"
-if ( CDPATH=; cd "$READY_OK" && "$WM" ready >"$OUT" 2>"$ERR" ); then
-  grep -q '^READY$' "$OUT" && ok || bad "wm ready without ROUTING wanted READY, got $(cat "$OUT")"
+STAGE_WM="$BASE/stage-wm"
+mkdir -p "$STAGE_WM"
+cp "$WM" "$STAGE_WM/wm.sh"
+cp "$RUST_BIN" "$STAGE_WM/crucible"
+chmod +x "$STAGE_WM/wm.sh" "$STAGE_WM/crucible"
+if ( CDPATH=; cd "$READY_OK" && "$STAGE_WM/wm.sh" ready >"$OUT" 2>"$ERR" ); then
+  bad "rust ready must not be a silent POSIX kernel: $(cat "$OUT")"
 else
-  bad "wm ready without ROUTING refused: $(cat "$OUT") $(cat "$ERR")"
+  grep -E -q 'unknown command' "$ERR" "$OUT" 2>/dev/null && ok \
+    || bad "ready wanted unknown command, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 
 # tarball via package-release includes wm.sh and skills/architecture/SKILL.md;

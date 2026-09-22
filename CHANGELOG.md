@@ -5,6 +5,21 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+## [1.17.0] - 2026-09-21
+
+### Rust kernel cut-over
+- Working-mode `go` / `status` / `debrief` / `stats` come from the Rust
+  `crucible` binary. `wm.sh` is an exec wrapper (`WM_WRAPPER=$0`;
+  `exec "$bindir/crucible"`). Old docs `wm.sh go` still work during this
+  release.
+- `crucible --version` / `-V` prints product VERSION `1.17.0` (compile-time
+  `include_str` of `VERSION`).
+- Release tarball `crucible-1.17.0.tar.gz` includes the host-built binary as
+  `crucible-1.17.0/crucible` plus wrapper `wm.sh`. Git archive still supplies
+  sources. POSIX adopt/cycle/drive ship as `crucible-guided` (repo-root
+  `./crucible` remains the guided script).
+- Rollback is the previous tarball.
+
 ## [1.16.4] - 2026-09-19
 
 ### Continue walk

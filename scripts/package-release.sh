@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build one reproducible, self-contained Crucible source package from a Git ref.
+# Build one host package: git archive of sources plus the release `crucible` binary.
 set -eu
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
@@ -24,27 +24,57 @@ RECORDED=$(git -C "$ROOT" show "$REF:VERSION" 2>/dev/null) \
 case $OUT_ARG in /*) OUT=$OUT_ARG ;; *) OUT=$PWD/$OUT_ARG ;; esac
 mkdir -p "$OUT"
 NAME="crucible-$VERSION_ARG.tar.gz"
+PREFIX="crucible-$VERSION_ARG"
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/crucible-pkg.XXXXXX")
 TMP="$OUT/.$NAME.$$.tmp"
-# Cleanup must never mask the exit status. The `0` handler removes and returns; each signal
-# handler removes and then exits 128+signal, because a handler that only removes lets the shell
-# resume and reach a `0` exit — an interrupted package run would be recorded as a success.
-trap 'rm -f "$TMP"' 0
-trap 'rm -f "$TMP"; exit 129' 1
-trap 'rm -f "$TMP"; exit 130' 2
-trap 'rm -f "$TMP"; exit 143' 15
+# Cleanup must never mask the exit status.
+trap 'rm -rf "$STAGE"; rm -f "$TMP"' 0
+trap 'rm -rf "$STAGE"; rm -f "$TMP"; exit 129' 1
+trap 'rm -rf "$STAGE"; rm -f "$TMP"; exit 130' 2
+trap 'rm -rf "$STAGE"; rm -f "$TMP"; exit 143' 15
 
-git -C "$ROOT" archive --format=tar --prefix="crucible-$VERSION_ARG/" "$REF" | gzip -n -9 > "$TMP"
-[ -s "$TMP" ] || { echo "package-release: empty package" >&2; exit 2; }
+git -C "$ROOT" archive --format=tar --prefix="$PREFIX/" "$REF" | tar -x -C "$STAGE"
+PKG="$STAGE/$PREFIX"
+[ -d "$PKG" ] || { echo "package-release: archive missing $PREFIX/" >&2; exit 2; }
+
+# Host-built product binary from the archived sources (matches REF).
+# shellcheck disable=SC1091
+. "$ROOT/scripts/cargo-env.sh"
+if ! ( CDPATH=; cd -- "$PKG" && cargo build --release --locked ); then
+  echo "package-release: cargo build --release failed" >&2
+  exit 2
+fi
+RUST_BIN="$PKG/target/release/crucible"
+[ -x "$RUST_BIN" ] || { echo "package-release: missing $RUST_BIN" >&2; exit 2; }
+
+if [ -f "$PKG/crucible" ]; then
+  _sig=$(dd if="$PKG/crucible" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" = '#!' ]; then
+    cp "$PKG/crucible" "$PKG/crucible-guided"
+    chmod +x "$PKG/crucible-guided" 2>/dev/null || true
+  fi
+fi
+cp "$RUST_BIN" "$PKG/crucible"
+chmod +x "$PKG/crucible"
+rm -rf "$PKG/target"
 
 # Working-mode payload (9c): if the ref tracks these paths, they must land in the tarball.
-CONTENTS=$(tar -tzf "$TMP")
+CONTENTS=$( ( CDPATH=; cd -- "$STAGE" && tar -cf - "$PREFIX" ) | tar -t )
 for rel in wm.sh skills/architecture/SKILL.md ROUTING.tsv \
   adapters/grok.md adapters/claude.md adapters/codex.md adapters/kiro.md; do
   if git -C "$ROOT" cat-file -e "$REF:$rel" 2>/dev/null; then
-    printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION_ARG/$rel\$" \
+    printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/$rel\$" \
       || { echo "package-release: $REF has $rel but archive does not" >&2; exit 2; }
   fi
 done
+printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/crucible\$" \
+  || { echo "package-release: missing $PREFIX/crucible" >&2; exit 2; }
+printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/wm.sh\$" \
+  || { echo "package-release: missing $PREFIX/wm.sh" >&2; exit 2; }
+
+# Reproducible gzip of the staged tree (binary is host-built).
+( CDPATH=; cd -- "$STAGE" && tar -cf - "$PREFIX" ) | gzip -n -9 > "$TMP"
+[ -s "$TMP" ] || { echo "package-release: empty package" >&2; exit 2; }
 
 if [ -f "$OUT/$NAME" ]; then
   cmp -s "$TMP" "$OUT/$NAME" \
@@ -53,7 +83,10 @@ if [ -f "$OUT/$NAME" ]; then
 else
   mv "$TMP" "$OUT/$NAME"
 fi
-trap - 0 1 2 15
+trap 'rm -rf "$STAGE"' 0
+trap 'rm -rf "$STAGE"; exit 129' 1
+trap 'rm -rf "$STAGE"; exit 130' 2
+trap 'rm -rf "$STAGE"; exit 143' 15
 
 if command -v shasum >/dev/null 2>&1; then
   HASH=$(shasum -a 256 "$OUT/$NAME" | awk '{print $1}')
