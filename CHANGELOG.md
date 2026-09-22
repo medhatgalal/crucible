@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Observability
+- `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
+  `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,
+  `GET /stats?since=8h|24h|7d` matches `stats --json`, `GET /health` reports
+  process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
+  bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
+
 ## [1.17.0] - 2026-09-21
 
 ### Rust kernel cut-over

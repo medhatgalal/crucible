@@ -1,9 +1,13 @@
 //! CLI: query verbs stay read-only; `go` writes FLOOR/TRACE via kernel (foreground).
 
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crucible_contract::{format_rfc3339_z, parse_rfc3339_z, Clock, SystemClock};
 
@@ -339,7 +343,7 @@ fn version_flag_prints_product_version() {
 }
 
 #[test]
-fn help_lists_go_and_query_verbs_not_serve_room() {
+fn help_lists_go_query_and_serve_not_room() {
     let out = bin().arg("help").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -348,8 +352,8 @@ fn help_lists_go_and_query_verbs_not_serve_room() {
     assert!(stdout.contains("debrief"));
     assert!(stdout.contains("stats"));
     assert!(
-        !stdout.to_ascii_lowercase().contains("serve"),
-        "do not list serve: {stdout}"
+        stdout.to_ascii_lowercase().contains("serve"),
+        "help must list serve: {stdout}"
     );
     assert!(
         !stdout.to_ascii_lowercase().contains("room"),
@@ -1262,4 +1266,277 @@ fn cargo_tree_has_no_herdr_grok_engos() {
     assert!(!tree.contains("herdr"), "herdr in cargo tree:\n{tree}");
     assert!(!tree.contains("grok"), "grok in cargo tree:\n{tree}");
     assert!(!tree.contains("engos"), "engos in cargo tree:\n{tree}");
+}
+
+struct ServeProc {
+    child: Child,
+    addr: String,
+}
+
+impl Drop for ServeProc {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn start_serve(dir: &Path, bind: &str) -> ServeProc {
+    let mut child = bin()
+        .current_dir(dir)
+        .args(["serve", "--bind", bind])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn serve");
+    let mut stdout = child.stdout.take().expect("serve stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        match stdout.read(&mut buf) {
+            Ok(n) => {
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            }
+            Err(e) => {
+                let _ = tx.send(format!("read-err {e}"));
+            }
+        }
+    });
+    let line = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(s) => s,
+        Err(_) => {
+            let mut err = String::new();
+            if let Some(mut s) = child.stderr.take() {
+                let _ = s.read_to_string(&mut err);
+            }
+            let st = child.try_wait();
+            panic!("serve did not print listening: stderr={err:?} status={st:?}");
+        }
+    };
+    let addr = line
+        .lines()
+        .find_map(|l| l.strip_prefix("listening "))
+        .unwrap_or(line.trim())
+        .trim()
+        .to_string();
+    assert!(
+        addr.starts_with("127.0.0.1:") || addr.starts_with("[::1]:"),
+        "bind must be loopback: {line:?}"
+    );
+    ServeProc { child, addr }
+}
+
+fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            return Some(st);
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn http_req(addr: &str, method: &str, path: &str) -> (u16, serde_json::Value, Vec<u8>) {
+    let sock: std::net::SocketAddr = addr.parse().expect("bind addr");
+    let mut last = None;
+    for _ in 0..50 {
+        match TcpStream::connect_timeout(&sock, Duration::from_millis(100)) {
+            Ok(mut s) => {
+                let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                write!(
+                    s,
+                    "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                let mut raw = Vec::new();
+                s.read_to_end(&mut raw).unwrap();
+                return parse_http(&raw);
+            }
+            Err(e) => {
+                last = Some(e);
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    panic!("connect {addr}: {last:?}");
+}
+
+fn parse_http(raw: &[u8]) -> (u16, serde_json::Value, Vec<u8>) {
+    let text = String::from_utf8_lossy(raw);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .or_else(|| text.split_once("\n\n"))
+        .unwrap_or((text.as_ref(), ""));
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    let json = if body.trim().is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::from_str(body.trim()).unwrap_or(serde_json::Value::Null)
+    };
+    (status, json, body.as_bytes().to_vec())
+}
+
+fn strip_clock(mut v: serde_json::Value) -> serde_json::Value {
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("until");
+        obj.remove("since");
+        if let Some(floor) = obj.get_mut("floor") {
+            if let Some(f) = floor.as_object_mut() {
+                f.remove("elapsed_s");
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn serve_get_walk_equals_status_json() {
+    let tmp = Tmp::new();
+    golden_board(&tmp.root);
+    let before = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    let (code, walk, _) = http_req(&srv.addr, "GET", "/walk");
+    assert_eq!(code, 200);
+    assert_eq!(walk["schema"], "crucible.walk/v1");
+    assert_eq!(walk["available"], true);
+    assert!(walk["available"].is_boolean());
+    assert_eq!(walk["floor"]["card"], "STOP-ASK INTAKE");
+
+    let cli = bin()
+        .current_dir(&tmp.root)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(cli.status.success());
+    let status: serde_json::Value = serde_json::from_slice(&cli.stdout).unwrap();
+    assert_eq!(strip_clock(walk), strip_clock(status));
+    assert_eq!(fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(), before);
+}
+
+#[test]
+fn serve_get_walk_missing_wm_available_false() {
+    let tmp = Tmp::new();
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    let (code, walk, _) = http_req(&srv.addr, "GET", "/walk");
+    assert_eq!(code, 200);
+    assert_eq!(walk["available"], false);
+    assert!(walk["available"].is_boolean());
+    assert!(!tmp.root.join(".wm").exists());
+}
+
+#[test]
+fn serve_get_stats_equals_stats_json() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let when = format_rfc3339_z(SystemClock.now_unix());
+    fs::write(
+        wm.join("METRICS.tsv"),
+        format!("when\toutcome\tslices\tbound\tnote\n{when}\tSTOP-ASK QUESTIONS\t0\t40\t-\n"),
+    )
+    .unwrap();
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    for window in ["8h", "24h", "7d"] {
+        let (code, http, _) = http_req(&srv.addr, "GET", &format!("/stats?since={window}"));
+        assert_eq!(code, 200, "GET /stats?since={window}");
+        assert_eq!(http["schema"], "crucible.stats/v1");
+        assert_eq!(http["available"], true);
+        assert_eq!(http["source"], "metrics");
+        assert_eq!(http["halts"][0]["outcome"], "STOP-ASK QUESTIONS");
+
+        let cli = bin()
+            .current_dir(&tmp.root)
+            .args(["stats", "--since", window, "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            cli.status.success(),
+            "stats --since {window}: {}",
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        let stats: serde_json::Value = serde_json::from_slice(&cli.stdout).unwrap();
+        assert_eq!(
+            strip_clock(http),
+            strip_clock(stats),
+            "GET /stats?since={window} == stats --json"
+        );
+    }
+}
+
+#[test]
+fn serve_get_health_includes_bind_and_version() {
+    let tmp = Tmp::new();
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    let (code, health, _) = http_req(&srv.addr, "GET", "/health");
+    assert_eq!(code, 200);
+    assert_eq!(health["ok"], true);
+    assert_eq!(health["bind"], srv.addr);
+    assert_eq!(health["version"], "1.17.0");
+    assert!(!tmp.root.join(".wm").exists());
+}
+
+#[test]
+fn serve_post_go_does_not_start_walk() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+    let before = golden_board(&tmp.root);
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    let (code, _, _) = http_req(&srv.addr, "POST", "/go");
+    assert!(
+        code == 404 || code == 405,
+        "POST /go must 404/405, got {code}"
+    );
+    let after = fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    assert_eq!(after, before);
+    assert!(!tmp.root.join(".wm/go.pid").exists());
+}
+
+#[test]
+fn serve_refuses_non_loopback_and_does_not_listen() {
+    let tmp = Tmp::new();
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let spec = format!("0.0.0.0:{port}");
+    let mut child = bin()
+        .current_dir(&tmp.root)
+        .args(["serve", "--bind", &spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let st = wait_exit(&mut child, Duration::from_secs(2)).expect("non-loopback serve must exit");
+    assert_ne!(st.code(), Some(0), "non-loopback must be nonzero");
+    assert!(
+        TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(150)
+        )
+        .is_err(),
+        "must not listen on {port}"
+    );
+}
+
+#[test]
+fn serve_second_on_busy_port_fails() {
+    let tmp = Tmp::new();
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    let mut child = bin()
+        .current_dir(&tmp.root)
+        .args(["serve", "--bind", &srv.addr])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let st = wait_exit(&mut child, Duration::from_secs(2)).expect("second serve must exit");
+    assert!(!st.success(), "busy port must fail (no SO_REUSEPORT)");
 }

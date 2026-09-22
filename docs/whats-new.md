@@ -4,6 +4,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+`crucible serve --bind 127.0.0.1:PORT` (default `127.0.0.1:1734`) GET `/walk`,
+`/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
+`stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
+
 ## 1.17.0 — Rust working-mode kernel
 
 `wm.sh` is an exec wrapper around the `crucible` binary. `go`, `status`,
