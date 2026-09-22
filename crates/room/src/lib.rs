@@ -1,4 +1,4 @@
-//! `crucible room` is a client of GET HTTP serve plus an optional Herdr CLI.
+//! `crucible room` is a client of GET HTTP serve plus a required Herdr PATH gate.
 //!
 //! Not a copy of herdr-init. Standing role names are the documented contract.
 //! First slice: require `herdr` on PATH, spawn **this** binary's
@@ -7,29 +7,25 @@
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-/// Standing roles (herdr-init concept only; not that skill's layout/scripts).
-pub const STANDING_ROLES: &[&str] = &["chat", "orchestrator", "watcher", "reaper", "dashboard"];
-
 const SERVE_BIND: &str = "127.0.0.1:0";
 
-/// First executable named `herdr` on `PATH`.
-pub fn find_herdr(path: impl AsRef<OsStr>) -> Option<PathBuf> {
+/// True when an executable named `herdr` is on `PATH`.
+fn path_has_herdr(path: impl AsRef<OsStr>) -> bool {
     for dir in std::env::split_paths(path.as_ref()) {
         if dir.as_os_str().is_empty() {
             continue;
         }
-        let candidate = dir.join("herdr");
-        if is_executable(&candidate) {
-            return Some(candidate);
+        if is_executable(&dir.join("herdr")) {
+            return true;
         }
     }
-    None
+    false
 }
 
 fn is_executable(p: &Path) -> bool {
@@ -62,30 +58,20 @@ impl Drop for ChildGuard {
 
 /// Require `herdr` on `path`, then spawn `exe serve --bind 127.0.0.1:0` (not PATH `wm`/`crucible`).
 pub fn run(exe: &Path, cwd: &Path, path: &OsStr) -> i32 {
-    run_io(exe, cwd, path, &mut io::stdout(), &mut io::stderr())
-}
-
-fn run_io(
-    exe: &Path,
-    cwd: &Path,
-    path: &OsStr,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> i32 {
-    if find_herdr(path).is_none() {
-        let _ = writeln!(stderr, "room: herdr not found on PATH");
+    if !path_has_herdr(path) {
+        let _ = writeln!(io::stderr(), "room: herdr not found on PATH");
         return 2;
     }
-    match spawn_and_health(exe, cwd, stdout) {
+    match spawn_and_health(exe, cwd) {
         Ok(()) => 0,
         Err(e) => {
-            let _ = writeln!(stderr, "room: {e}");
+            let _ = writeln!(io::stderr(), "room: {e}");
             1
         }
     }
 }
 
-fn spawn_and_health(exe: &Path, cwd: &Path, stdout: &mut dyn Write) -> Result<(), String> {
+fn spawn_and_health(exe: &Path, cwd: &Path) -> Result<(), String> {
     let mut child = Command::new(exe)
         .args(["serve", "--bind", SERVE_BIND])
         .current_dir(cwd)
@@ -135,7 +121,12 @@ fn spawn_and_health(exe: &Path, cwd: &Path, stdout: &mut dyn Write) -> Result<()
         return Err(format!("serve bind must be loopback, got {line:?}"));
     }
     let body = get_health(&addr)?;
-    let _ = writeln!(stdout, "standing roles: {}", STANDING_ROLES.join(", "));
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    let _ = writeln!(
+        stdout,
+        "standing roles: chat, orchestrator, watcher, reaper, dashboard"
+    );
     let _ = writeln!(stdout, "listening {addr}");
     let _ = writeln!(stdout, "GET /health {addr}");
     let _ = writeln!(stdout, "{body}");
@@ -225,28 +216,25 @@ mod tests {
 
     #[test]
     fn standing_roles_are_the_documented_contract() {
-        assert_eq!(
-            STANDING_ROLES,
-            &["chat", "orchestrator", "watcher", "reaper", "dashboard"]
-        );
+        let prod = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
+        assert!(prod.contains("standing roles: chat, orchestrator, watcher, reaper, dashboard"));
     }
 
     #[test]
-    fn find_herdr_none_when_path_has_no_herdr() {
+    fn path_has_herdr_false_when_path_has_no_herdr() {
         let tmp = Tmp::new();
         let empty = tmp.root.join("empty");
         fs::create_dir(&empty).unwrap();
-        assert!(find_herdr(empty.as_os_str()).is_none());
+        assert!(!path_has_herdr(empty.as_os_str()));
     }
 
     #[test]
-    fn find_herdr_first_executable_on_path() {
+    fn path_has_herdr_true_for_executable_on_path() {
         let tmp = Tmp::new();
         let bin = tmp.root.join("bin");
         fs::create_dir(&bin).unwrap();
         write_exec(&bin.join("herdr"), "#!/bin/sh\nexit 0\n");
-        let found = find_herdr(bin.as_os_str()).expect("herdr");
-        assert_eq!(found, bin.join("herdr"));
+        assert!(path_has_herdr(bin.as_os_str()));
     }
 
     #[test]

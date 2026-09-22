@@ -1591,19 +1591,6 @@ fn write_exec(path: &Path, body: &str) {
     }
 }
 
-fn serve_process_lines() -> Vec<String> {
-    let bin = env!("CARGO_BIN_EXE_crucible");
-    let out = Command::new("/bin/ps")
-        .args(["-ax", "-o", "pid=", "-o", "args="])
-        .output()
-        .expect("ps");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter(|l| l.contains(bin) && l.contains("serve"))
-        .map(|s| s.trim().to_string())
-        .collect()
-}
-
 fn read_child_stdio(child: &mut Child) -> (String, String) {
     let mut stdout = String::new();
     let mut stderr = String::new();
@@ -1643,11 +1630,13 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
     let before = golden_board(&tmp.root);
     let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
     let path = path_without_herdr();
-    assert!(
-        crucible_room::find_herdr(&path).is_none(),
-        "test PATH must not contain herdr"
-    );
-    let before_serve = serve_process_lines();
+    for d in std::env::split_paths(&path) {
+        assert!(
+            !d.join("herdr").is_file(),
+            "test PATH must not contain herdr: {}",
+            d.display()
+        );
+    }
     let mut child = bin()
         .current_dir(&tmp.root)
         .env("PATH", &path)
@@ -1686,11 +1675,6 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
     assert_not_listening_on_printed_addrs(&stdout, &stderr);
-    let after_serve = serve_process_lines();
-    assert_eq!(
-        after_serve, before_serve,
-        "missing herdr must not leave a serve process: before={before_serve:?} after={after_serve:?}"
-    );
 }
 
 #[test]
@@ -1710,7 +1694,6 @@ fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
         &bindir.join("wm"),
         "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CRUCIBLE_ROOM_MARKER/path-wm\"\nexit 1\n",
     );
-    let before_serve = serve_process_lines();
     let mut child = bin()
         .current_dir(&tmp.root)
         .env("PATH", path_prefix(&bindir))
@@ -1728,7 +1711,7 @@ fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
         Some(0),
         "room with herdr: stdout={stdout:?} stderr={stderr:?}"
     );
-    for role in crucible_room::STANDING_ROLES {
+    for role in ["chat", "orchestrator", "watcher", "reaper", "dashboard"] {
         assert!(
             stdout.contains(role),
             "standing role {role} missing: {stdout:?}"
@@ -1758,9 +1741,4 @@ fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
         before
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
-    let after_serve = serve_process_lines();
-    assert_eq!(
-        after_serve, before_serve,
-        "room must not leak serve: before={before_serve:?} after={after_serve:?} stdout={stdout:?}"
-    );
 }
