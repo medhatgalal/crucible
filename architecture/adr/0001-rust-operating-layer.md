@@ -273,8 +273,7 @@ All rejected. Do not reopen without a new ADR.
 
 ## Remaining (not this ADR)
 
-- **`crates/room`** and `crucible room` (D11). Help lists `serve`, not `room`, until that crate lands.
-- Grok router fixture `testdata/loop-router.md` vs D8 (D15). Never `$HOME` in CI.
-- `doctor`; stats from EVENTS when present; human `status` write in the Rust argv (D20).
+- Router fixture + `doctor` warn (D8/D15) landed: `testdata/loop-router.md` vs ADR-HASH; never `$HOME` in CI.
+- stats from EVENTS when present; human `status` write in the Rust argv (D20).
 - CONTRIBUTING still states a POSIX-only identity; CHANGELOG 1.17.0 already records the kernel break. Rotting `docs/superpowers/plans/` deleted (D16).
-- Do not bump `VERSION` on this docs PR.
+- Do not bump `VERSION` on this PR.
