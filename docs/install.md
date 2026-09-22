@@ -23,6 +23,9 @@ Working-mode outer loop: `/crucible` (Grok, Kiro CLI, or Codex) then [working-mo
 ## First install
 
 Need a Crucible source (clone or `crucible-<version>.tar.gz` from the GitHub release).
+A checkout's `./crucible` is the POSIX adopt/cycle/drive script. A tarball's
+`crucible` is the host-built binary; `adopt` still runs via sibling
+`crucible-guided`. Product machines need no rustc.
 
 ```sh
 <path-to-crucible>/scripts/verify-agent-cycle.sh
@@ -78,26 +81,29 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 On **1.17.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
 `wm.sh` unless `--working-mode`. Working-mode installs the Rust `crucible`
-binary plus an exec-wrapper `wm.sh`. To also install the working-mode runner and
-batteries into the **target** (no `$HOME` skill trees):
+binary plus an exec-wrapper `wm.sh`. Product machines need **no rustc**. To
+also install the working-mode runner and batteries into the **target** (no
+`$HOME` skill trees):
 
 ```sh
 <path-to-crucible>/crucible adopt work --managed --working-mode
 ```
 
-That copies `wm.sh` into `.crucible/work/`, canonical skills into `.crucible/skills/`,
-harness views under `.crucible/.{grok,claude,agents}/skills/` and repo-root
+That copies the Rust `crucible` binary and exec-wrapper `wm.sh` into
+`.crucible/work/`, canonical skills into `.crucible/skills/`, harness views
+under `.crucible/.{grok,claude,agents}/skills/` and repo-root
 `.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
 of the installing tree). Adapters are copied when the source tree has `adapters/`;
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
 Then, from the **target** root: `/crucible` on Grok, Kiro CLI, or Codex
-(outer loop: intake, adopt, brakes) or `.crucible/work/wm.sh` (no args) then
-`go [IDEA.md]`. Inner loop is
-`go`. Stop on `CLOSED`, `STOP-ASK`, or `ESCALATE`. Brakes (stop, hold, andon,
-red): kill `go`, run `status`, read `.wm/FLOOR.md`, wait. How-to:
-[working-mode.md](working-mode.md) (Quickstart).
+(outer loop: intake, adopt, brakes). Inner loop is `.crucible/work/wm.sh go`
+(the wrapper execs rust). Do not use `/execute-plan` as the product walker.
+Optional loopback GET serve (`/walk` `/stats` `/health`) is a camera, not a
+walker — there is no POST that starts `go`. Stop on `CLOSED`, `STOP-ASK`, or
+`ESCALATE`. Brakes (stop, hold, andon, red): kill `go`, run `status`, read
+`.wm/FLOOR.md`, wait. How-to: [working-mode.md](working-mode.md) (Quickstart).
 
 `--refresh` refreshes working-mode if it is already installed (`wm.sh` present or
 `PROGRAM` has `working-mode: yes`). `adopt PROGRAM --refresh --working-mode` can
@@ -265,7 +271,7 @@ Stale item evidence (work-id ≠ current): `crucible evidence archive SLUG` then
 | Coordinator | `cycle`, dispatch, transport, `contract-audit` — never start ACP after seal |
 | Drive parent | Sealed worker `agents.tsv` command, `attempt start` / finish. One worker per `drive tick`. Does not invoke the coordinator while a sealed worker exists. |
 | Maker / reviewer / auditor | only their contract |
-| Working-mode (if `PROGRAM` has `working-mode: yes`) | `.crucible/<program>/wm.sh` from the target root — [working-mode.md](working-mode.md) |
+| Working-mode (if `PROGRAM` has `working-mode: yes`) | `.crucible/<program>/wm.sh go` from the target root (wrapper execs rust) — [working-mode.md](working-mode.md). Not `/execute-plan`. |
 
 `WAIT PANEL`, `WAIT APPROVAL`, `ESCALATE`, and `DONE` stop drive. Conversational
 “keep looping” is not implement.
