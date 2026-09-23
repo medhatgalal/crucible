@@ -5,6 +5,21 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Room
+- `crucible room` asks external `herdr` for a workspace and standing tabs
+  (chat, orchestrator, watcher, reaper, dashboard). A second run does not
+  create the same tab again. Watcher and dashboard run `camera` (GET only).
+  `go` is `herdr pane run` in the orchestrator only when `IDEA.md` is
+  non-empty or a READY `BACKLOG.tsv` row exists. `reap --pid` sends SIGTERM
+  to that process group. Missing `herdr`: nonzero, no serve, no TRACE.
+  No `POST /go`. No Herdr crate.
+
+### Web
+- `crucible web` is a loopback GET page (default `127.0.0.1:1735`) that
+  proxies `/walk`, `/stats`, and `/health` from `serve`. POST is 405.
+  It does not start a walk. Operator override of D17: the UI is a camera,
+  not a kernel. See `architecture/adr/0002-web-get-client.md`.
+
 ### Keep-current
 - `testdata/loop-router.md` is the D8 Grok router fixture (`/crucible` live →
   Crucible; else Grok-native + `NEXT:`; must not force `/execute-plan` inside

@@ -48,6 +48,9 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         "stats" => cmd_stats(&args[1..], cwd, clock),
         "serve" => cmd_serve(&args[1..], cwd, clock),
         "room" => cmd_room(&args[1..], cwd),
+        "camera" => cmd_camera(&args[1..]),
+        "reap" => cmd_reap(&args[1..]),
+        "web" => cmd_web(&args[1..]),
         "doctor" => cmd_doctor(&args[1..]),
         other => exec_guided_or_unknown(other, args),
     }
@@ -86,7 +89,7 @@ fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
 }
 
 fn help() {
-    println!("commands: go status debrief stats serve room doctor help");
+    println!("commands: go status debrief stats serve room web camera reap doctor help");
     println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
@@ -97,8 +100,13 @@ fn help() {
         "  serve [--bind 127.0.0.1:PORT]    GET /walk /stats /health (loopback; default 127.0.0.1:1734)"
     );
     println!(
-        "  room                              require herdr; spawn this binary serve --bind 127.0.0.1:0; standing roles; GET /health"
+        "  room                              herdr tabs; cameras GET; go is a process in orchestrator"
     );
+    println!(
+        "  web [--bind 127.0.0.1:1735]       GET-only page; proxies /walk /stats /health; no POST /go"
+    );
+    println!("  camera --bind ADDR                GET /walk and /stats (read-only)");
+    println!("  reap --pid N                      SIGTERM the go process group");
     println!(
         "  doctor                            warn if home loop-router is missing or stale vs ADR-HASH"
     );
@@ -302,6 +310,134 @@ fn cmd_room(args: &[String], cwd: &Path) -> i32 {
     };
     let path = env::var_os("PATH").unwrap_or_default();
     crucible_room::run(&exe, cwd, &path)
+}
+
+fn cmd_camera(args: &[String]) -> i32 {
+    let mut bind = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--bind" => {
+                i += 1;
+                if i >= args.len() {
+                    let _ = writeln!(io::stderr(), "camera: --bind needs 127.0.0.1:PORT");
+                    return 2;
+                }
+                bind = Some(args[i].clone());
+            }
+            other => {
+                let _ = writeln!(io::stderr(), "camera: unknown arg {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    let Some(addr) = bind else {
+        let _ = writeln!(io::stderr(), "usage: camera --bind 127.0.0.1:PORT");
+        return 2;
+    };
+    for path in ["/walk", "/stats?since=1h", "/health"] {
+        match crucible_room::http_get(&addr, path) {
+            Ok(body) => println!("{body}"),
+            Err(e) => {
+                let _ = writeln!(io::stderr(), "camera: {e}");
+                return 1;
+            }
+        }
+    }
+    0
+}
+
+fn cmd_reap(args: &[String]) -> i32 {
+    let mut pid = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--pid" => {
+                i += 1;
+                if i >= args.len() {
+                    let _ = writeln!(io::stderr(), "reap: --pid needs a process id");
+                    return 2;
+                }
+                match args[i].parse::<u32>() {
+                    Ok(n) => pid = Some(n),
+                    Err(_) => {
+                        let _ = writeln!(io::stderr(), "reap: bad pid {}", args[i]);
+                        return 2;
+                    }
+                }
+            }
+            other => {
+                let _ = writeln!(io::stderr(), "reap: unknown arg {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    let Some(pid) = pid else {
+        let _ = writeln!(io::stderr(), "usage: reap --pid N");
+        return 2;
+    };
+    match crucible_room::kill_process_group(pid) {
+        Ok(()) => 0,
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "{e}");
+            1
+        }
+    }
+}
+
+fn cmd_web(args: &[String]) -> i32 {
+    let mut bind = crucible_web::DEFAULT_WEB_BIND.to_string();
+    let mut api = crucible_web::DEFAULT_API_BIND.to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--bind" => {
+                i += 1;
+                if i >= args.len() {
+                    let _ = writeln!(io::stderr(), "web: --bind needs 127.0.0.1:PORT");
+                    return 2;
+                }
+                bind = args[i].clone();
+            }
+            "--api" => {
+                i += 1;
+                if i >= args.len() {
+                    let _ = writeln!(io::stderr(), "web: --api needs 127.0.0.1:PORT");
+                    return 2;
+                }
+                api = args[i].clone();
+            }
+            other => {
+                let _ = writeln!(io::stderr(), "web: unknown arg {other}");
+                return 2;
+            }
+        }
+        i += 1;
+    }
+    match crucible_web::bind_web(&bind) {
+        Ok(listener) => {
+            let addr = match listener.local_addr() {
+                Ok(a) => a,
+                Err(e) => {
+                    let _ = writeln!(io::stderr(), "web: {e}");
+                    return 1;
+                }
+            };
+            println!("listening {addr}");
+            let _ = io::stdout().flush();
+            if let Err(e) = crucible_web::serve_web(listener, &api) {
+                let _ = writeln!(io::stderr(), "web: {e}");
+                return 1;
+            }
+            0
+        }
+        Err(e) => {
+            let _ = writeln!(io::stderr(), "{e}");
+            2
+        }
+    }
 }
 
 fn cmd_doctor(args: &[String]) -> i32 {

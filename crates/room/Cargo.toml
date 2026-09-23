@@ -4,4 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "crucible room: PATH-gated GET-serve client; standing role contract (not an init-skill copy)"
+description = "crucible room: external herdr tabs, GET cameras, go as a process"
+
+[dependencies]
+serde_json = "1"
