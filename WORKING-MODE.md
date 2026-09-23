@@ -6,8 +6,7 @@ Forgot the command? Run `.crucible/work/wm.sh` with no args (help), then
 `.crucible/work/wm.sh go [IDEA.md]`. Use `status` to read the next card.
 
 Do not mix guided `drive` or `cycle` with this runner. Engine work (fix
-`wm.sh`, change Crucible) is a different loop. Do not `go` a product as a
-way to patch the engine.
+`wm.sh`, change Crucible) is a different loop. Do not `go` a product to patch it.
 
 ## Start
 
