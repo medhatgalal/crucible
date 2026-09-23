@@ -15,6 +15,7 @@ crucible-contract = { path = "../contract" }
 crucible-http = { path = "../http" }
 crucible-kernel = { path = "../kernel" }
 crucible-room = { path = "../room" }
+crucible-web = { path = "../web" }
 
 [dev-dependencies]
 crucible-contract = { path = "../contract" }

@@ -1,0 +1,10 @@
+[package]
+name = "crucible-web"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "GET-only loopback web camera of crucible serve. No walker."
+
+[dependencies]
+crucible-http = { path = "../http" }

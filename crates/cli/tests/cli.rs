@@ -1752,7 +1752,52 @@ fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
     fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
     let bindir = tmp.root.join("bin");
     fs::create_dir(&bindir).unwrap();
-    write_exec(&bindir.join("herdr"), "#!/bin/sh\nexit 0\n");
+    let log = tmp.root.join("herdr.log");
+    let state = tmp.root.join("tabs.txt");
+    write_exec(
+        &bindir.join("herdr"),
+        &format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> {log}
+state={state}
+cmd="$1 $2"
+if [ "$cmd" = "workspace list" ]; then
+  printf '%s\n' '{{"result":{{"workspaces":[]}}}}'
+elif [ "$cmd" = "workspace create" ]; then
+  printf '%s\n' '{{"result":{{"workspace":{{"workspace_id":"ws1","label":"crucible"}}}}}}'
+elif [ "$cmd" = "tab list" ]; then
+  printf '%s' '{{"result":{{"tabs":['
+  sep=""
+  if [ -f "$state" ]; then
+    while IFS= read -r label; do
+      [ -n "$label" ] || continue
+      printf '%s%s' "$sep" '{{"label":"'"$label"'","tab_id":"tab-'"$label"'"}}'
+      sep=","
+    done < "$state"
+  fi
+  printf '%s\n' ']}}}}'
+elif [ "$cmd" = "tab create" ]; then
+  label=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--label" ]; then label=$a; fi
+    prev=$a
+  done
+  printf '%s\n' "$label" >> "$state"
+  printf '%s\n' '{{"result":{{"tab":{{"label":"'"$label"'","tab_id":"tab-'"$label"'"}}}}}}'
+elif [ "$cmd" = "pane list" ]; then
+  printf '%s\n' '{{"result":{{"panes":[{{"pane_id":"pane-chat","tab_id":"tab-chat"}},{{"pane_id":"pane-orchestrator","tab_id":"tab-orchestrator"}},{{"pane_id":"pane-watcher","tab_id":"tab-watcher"}},{{"pane_id":"pane-reaper","tab_id":"tab-reaper"}},{{"pane_id":"pane-dashboard","tab_id":"tab-dashboard"}}]}}}}'
+elif [ "$cmd" = "pane process-info" ]; then
+  printf '%s\n' '{{"result":{{"pid":0}}}}'
+else
+  printf '%s\n' '{{"result":{{"ok":true}}}}'
+fi
+exit 0
+"#,
+            log = log.display(),
+            state = state.display(),
+        ),
+    );
     write_exec(
         &bindir.join("crucible"),
         "#!/bin/sh\nprintf '%s\\n' \"$*\" > \"$CRUCIBLE_ROOM_MARKER/path-crucible\"\nexit 1\n",
@@ -1808,4 +1853,14 @@ fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
         before
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
+    assert!(
+        stdout.contains("go orchestrator"),
+        "IDEA.md must start go as a process, not HTTP: {stdout}"
+    );
+    assert!(!stdout.contains("POST"), "room must not POST /go: {stdout}");
+    if let Some(pid) = stdout.lines().find_map(|l| l.strip_prefix("serve pid ")) {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", pid.trim()])
+            .status();
+    }
 }
