@@ -1,4 +1,4 @@
-//! CLI: query verbs stay read-only; `go` writes FLOOR/TRACE via kernel (foreground).
+//! CLI: `status --json` stays read-only; bare `status` rewrites FLOOR without TRACE; `go` writes both.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -99,6 +99,8 @@ fn status_json_does_not_mutate_trace() {
     let tmp = Tmp::new();
     let before = golden_board(&tmp.root);
     let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    let floor_before = fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    let t0_before = fs::read(tmp.root.join(".wm/t0")).unwrap();
     let out = bin()
         .current_dir(&tmp.root)
         .args(["status", "--json"])
@@ -113,9 +115,13 @@ fn status_json_does_not_mutate_trace() {
     assert_eq!(after, before, "status --json must not rewrite TRACE");
     let after_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
     assert_eq!(after_bytes, before_bytes);
-    let floor_before = "station: ANDON";
-    let floor_after = fs::read_to_string(tmp.root.join(".wm/FLOOR.md")).unwrap();
-    assert!(floor_after.contains(floor_before));
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap(),
+        floor_before,
+        "status --json must not rewrite FLOOR"
+    );
+    assert_eq!(fs::read(tmp.root.join(".wm/t0")).unwrap(), t0_before);
+    assert!(!tmp.root.join(".wm/EVENTS").exists());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["schema"], "crucible.walk/v1");
     assert_eq!(v["available"], true);
@@ -222,12 +228,133 @@ fn stats_since_json_from_events_wal() {
 }
 
 #[test]
-fn status_without_json_does_not_write() {
+fn status_without_json_writes_floor_not_trace() {
     let tmp = Tmp::new();
-    let before = golden_board(&tmp.root);
-    let _ = bin().current_dir(&tmp.root).arg("status").output().unwrap();
-    let after = fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap();
-    assert_eq!(after, before);
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    fs::write(wm.join("FALSIFIER"), "x\n").unwrap();
+    fs::write(wm.join("slice-in-flight"), "id: s9\n").unwrap();
+    fs::write(
+        wm.join("FLOOR.md"),
+        "station: SHAPE\ncard: STOP-ASK INTAKE\nwip: stale\nandon: -\nindependence: CROSS-FAMILY\nevidence:\n  .wm/CLOSED\n",
+    )
+    .unwrap();
+    let trace = "when\tcard\toutcome\n2026-09-20T12:00:00Z\tNEXT MAP\tDESIGN\n";
+    fs::write(wm.join("TRACE.tsv"), trace).unwrap();
+
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.trim();
+    assert!(
+        line.starts_with("FLOOR t=+")
+            && (line.contains("t=+0s ") || line.contains("t=+1s "))
+            && line.ends_with("station=ANDON card=STOP-ASK INTAKE wip=s9"),
+        "stdout={stdout:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(wm.join("TRACE.tsv")).unwrap(),
+        trace,
+        "bare status must not append TRACE"
+    );
+    assert!(
+        !wm.join("EVENTS").exists(),
+        "bare status must not create EVENTS"
+    );
+    assert!(wm.join("t0").is_file(), "FLOOR without t0 may create t0");
+    let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+    assert!(floor.contains("station: ANDON\n"), "{floor}");
+    assert!(floor.contains("card: STOP-ASK INTAKE\n"), "{floor}");
+    assert!(floor.contains("wip: s9\n"), "{floor}");
+    assert!(floor.contains("andon: STOP-ASK INTAKE\n"), "{floor}");
+    assert!(floor.contains("independence: CROSS-FAMILY\n"), "{floor}");
+    assert!(floor.contains("  .wm/FALSIFIER\n"), "{floor}");
+    assert!(!floor.contains("CLOSED"), "{floor}");
+    assert!(!floor.contains("stale"), "{floor}");
+}
+
+#[test]
+fn status_missing_independence_keeps_the_default() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    fs::write(
+        wm.join("FLOOR.md"),
+        "station: SHAPE\ncard: NEXT INTAKE\nwip: -\nandon: -\nevidence:\n",
+    )
+    .unwrap();
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("independence: SUBAGENT-ISOLATED\n"),
+        "{floor}"
+    );
+}
+
+#[test]
+fn status_without_card_exits_1_and_writes_nothing() {
+    let tmp = Tmp::new();
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "no card must exit 1: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!tmp.root.join(".wm").exists(), "must not mkdir .wm");
+
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let trace = "when\tcard\toutcome\n2026-09-20T12:00:00Z\tNEXT INTAKE\tSHAPE\n";
+    fs::write(wm.join("TRACE.tsv"), trace).unwrap();
+    fs::write(wm.join("t0"), "1773964800\n").unwrap();
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(wm.join("TRACE.tsv")).unwrap(), trace);
+    assert_eq!(fs::read_to_string(wm.join("t0")).unwrap(), "1773964800\n");
+    assert!(!wm.join("FLOOR.md").exists());
+    assert!(!wm.join("EVENTS").exists());
+
+    let floor = "station: SHAPE\nwip: -\n";
+    fs::write(wm.join("FLOOR.md"), floor).unwrap();
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(fs::read_to_string(wm.join("FLOOR.md")).unwrap(), floor);
+    assert_eq!(fs::read_to_string(wm.join("TRACE.tsv")).unwrap(), trace);
+    assert!(!wm.join("EVENTS").exists());
+}
+
+#[test]
+fn status_json_floor_without_t0_stays_read_only() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let floor = "station: SHAPE\ncard: NEXT INTAKE\nwip: -\nandon: -\nindependence: SUBAGENT-ISOLATED\nevidence:\n";
+    fs::write(wm.join("FLOOR.md"), floor).unwrap();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(fs::read_to_string(wm.join("FLOOR.md")).unwrap(), floor);
+    assert!(!wm.join("t0").exists(), "status --json must not create t0");
+    assert!(!wm.join("TRACE.tsv").exists());
+    assert!(!wm.join("EVENTS").exists());
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["available"], true);
+    assert!(v["t0_unix"].is_null());
+    assert_eq!(v["floor"]["card"], "NEXT INTAKE");
 }
 
 #[test]

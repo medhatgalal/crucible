@@ -56,7 +56,7 @@ coordinator does not implement the product and does not judge PASS.
 ```sh
 .crucible/work/wm.sh            # help
 .crucible/work/wm.sh go         # or go [IDEA.md]
-.crucible/work/wm.sh status     # next card; writes .wm/FLOOR.md
+.crucible/work/wm.sh status     # rewrites .wm/FLOOR.md; does not append TRACE
 ```
 
 Stay in the foreground. Do not background-wait. `go` discovers grok /
@@ -111,10 +111,11 @@ both non-empty; greenfield still mkdir.
 
 ## Observability (FLOOR, TRACE, CLOSED, status)
 
-`go` rewrites `.wm/TRACE.tsv` (this run only) and writes `.wm/FLOOR.md`.
-`status` writes `.wm/FLOOR.md` and appends TRACE; consecutive identical
-cards are not repeated. `status` prints the next card and does **not**
-increment FAIL retries.
+`go` rewrites `.wm/TRACE.tsv` (this run only) and writes `.wm/FLOOR.md`;
+consecutive identical cards are not repeated.
+`status` rewrites `.wm/FLOOR.md` from the on-disk card and does not append
+TRACE or EVENTS. `status` prints `FLOOR t=+Ns station=… card=… wip=…` and
+does **not** increment FAIL retries.
 
 If `CLOSED` is missing but a closeable PASS/NO-BUILD verdict is still
 live, `go` clears those inspect receipts (verdicts, evidence, red/green/built)

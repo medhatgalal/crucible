@@ -11,7 +11,7 @@ use std::process;
 use crucible_contract::{
     canonical_json, parse_rfc3339_z, Clock, StatsWindow, SystemClock, WalkSnapshot,
 };
-use crucible_kernel::go;
+use crucible_kernel::{floor_write_with, go};
 
 const PRODUCT_VERSION: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION"));
 
@@ -92,6 +92,9 @@ fn help() {
     println!("commands: go status debrief stats serve room web camera reap doctor help");
     println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
     println!(
+        "  status                            rewrite FLOOR from the on-disk card (no TRACE/EVENTS)"
+    );
+    println!(
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
     );
     println!("  debrief                           FLOOR + TRACE deltas (read-only)");
@@ -167,17 +170,41 @@ fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
 }
 
 fn cmd_status(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
-    if !args.iter().any(|a| a == "--json") {
-        let _ = writeln!(
-            io::stderr(),
-            "status is query-only in this binary; pass --json (human status remains POSIX wm.sh)"
-        );
+    if args.iter().any(|a| a == "--json") {
+        let snap = WalkSnapshot::from_wm_dir(cwd, clock);
+        return match canonical_json(&snap) {
+            Ok(s) => {
+                println!("{s}");
+                0
+            }
+            Err(e) => {
+                let _ = writeln!(io::stderr(), "{e}");
+                1
+            }
+        };
+    }
+    if !args.is_empty() {
+        let _ = writeln!(io::stderr(), "usage: status [--json]");
         return 2;
     }
+    // Read-only snapshot first. No card means write nothing, including t0.
     let snap = WalkSnapshot::from_wm_dir(cwd, clock);
-    match canonical_json(&snap) {
-        Ok(s) => {
-            println!("{s}");
+    let Some(floor) = snap.floor else {
+        let _ = writeln!(io::stderr(), "no card on disk");
+        return 1;
+    };
+    // A missing independence line parses as empty. Writing that blank erases the default.
+    let independence = if floor.independence.is_empty() {
+        "SUBAGENT-ISOLATED"
+    } else {
+        floor.independence.as_str()
+    };
+    match floor_write_with(cwd, &floor.card, independence, clock, false) {
+        Ok(r) => {
+            println!(
+                "FLOOR t=+{}s station={} card={} wip={}",
+                r.elapsed_s, r.station, r.card, r.wip
+            );
             0
         }
         Err(e) => {

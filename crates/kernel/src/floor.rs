@@ -19,7 +19,7 @@ pub struct FloorWriteResult {
     pub trace_appended: bool,
 }
 
-/// Write `.wm/FLOOR.md`. Create `t0` if missing. Append TRACE only when the card changes.
+/// `go` path: [`floor_write_with`] with TRACE append on.
 ///
 /// Returns `elapsed_s` (`now - t0`); does not print the POSIX `FLOOR t=+Ns` line.
 pub fn floor_write(
@@ -27,6 +27,21 @@ pub fn floor_write(
     card: &str,
     independence: &str,
     clock: &dyn Clock,
+) -> Result<FloorWriteResult, KernelError> {
+    floor_write_with(dir, card, independence, clock, true)
+}
+
+/// Write `.wm/FLOOR.md` and create `t0` when it is missing.
+///
+/// `append_trace` is false for human `status`: do not append TRACE or EVENTS.
+/// Consecutive identical cards are still not repeated when append is on.
+/// Does not print the POSIX `FLOOR t=+Ns` line.
+pub fn floor_write_with(
+    dir: impl AsRef<Path>,
+    card: &str,
+    independence: &str,
+    clock: &dyn Clock,
+    append_trace: bool,
 ) -> Result<FloorWriteResult, KernelError> {
     let dir = dir.as_ref();
     let (repo, _) = resolve_wm(dir);
@@ -73,22 +88,28 @@ pub fn floor_write(
     }
     fs::write(wm.join("FLOOR.md"), floor)?;
 
-    ensure_trace_header(&wm)?;
-    let card_t = sanitize_tsv(card);
-    let st_t = sanitize_tsv(station);
-    let last = last_trace_card(&wm);
-    let trace_appended = last.as_deref() != Some(card_t.as_str());
-    if trace_appended {
-        let when = format_rfc3339_z(clock.now_unix());
-        let mut body =
-            fs::read_to_string(wm.join("TRACE.tsv")).unwrap_or_else(|_| TRACE_HEADER.to_string());
-        if !body.ends_with('\n') {
-            body.push('\n');
+    // Human status must not open TRACE or EVENTS. `go` still appends only on card change.
+    let trace_appended = if append_trace {
+        ensure_trace_header(&wm)?;
+        let card_t = sanitize_tsv(card);
+        let st_t = sanitize_tsv(station);
+        let last = last_trace_card(&wm);
+        let changed = last.as_deref() != Some(card_t.as_str());
+        if changed {
+            let when = format_rfc3339_z(clock.now_unix());
+            let mut body = fs::read_to_string(wm.join("TRACE.tsv"))
+                .unwrap_or_else(|_| TRACE_HEADER.to_string());
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            body.push_str(&format!("{when}\t{card_t}\t{st_t}\n"));
+            fs::write(wm.join("TRACE.tsv"), body)?;
+            append_event(dir, &Event::card(&when, &card_t, &st_t))?;
         }
-        body.push_str(&format!("{when}\t{card_t}\t{st_t}\n"));
-        fs::write(wm.join("TRACE.tsv"), body)?;
-        append_event(dir, &Event::card(&when, &card_t, &st_t))?;
-    }
+        changed
+    } else {
+        false
+    };
 
     Ok(FloorWriteResult {
         elapsed_s,

@@ -21,7 +21,7 @@ mod worktree;
 pub use close::{close_walk, CloseWalk};
 pub use error::KernelError;
 pub use events::{append_event, read_events};
-pub use floor::{floor_write, FloorWriteResult};
+pub use floor::{floor_write, floor_write_with, FloorWriteResult};
 pub use go::{go, GoRun};
 pub use independence::{check_independence, IndependenceCheck};
 pub use inspect::{check_inspect, InspectCheck};
@@ -221,6 +221,57 @@ mod tests {
         assert_eq!(f.elapsed_s, Some(12));
         assert_eq!(f.wip, "s1");
         assert_eq!(f.andon, "STOP-ASK INTAKE");
+    }
+
+    #[test]
+    fn floor_write_with_skips_trace_and_events() {
+        let tmp = Tmp::new();
+        let wm = tmp.wm();
+        fs::create_dir_all(&wm).unwrap();
+        fs::write(wm.join("slice-in-flight"), "id: s9\n").unwrap();
+        let trace = "when\tcard\toutcome\n2026-09-20T12:00:00Z\tNEXT MAP\tDESIGN\n";
+        fs::write(wm.join("TRACE.tsv"), trace).unwrap();
+
+        let r = floor_write_with(
+            tmp.path(),
+            "STOP-ASK INTAKE",
+            "CROSS-FAMILY",
+            &clock(),
+            false,
+        )
+        .unwrap();
+        assert!(!r.trace_appended);
+        assert_eq!(r.station, "ANDON");
+        assert_eq!(r.card, "STOP-ASK INTAKE");
+        assert_eq!(r.wip, "s9");
+        assert_eq!(r.andon, "STOP-ASK INTAKE");
+        assert_eq!(r.elapsed_s, 0, "missing t0 is created as now");
+        assert_eq!(fs::read_to_string(wm.join("TRACE.tsv")).unwrap(), trace);
+        assert!(!wm.join("EVENTS").exists(), "status must not create EVENTS");
+        let t0_text = fs::read_to_string(wm.join("t0")).unwrap();
+        assert_eq!(t0_text.trim(), &(t0() + 12).to_string());
+        let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+        assert!(floor.contains("station: ANDON\n"), "{floor}");
+        assert!(floor.contains("wip: s9\n"), "{floor}");
+        assert!(floor.contains("independence: CROSS-FAMILY\n"), "{floor}");
+
+        let again = floor_write(tmp.path(), "NEXT RED", "SUBAGENT-ISOLATED", &clock()).unwrap();
+        assert!(again.trace_appended);
+        assert_eq!(again.station, "BUILD");
+        let trace2 = fs::read_to_string(wm.join("TRACE.tsv")).unwrap();
+        assert!(trace2.contains("NEXT RED\tBUILD"));
+        assert_eq!(
+            trace2.lines().filter(|l| l.contains("NEXT MAP")).count(),
+            1,
+            "prior row kept; identical cards still not repeated by a later same-card write"
+        );
+        let same = floor_write(tmp.path(), "NEXT RED", "SUBAGENT-ISOLATED", &clock()).unwrap();
+        assert!(!same.trace_appended);
+        let trace3 = fs::read_to_string(wm.join("TRACE.tsv")).unwrap();
+        assert_eq!(trace3.lines().filter(|l| l.contains("NEXT RED")).count(), 1);
+        let ev = read_events(tmp.path()).unwrap();
+        assert_eq!(ev.len(), 1, "card event only for the append_trace write");
+        assert_eq!(ev[0].card.as_deref(), Some("NEXT RED"));
     }
 
     #[test]
