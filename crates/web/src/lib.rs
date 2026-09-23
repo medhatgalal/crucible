@@ -19,7 +19,10 @@ pub const DEFAULT_API_BIND: &str = "127.0.0.1:1734";
 const BODY_CAP: usize = 8192;
 const HEADER_CAP: usize = 8192;
 const CHAT_LINE_CAP: usize = 4096;
+const FIELD_MAX: usize = 256;
 const NOT_A_WALK: &str = "POST is not a walk\n";
+const OK_JSON: &str = "{\"ok\":true}\n";
+const BACKLOG_HEADER: &str = "id\tsize\trisk\tidea_path\tstatus";
 
 const PAGE: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -29,19 +32,45 @@ const PAGE: &str = r#"<!DOCTYPE html>
 <style>
 body { font: 16px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 2rem; }
 pre { background: #f4f4f4; padding: 1rem; overflow: auto; }
+label { display: block; margin: 0.25rem 0; }
 </style>
 </head>
 <body>
 <h1>Crucible</h1>
-<p>This page only reads the walk. It cannot start one.</p>
-<p>Backlog: <a href="/api/backlog">/api/backlog</a>. Chat: <a href="/api/chat">/api/chat</a> (plain text).</p>
+<p>Backlog: <a href="/api/backlog">/api/backlog</a>. CHAT.md: <a href="/api/chat">/api/chat</a> (plain text).</p>
 <button id="reload" type="button">Reload</button>
+<button id="start" type="button">Start</button>
 <h2>Health</h2><pre id="health"></pre>
 <h2>Walk</h2><pre id="walk"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
+<h2>Backlog</h2>
+<label>id <input id="b-id" type="text"></label>
+<label>size <input id="b-size" type="text"></label>
+<label>risk <input id="b-risk" type="text"></label>
+<label>idea_path <input id="b-idea" type="text"></label>
+<label>status <input id="b-status" type="text"></label>
+<button id="backlog-add" type="button">Add backlog</button>
+<pre id="backlog"></pre>
+<h2>CHAT.md</h2>
+<label>line <input id="c-line" type="text"></label>
+<button id="chat-send" type="button">Send chat</button>
+<pre id="chat"></pre>
+<pre id="go"></pre>
 <script>
+const actHeaders = {
+  "Content-Type": "application/json",
+  "X-Crucible-Act": "1"
+};
+async function postAct(path, payload) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: actHeaders,
+    body: JSON.stringify(payload)
+  });
+  return res.text();
+}
 async function load() {
-  for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["stats","/api/stats?since=1h"]]) {
+  for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
     try {
       const res = await fetch(path, { method: "GET" });
@@ -52,6 +81,38 @@ async function load() {
   }
 }
 document.getElementById("reload").addEventListener("click", load);
+document.getElementById("backlog-add").addEventListener("click", async () => {
+  const el = document.getElementById("backlog");
+  try {
+    el.textContent = await postAct("/act/backlog", {
+      id: document.getElementById("b-id").value,
+      size: document.getElementById("b-size").value,
+      risk: document.getElementById("b-risk").value,
+      idea_path: document.getElementById("b-idea").value,
+      status: document.getElementById("b-status").value
+    });
+  } catch (e) {
+    el.textContent = String(e);
+  }
+});
+document.getElementById("chat-send").addEventListener("click", async () => {
+  const el = document.getElementById("chat");
+  try {
+    el.textContent = await postAct("/act/chat", {
+      line: document.getElementById("c-line").value
+    });
+  } catch (e) {
+    el.textContent = String(e);
+  }
+});
+document.getElementById("start").addEventListener("click", async () => {
+  const el = document.getElementById("go");
+  try {
+    el.textContent = await postAct("/act/go", {});
+  } catch (e) {
+    el.textContent = String(e);
+  }
+});
 load();
 </script>
 </body>
@@ -156,7 +217,14 @@ fn route(
     if req.path == "/api/backlog" {
         match backlog_json(cwd) {
             Ok(body) => return write_resp(stream, 200, "application/json", &body, head),
-            Err(e) => return write_resp(stream, 500, "text/plain", &format!("{e}\n"), head),
+            Err(e) => {
+                let body = if e.ends_with('\n') {
+                    e
+                } else {
+                    format!("{e}\n")
+                };
+                return write_resp(stream, 500, "text/plain", &body, head);
+            }
         }
     }
     if req.path == "/api/chat" {
@@ -202,11 +270,11 @@ fn act(stream: &mut TcpStream, cwd: &Path, exe: &Path, req: &Incoming) -> Result
 fn act_headers(headers: &[(String, String)]) -> Result<(), &'static str> {
     let ct = header(headers, "content-type").unwrap_or("");
     if !json_content_type(ct) {
-        return Err("content-type\n");
+        return Err("bad headers\n");
     }
     match header(headers, "x-crucible-act") {
         Some(v) if v.trim() == "1" => Ok(()),
-        _ => Err("X-Crucible-Act\n"),
+        _ => Err("bad headers\n"),
     }
 }
 
@@ -222,22 +290,23 @@ fn json_content_type(value: &str) -> bool {
 fn post_backlog(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), String> {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(v) => v,
-        Err(_) => return write_resp(stream, 400, "text/plain", "json\n", false),
+        Err(_) => return write_resp(stream, 400, "text/plain", "not json\n", false),
     };
     let row = match row_from_json(&v) {
         Ok(row) => row,
         Err(msg) => return write_resp(stream, 400, "text/plain", msg, false),
     };
-    if let Err(e) = append_backlog(cwd, &row) {
-        return write_resp(stream, 500, "text/plain", &format!("{e}\n"), false);
+    match append_backlog(cwd, &row) {
+        Ok(()) => write_resp(stream, 200, "application/json", OK_JSON, false),
+        Err(BacklogWrite::Bad) => write_resp(stream, 400, "text/plain", "bad backlog\n", false),
+        Err(BacklogWrite::Io(e)) => write_resp(stream, 500, "text/plain", &format!("{e}\n"), false),
     }
-    write_resp(stream, 200, "text/plain", "ok\n", false)
 }
 
 fn post_chat(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), String> {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(v) => v,
-        Err(_) => return write_resp(stream, 400, "text/plain", "json\n", false),
+        Err(_) => return write_resp(stream, 400, "text/plain", "not json\n", false),
     };
     let line = match chat_line(&v) {
         Ok(line) => line,
@@ -246,20 +315,32 @@ fn post_chat(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), Stri
     if let Err(e) = append_chat(cwd, &line) {
         return write_resp(stream, 500, "text/plain", &format!("{e}\n"), false);
     }
-    write_resp(stream, 200, "text/plain", "ok\n", false)
+    write_resp(stream, 200, "application/json", OK_JSON, false)
 }
 
 fn post_go(stream: &mut TcpStream, cwd: &Path, exe: &Path, body: &[u8]) -> Result<(), String> {
-    if !body.is_empty() && serde_json::from_slice::<serde_json::Value>(body).is_err() {
-        return write_resp(stream, 400, "text/plain", "json\n", false);
+    // Reject a bad body before intake so it cannot spawn or look like "not ready".
+    if let Err(msg) = go_body(body) {
+        return write_resp(stream, 400, "text/plain", msg, false);
     }
     // 200 means the process group exists, not that the walk succeeded.
     if !crucible_contract::intake_ready(cwd) {
-        return write_resp(stream, 409, "text/plain", "intake not ready\n", false);
+        return write_resp(stream, 409, "text/plain", "not ready\n", false);
     }
     match spawn_go(exe, cwd) {
         Ok(pid) => write_resp(stream, 200, "application/json", &pid_json(pid), false),
-        Err(e) => write_resp(stream, 500, "text/plain", &format!("{e}\n"), false),
+        Err(()) => write_resp(stream, 500, "text/plain", "spawn failed\n", false),
+    }
+}
+
+fn go_body(body: &[u8]) -> Result<(), &'static str> {
+    if body.is_empty() {
+        return Ok(());
+    }
+    let v: serde_json::Value = serde_json::from_slice(body).map_err(|_| "not json\n")?;
+    match v.as_object() {
+        Some(map) if map.is_empty() => Ok(()),
+        _ => Err("not an act\n"),
     }
 }
 
@@ -273,7 +354,7 @@ struct Row {
 
 fn row_from_json(v: &serde_json::Value) -> Result<Row, &'static str> {
     if !v.is_object() {
-        return Err("json\n");
+        return Err("bad backlog\n");
     }
     Ok(Row {
         id: tsv_field(v, "id")?,
@@ -286,50 +367,68 @@ fn row_from_json(v: &serde_json::Value) -> Result<Row, &'static str> {
 
 fn tsv_field(v: &serde_json::Value, key: &str) -> Result<String, &'static str> {
     let Some(s) = v.get(key).and_then(|x| x.as_str()) else {
-        return Err("bad field\n");
+        return Err("bad backlog\n");
     };
-    if s.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r')) {
-        return Err("bad field\n");
+    if s.is_empty() || s.len() > FIELD_MAX || s.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\r'))
+    {
+        return Err("bad backlog\n");
     }
     Ok(s.to_string())
 }
 
 fn chat_line(v: &serde_json::Value) -> Result<String, &'static str> {
     if !v.is_object() {
-        return Err("json\n");
+        return Err("bad chat\n");
     }
     let Some(s) = v.get("line").and_then(|x| x.as_str()) else {
-        return Err("bad field\n");
+        return Err("bad chat\n");
     };
     if s.len() > CHAT_LINE_CAP || s.bytes().any(|b| matches!(b, b'\n' | b'\r')) {
-        return Err("line\n");
+        return Err("bad chat\n");
     }
     Ok(s.to_string())
 }
 
-fn append_backlog(cwd: &Path, row: &Row) -> Result<(), String> {
+enum BacklogWrite {
+    Bad,
+    Io(String),
+}
+
+fn header_line_ok(bytes: &[u8]) -> bool {
+    let mut line = bytes.split(|b| *b == b'\n').next().unwrap_or(b"");
+    if let Some(stripped) = line.strip_suffix(b"\r") {
+        line = stripped;
+    }
+    line == BACKLOG_HEADER.as_bytes()
+}
+
+fn append_backlog(cwd: &Path, row: &Row) -> Result<(), BacklogWrite> {
     let path = cwd.join("BACKLOG.tsv");
     let prev = match fs::read(&path) {
         Ok(b) => b,
         Err(e) if e.kind() == ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
+        Err(e) => return Err(BacklogWrite::Io(e.to_string())),
     };
+    // A headerless first row would be skipped on GET. Refuse it instead of appending.
+    if !prev.is_empty() && !header_line_ok(&prev) {
+        return Err(BacklogWrite::Bad);
+    }
     let mut f = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| BacklogWrite::Io(e.to_string()))?;
     if prev.is_empty() {
-        writeln!(f, "id\tsize\trisk\tidea_path\tstatus").map_err(|e| e.to_string())?;
+        writeln!(f, "{BACKLOG_HEADER}").map_err(|e| BacklogWrite::Io(e.to_string()))?;
     } else if !prev.ends_with(b"\n") {
-        writeln!(f).map_err(|e| e.to_string())?;
+        writeln!(f).map_err(|e| BacklogWrite::Io(e.to_string()))?;
     }
     writeln!(
         f,
         "{}\t{}\t{}\t{}\t{}",
         row.id, row.size, row.risk, row.idea_path, row.status
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| BacklogWrite::Io(e.to_string()))
 }
 
 fn append_chat(cwd: &Path, line: &str) -> Result<(), String> {
@@ -354,11 +453,33 @@ fn append_chat(cwd: &Path, line: &str) -> Result<(), String> {
 
 fn backlog_json(cwd: &Path) -> Result<String, String> {
     let rows = read_backlog(cwd)?;
-    let body = serde_json::json!({ "rows": rows });
-    crucible_contract::canonical_json(&body).map_err(|e| e.to_string())
+    Ok(rows_json(&rows))
 }
 
-fn read_backlog(cwd: &Path) -> Result<Vec<serde_json::Value>, String> {
+fn rows_json(rows: &[Row]) -> String {
+    let mut out = String::from("{\"rows\":[");
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!(
+            "{{\"id\":{},\"size\":{},\"risk\":{},\"idea_path\":{},\"status\":{}}}",
+            json_str(&row.id),
+            json_str(&row.size),
+            json_str(&row.risk),
+            json_str(&row.idea_path),
+            json_str(&row.status),
+        ));
+    }
+    out.push_str("]}");
+    out
+}
+
+fn json_str(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn read_backlog(cwd: &Path) -> Result<Vec<Row>, String> {
     let text = match fs::read_to_string(cwd.join("BACKLOG.tsv")) {
         Ok(s) => s,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -370,16 +491,16 @@ fn read_backlog(cwd: &Path) -> Result<Vec<serde_json::Value>, String> {
             continue;
         }
         let cols: Vec<&str> = line.split('\t').collect();
-        if cols.len() < 5 {
-            continue;
+        if cols.len() != 5 {
+            return Err("bad backlog\n".to_string());
         }
-        rows.push(serde_json::json!({
-            "id": cols[0],
-            "size": cols[1],
-            "risk": cols[2],
-            "idea_path": cols[3],
-            "status": cols[4],
-        }));
+        rows.push(Row {
+            id: cols[0].to_string(),
+            size: cols[1].to_string(),
+            risk: cols[2].to_string(),
+            idea_path: cols[3].to_string(),
+            status: cols[4].to_string(),
+        });
     }
     Ok(rows)
 }
@@ -393,11 +514,10 @@ fn chat_text(cwd: &Path) -> Result<String, String> {
 }
 
 fn pid_json(pid: u32) -> String {
-    let v = serde_json::json!({ "pid": pid });
-    crucible_contract::canonical_json(&v).unwrap_or_else(|_| format!("{{\"pid\":{pid}}}"))
+    format!("{{\"pid\":{pid}}}\n")
 }
 
-fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, String> {
+fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, ()> {
     let mut cmd = Command::new(exe);
     cmd.arg("go")
         .current_dir(cwd)
@@ -405,15 +525,19 @@ fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, String> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     // New group so `kill -TERM -<pid>` cannot signal this camera.
-    // Dropping the child neither waits nor signals; waiting would be the walk.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    let child = cmd.spawn().map_err(|_| ())?;
     let pid = child.id();
-    drop(child);
+    // Reap off the request thread. Waiting here would be the walk; dropping
+    // the child would leave a zombie for the life of the camera.
+    thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
     Ok(pid)
 }
 
@@ -693,6 +817,8 @@ mod tests {
                 if let Ok(pid) = text.trim().parse::<u32>() {
                     let _ = Command::new("kill")
                         .args(["-TERM", &pid.to_string()])
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
                         .status();
                 }
             }
@@ -942,9 +1068,15 @@ mod tests {
             std::fs::read_to_string(&errf).unwrap_or_default()
         );
         assert_eq!(code, 200);
-        assert!(body.contains("cannot start"));
-        assert!(body.contains("/api/backlog"));
-        assert!(body.contains("/api/chat"));
+        assert!(!body.contains("cannot start"));
+        assert!(body.contains("CHAT.md"));
+        assert!(body.contains("/act/backlog"));
+        assert!(body.contains("/act/chat"));
+        assert!(body.contains("/act/go"));
+        assert!(body.contains("X-Crucible-Act"));
+        assert!(body.contains("application/json"));
+        assert!(body.contains("textContent"));
+        assert!(body.contains(">Start<"));
         assert!(!body.contains("innerHTML"));
         assert!(!body.contains("POST /go"));
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
@@ -959,7 +1091,7 @@ mod tests {
     fn backlog_get_does_not_create_and_head_is_empty() {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 3);
+        let addr = start_server(&tmp.root, &exe, 4);
         let (code, headers, body) = exchange(&addr, &simple("GET", "/api/backlog"));
         assert_eq!(code, 200, "{body}");
         assert_eq!(body, r#"{"rows":[]}"#);
@@ -971,24 +1103,27 @@ mod tests {
         assert!(body.is_empty(), "{body}");
         assert!(headers.to_ascii_lowercase().contains("content-length: 0"));
         assert!(!tmp.root.join("BACKLOG.tsv").exists());
-        fs::write(
-            tmp.root.join("BACKLOG.tsv"),
-            "id\tsize\trisk\tidea_path\tstatus\n# note\n\ns1\tS\tLOW\tideas/a.md\tREADY\nt2\tM\tHIGH\tideas/b.md\tDONE\nshort\n",
-        )
-        .unwrap();
-        let before = fs::read(tmp.root.join("BACKLOG.tsv")).unwrap();
+        let good = "id\tsize\trisk\tidea_path\tstatus\n# note\n\ns1\tS\tLOW\tideas/a.md\tREADY\nt2\tM\tHIGH\tideas/b.md\tDONE\n";
+        fs::write(tmp.root.join("BACKLOG.tsv"), good).unwrap();
         let (code, _, body) = exchange(&addr, &simple("GET", "/api/backlog"));
         assert_eq!(code, 200, "{body}");
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        let rows = v["rows"].as_array().unwrap();
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0]["id"], "s1");
-        assert_eq!(rows[0]["size"], "S");
-        assert_eq!(rows[0]["risk"], "LOW");
-        assert_eq!(rows[0]["idea_path"], "ideas/a.md");
-        assert_eq!(rows[0]["status"], "READY");
-        assert_eq!(rows[1]["status"], "DONE");
-        assert_eq!(fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(), before);
+        assert_eq!(
+            body,
+            r#"{"rows":[{"id":"s1","size":"S","risk":"LOW","idea_path":"ideas/a.md","status":"READY"},{"id":"t2","size":"M","risk":"HIGH","idea_path":"ideas/b.md","status":"DONE"}]}"#
+        );
+        assert_eq!(
+            fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(),
+            good.as_bytes()
+        );
+        let bad = format!("{good}short\n");
+        fs::write(tmp.root.join("BACKLOG.tsv"), &bad).unwrap();
+        let (code, _, body) = exchange(&addr, &simple("GET", "/api/backlog"));
+        assert_eq!(code, 500, "{body}");
+        assert_eq!(body, "bad backlog\n");
+        assert_eq!(
+            fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(),
+            bad.as_bytes()
+        );
         assert!(!marker(&tmp.root));
     }
 
@@ -996,7 +1131,7 @@ mod tests {
     fn backlog_post_appends_one_row() {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 5);
+        let addr = start_server(&tmp.root, &exe, 9);
         let a = serde_json::json!({
             "id": "a",
             "size": "S",
@@ -1005,11 +1140,13 @@ mod tests {
             "status": "READY"
         })
         .to_string();
-        let (code, _, body) = exchange(
+        let (code, headers, body) = exchange(
             &addr,
             &act_request("/act/backlog", &a, "application/json", Some("1")),
         );
         assert_eq!(code, 200, "{body}");
+        assert_eq!(body, "{\"ok\":true}\n");
+        assert!(headers.to_ascii_lowercase().contains("application/json"));
         let b = serde_json::json!({
             "id": "b",
             "size": "M",
@@ -1028,14 +1165,31 @@ mod tests {
             ),
         );
         assert_eq!(code, 200, "{body}");
+        assert_eq!(body, "{\"ok\":true}\n");
+        let wide = "x".repeat(256);
+        let long_ok = serde_json::json!({
+            "id": wide,
+            "size": "S",
+            "risk": "LOW",
+            "idea_path": "ideas/a.md",
+            "status": "READY"
+        })
+        .to_string();
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/backlog", &long_ok, "application/json", Some("1")),
+        );
+        assert_eq!(code, 200, "{body}");
         assert_eq!(
             fs::read_to_string(tmp.root.join("BACKLOG.tsv")).unwrap(),
-            "id\tsize\trisk\tidea_path\tstatus\na\tS\tLOW\tideas/a.md\tREADY\nb\tM\tHIGH\tideas/b.md\tDONE\n"
+            format!("id\tsize\trisk\tidea_path\tstatus\na\tS\tLOW\tideas/a.md\tREADY\nb\tM\tHIGH\tideas/b.md\tDONE\n{wide}\tS\tLOW\tideas/a.md\tREADY\n")
         );
         let (code, _, body) = exchange(&addr, &simple("GET", "/api/backlog"));
         assert_eq!(code, 200, "{body}");
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["rows"].as_array().unwrap().len(), 2);
+        assert!(body.contains(
+            r#"{"id":"a","size":"S","risk":"LOW","idea_path":"ideas/a.md","status":"READY"}"#
+        ));
+        assert!(!body.contains(r#""idea_path":"ideas/a.md","id":"#));
         let bad = serde_json::json!({
             "id": "a\tb",
             "size": "S",
@@ -1044,24 +1198,59 @@ mod tests {
             "status": "READY"
         })
         .to_string();
-        let (code, _, _) = exchange(
+        let kept = fs::read(tmp.root.join("BACKLOG.tsv")).unwrap();
+        let (code, _, body) = exchange(
             &addr,
             &act_request("/act/backlog", &bad, "application/json", Some("1")),
         );
         assert_eq!(code, 400);
+        assert_eq!(body, "bad backlog\n");
+        let empty = serde_json::json!({
+            "id": "",
+            "size": "S",
+            "risk": "LOW",
+            "idea_path": "ideas/a.md",
+            "status": "READY"
+        })
+        .to_string();
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/backlog", &empty, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400);
+        assert_eq!(body, "bad backlog\n");
+        let too_wide = serde_json::json!({
+            "id": "y".repeat(257),
+            "size": "S",
+            "risk": "LOW",
+            "idea_path": "ideas/a.md",
+            "status": "READY"
+        })
+        .to_string();
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/backlog", &too_wide, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400);
+        assert_eq!(body, "bad backlog\n");
+        assert_eq!(fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(), kept);
+        fs::write(tmp.root.join("BACKLOG.tsv"), "not a header\n").unwrap();
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/backlog", &a, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400);
+        assert_eq!(body, "bad backlog\n");
+        assert_eq!(
+            fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(),
+            b"not a header\n"
+        );
         let (code, _, body) = exchange(
             &addr,
             &act_request("/api/backlog", &a, "application/json", Some("1")),
         );
         assert_eq!(code, 405, "{body}");
         assert!(body.contains("not a walk"));
-        assert_eq!(
-            fs::read_to_string(tmp.root.join("BACKLOG.tsv"))
-                .unwrap()
-                .lines()
-                .count(),
-            3
-        );
         assert!(!tmp.root.join(".wm").exists());
         assert!(!marker(&tmp.root));
     }
@@ -1088,6 +1277,7 @@ mod tests {
             ),
         );
         assert_eq!(code, 200, "{body}");
+        assert_eq!(body, "{\"ok\":true}\n");
         let (code, _, _) = exchange(
             &addr,
             &act_request(
@@ -1108,7 +1298,7 @@ mod tests {
         let (code, _, body) = exchange(&addr, &simple("HEAD", "/api/chat"));
         assert_eq!(code, 200, "{body}");
         assert!(body.is_empty());
-        let (code, _, _) = exchange(
+        let (code, _, body) = exchange(
             &addr,
             &act_request(
                 "/act/chat",
@@ -1118,6 +1308,7 @@ mod tests {
             ),
         );
         assert_eq!(code, 400);
+        assert_eq!(body, "bad chat\n");
         assert_eq!(
             fs::read_to_string(tmp.root.join(".wm").join("CHAT.md")).unwrap(),
             "hello\nsecond\n"
@@ -1169,11 +1360,12 @@ mod tests {
         let (code, _, body) = exchange(&addr, huge);
         assert_eq!(code, 413, "{body}");
         let exact = " ".repeat(8192);
-        let (code, _, _) = exchange(
+        let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", &exact, "application/json", Some("1")),
         );
         assert_eq!(code, 400);
+        assert_eq!(body, "not json\n");
         assert!(!marker(&tmp.root));
         assert!(!tmp.root.join(".wm").exists());
     }
@@ -1184,8 +1376,8 @@ mod tests {
         let exe = sleeper(&tmp.root);
         ready_backlog(&tmp.root);
         let before = fs::read(tmp.root.join("BACKLOG.tsv")).unwrap();
-        let addr = start_server(&tmp.root, &exe, 4);
-        let (code, _, _) = exchange(
+        let addr = start_server(&tmp.root, &exe, 5);
+        let (code, _, body) = exchange(
             &addr,
             &act_request(
                 "/act/go",
@@ -1195,16 +1387,25 @@ mod tests {
             ),
         );
         assert_eq!(code, 400);
-        let (code, _, _) = exchange(
+        assert_eq!(body, "bad headers\n");
+        let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", "{}", "application/json", None),
         );
         assert_eq!(code, 400);
-        let (code, _, _) = exchange(
+        assert_eq!(body, "bad headers\n");
+        let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", "{}", "application/json", Some("2")),
         );
         assert_eq!(code, 400);
+        assert_eq!(body, "bad headers\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/go", r#"{"x":1}"#, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not an act\n");
         let (code, headers, body) = exchange(&addr, &simple("HEAD", "/act/go"));
         assert_eq!(code, 405, "{body}");
         assert!(body.is_empty(), "{body}");
@@ -1218,13 +1419,31 @@ mod tests {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
         fs::write(tmp.root.join("IDEA.md"), " \n").unwrap();
-        let addr = start_server(&tmp.root, &exe, 1);
+        let addr = start_server(&tmp.root, &exe, 4);
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/go", r#"{"x":1}"#, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not an act\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/go", "{", "application/json", Some("1")),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not json\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/go", "", "application/json", Some("1")),
+        );
+        assert_eq!(code, 409, "{body}");
+        assert_eq!(body, "not ready\n");
         let (code, headers, body) = exchange(
             &addr,
             &act_request("/act/go", "{}", "application/json", Some("1")),
         );
         assert_eq!(code, 409, "{body}");
-        assert!(body.contains("intake"), "{body}");
+        assert_eq!(body, "not ready\n");
         assert_no_cors(&headers);
         assert!(!marker(&tmp.root));
         assert!(!tmp.root.join(".wm").exists());
@@ -1266,8 +1485,9 @@ mod tests {
         assert_eq!(code, 200, "{headers} {body}");
         assert_no_cors(&headers);
         assert!(headers.to_ascii_lowercase().contains("application/json"));
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let v: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
         let pid = v["pid"].as_u64().expect("pid number") as u32;
+        assert_eq!(body, format!("{{\"pid\":{pid}}}\n"));
         assert!(v["pid"].as_str().is_none());
         let web_pid = std::process::id();
         assert_ne!(pid, web_pid);
