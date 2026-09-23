@@ -487,7 +487,8 @@ fn read_backlog(cwd: &Path) -> Result<Vec<Row>, String> {
     };
     let mut rows = Vec::new();
     for line in text.lines().skip(1) {
-        if line.trim().is_empty() || line.starts_with('#') {
+        // An id may start with '#'. A comment line has no tab.
+        if line.trim().is_empty() || (line.starts_with('#') && !line.contains('\t')) {
             continue;
         }
         let cols: Vec<&str> = line.split('\t').collect();

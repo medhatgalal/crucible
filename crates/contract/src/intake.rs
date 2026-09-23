@@ -18,7 +18,8 @@ fn backlog_ready(cwd: &Path) -> bool {
         return false;
     };
     for line in text.lines().skip(1) {
-        if line.trim().is_empty() || line.starts_with('#') {
+        // An id may start with '#'. A comment line has no tab.
+        if line.trim().is_empty() || (line.starts_with('#') && !line.contains('\t')) {
             continue;
         }
         let mut cols = line.split('\t');
