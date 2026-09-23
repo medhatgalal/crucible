@@ -29,10 +29,11 @@ All notable changes to this project are documented here. This project follows
   server`. No `config.toml` write.
 
 ### Web
-- `crucible web` is a loopback GET page (default `127.0.0.1:1735`) that
-  proxies `/walk`, `/stats`, and `/health` from `serve`. POST is 405.
-  It does not start a walk. Operator override of D17: the UI is a camera,
-  not a kernel. See `architecture/adr/0002-web-get-client.md`.
+- `crucible web` is a loopback page (default `127.0.0.1:1735`) that
+  proxies GET `/walk`, `/stats`, and `/health` from `serve`. It may append
+  `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` only spawns `go`.
+  `POST /go` is 405. It does not start a walk. Operator override of D17:
+  the UI is a camera, not a kernel. See `architecture/adr/0002-web-get-client.md`.
 
 ### Keep-current
 - `testdata/loop-router.md` is the D8 Grok router fixture (`/crucible` live →
@@ -55,6 +56,7 @@ All notable changes to this project are documented here. This project follows
 - `/crucible` skill forbids `/execute-plan` as the product walker for adopted
   repos. Inner loop remains wrapper `.crucible/work/wm.sh go` (execs rust).
   Product machines need no rustc. Loopback GET serve is a camera, not a walker.
+- ADR 0001's snapshot names room, web, and the skill copies. ADR 0002 records that web may append backlog and chat. CONTRIBUTING no longer says the project is POSIX-only.
 
 ### Stats
 - `crucible stats --json` and `GET /stats` count `.wm/EVENTS` when that file
