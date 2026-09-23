@@ -95,7 +95,7 @@ fn help() {
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
     );
     println!("  debrief                           FLOOR + TRACE deltas (read-only)");
-    println!("  stats --since 8h|24h|7d --json    METRICS.tsv window (PR-1; no EVENTS)");
+    println!("  stats --since 8h|24h|7d --json    .wm/EVENTS if readable, else METRICS.tsv");
     println!(
         "  serve [--bind 127.0.0.1:PORT]    GET /walk /stats /health (loopback; default 127.0.0.1:1734)"
     );

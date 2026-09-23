@@ -156,27 +156,29 @@ fn debrief_prints_floor_and_trace_deltas() {
     assert!(stdout.contains("delta_s"));
 }
 
-#[test]
-fn stats_since_json_from_metrics_only() {
-    let tmp = Tmp::new();
-    let wm = tmp.root.join(".wm");
+fn write_wal_only(root: &Path) -> (String, Vec<u8>) {
+    let wm = root.join(".wm");
     fs::create_dir_all(&wm).unwrap();
-    // SystemClock in the binary: stamp METRICS/EVENTS at "now" so 8h|24h|7d include the row.
+    // SystemClock in the binary: stamp EVENTS at "now" so 8h|24h|7d include the rows.
     let when = format_rfc3339_z(SystemClock.now_unix());
-    fs::write(
-        wm.join("METRICS.tsv"),
-        format!("when\toutcome\tslices\tbound\tnote\n{when}\tSTOP-ASK QUESTIONS\t0\t40\t-\n"),
-    )
-    .unwrap();
-    fs::write(
-        wm.join("EVENTS"),
-        format!(
-            "{{\"t\":\"{when}\",\"kind\":\"card\",\"card\":\"NEXT RED\",\"station\":\"BUILD\"}}\n\
-             {{\"t\":\"{when}\",\"kind\":\"invoke_end\",\"session\":\"00000000-0000-0000-0000-000000000001\",\"card\":\"NEXT RUN maker-build\",\"elapsed_s\":7,\"exit\":0}}\n\
-             {{\"t\":\"{when}\",\"kind\":\"halt\",\"card\":\"STOP-ASK FROM-EVENTS\",\"elapsed_s\":90,\"iterations\":3}}\n"
-        ),
-    )
-    .unwrap();
+    let body = format!(
+        "{{\"t\":\"{when}\",\"kind\":\"card\",\"card\":\"NEXT RED\",\"station\":\"BUILD\"}}\n\
+         {{\"t\":\"{when}\",\"kind\":\"invoke_end\",\"session\":\"00000000-0000-0000-0000-000000000001\",\"card\":\"NEXT RUN maker-build\",\"elapsed_s\":7,\"exit\":0}}\n\
+         {{\"t\":\"{when}\",\"kind\":\"halt\",\"card\":\"STOP-ASK FROM-EVENTS\",\"elapsed_s\":90,\"iterations\":3}}\n"
+    );
+    let path = wm.join("EVENTS");
+    fs::write(&path, &body).unwrap();
+    assert!(
+        !wm.join("METRICS.tsv").exists(),
+        "WAL-only tree must not include METRICS"
+    );
+    (when, fs::read(&path).unwrap())
+}
+
+#[test]
+fn stats_since_json_from_events_wal() {
+    let tmp = Tmp::new();
+    let (when, events_before) = write_wal_only(&tmp.root);
     for window in ["8h", "24h", "7d"] {
         let out = bin()
             .current_dir(&tmp.root)
@@ -191,23 +193,32 @@ fn stats_since_json_from_metrics_only() {
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(v["schema"], "crucible.stats/v1");
         assert_eq!(v["available"], true);
-        assert_eq!(v["source"], "metrics");
+        assert_eq!(v["source"], "events");
         let halts = v["halts"].as_array().expect("halts array");
-        assert_eq!(halts.len(), 1, "window {window}: METRICS row only");
-        assert_eq!(halts[0]["outcome"], "STOP-ASK QUESTIONS");
+        assert_eq!(halts.len(), 1, "window {window}: EVENTS halt only");
+        assert_eq!(halts[0]["outcome"], "STOP-ASK FROM-EVENTS");
         assert_eq!(halts[0]["slices"], 0);
-        assert_eq!(halts[0]["bound"], 40);
+        assert_eq!(halts[0]["bound"], 0);
+        assert_eq!(halts[0]["note"], "-");
+        assert_eq!(halts[0]["elapsed_s"], 90);
+        assert_eq!(halts[0]["iterations"], 3);
         assert_eq!(halts[0]["t"], when);
         assert_eq!(v["counts"]["halt"], 1);
-        assert_eq!(v["counts"]["card"], 0);
-        assert_eq!(v["counts"]["invoke_end"], 0);
+        assert_eq!(v["counts"]["card"], 1);
+        assert_eq!(v["counts"]["invoke_end"], 1);
         let dumped = serde_json::to_string(&v).unwrap();
         assert!(
-            !dumped.contains("FROM-EVENTS"),
-            "EVENTS halt must not appear in stats"
+            !dumped.contains("STOP-ASK QUESTIONS"),
+            "METRICS outcome must not appear in stats"
         );
         assert!(!dumped.contains("NEXT RED"));
     }
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/EVENTS")).unwrap(),
+        events_before,
+        "stats --json must not write EVENTS"
+    );
+    assert!(!tmp.root.join(".wm/METRICS.tsv").exists());
 }
 
 #[test]
@@ -351,6 +362,10 @@ fn help_lists_go_query_serve_and_room() {
     assert!(stdout.contains("status"));
     assert!(stdout.contains("debrief"));
     assert!(stdout.contains("stats"));
+    assert!(
+        !stdout.contains("no EVENTS"),
+        "stats help must not claim it ignores EVENTS: {stdout}"
+    );
     assert!(
         stdout.to_ascii_lowercase().contains("serve"),
         "help must list serve: {stdout}"
@@ -1554,6 +1569,57 @@ fn serve_get_stats_equals_stats_json() {
             "GET /stats?since={window} == stats --json"
         );
     }
+}
+
+#[test]
+fn serve_get_stats_events_wal_equals_stats_json() {
+    let tmp = Tmp::new();
+    let (_when, events_before) = write_wal_only(&tmp.root);
+    let srv = start_serve(&tmp.root, "127.0.0.1:0");
+    for window in ["8h", "24h", "7d"] {
+        let (code, http, body) = http_req(&srv.addr, "GET", &format!("/stats?since={window}"));
+        assert_eq!(code, 200, "GET /stats?since={window}");
+        assert_eq!(http["schema"], "crucible.stats/v1");
+        assert_eq!(http["available"], true);
+        assert_eq!(http["source"], "events");
+        assert_eq!(http["halts"][0]["outcome"], "STOP-ASK FROM-EVENTS");
+        assert_eq!(http["counts"]["halt"], 1);
+        assert_eq!(http["counts"]["card"], 1);
+        assert_eq!(http["counts"]["invoke_end"], 1);
+
+        let cli = bin()
+            .current_dir(&tmp.root)
+            .args(["stats", "--since", window, "--json"])
+            .output()
+            .unwrap();
+        assert!(
+            cli.status.success(),
+            "stats --since {window}: {}",
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        let stats: serde_json::Value = serde_json::from_slice(&cli.stdout).unwrap();
+        assert_eq!(stats["source"], "events");
+        assert_eq!(
+            strip_clock(http.clone()),
+            strip_clock(stats.clone()),
+            "GET /stats?since={window} == stats --json"
+        );
+        if http["until"] == stats["until"] {
+            let http_body = String::from_utf8_lossy(&body);
+            assert_eq!(
+                cli.stdout,
+                format!("{}\n", http_body.trim_end()).as_bytes(),
+                "stats --json and GET /stats JSON stay byte-equal aside from the CLI newline"
+            );
+        }
+    }
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/EVENTS")).unwrap(),
+        events_before,
+        "GET /stats and stats --json must not write EVENTS"
+    );
+    assert!(!tmp.root.join(".wm/METRICS.tsv").exists());
+    assert!(!tmp.root.join(".wm/TRACE.tsv").exists());
 }
 
 #[test]
