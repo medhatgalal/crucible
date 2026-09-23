@@ -106,7 +106,7 @@ fn help() {
         "  room                              herdr tabs; cameras GET; go is a process in orchestrator"
     );
     println!(
-        "  web [--bind 127.0.0.1:1735]       GET-only page; proxies /walk /stats /health; no POST /go"
+        "  web [--bind 127.0.0.1:1735]       backlog and chat; POST /act/go spawns; POST /go is 405"
     );
     println!("  camera --bind ADDR                GET /walk and /stats (read-only)");
     println!("  reap --pid N                      SIGTERM the go process group");

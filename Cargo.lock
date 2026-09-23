@@ -42,6 +42,7 @@ dependencies = [
 name = "crucible-room"
 version = "0.1.0"
 dependencies = [
+ "crucible-contract",
  "serde_json",
 ]
 
@@ -49,7 +50,9 @@ dependencies = [
 name = "crucible-web"
 version = "0.1.0"
 dependencies = [
+ "crucible-contract",
  "crucible-http",
+ "serde_json",
 ]
 
 [[package]]
