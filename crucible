@@ -4845,6 +4845,32 @@ adopt_battery_kept() {
   return 1
 }
 
+adopt_refresh_skill_views() {
+  _rv_repo=$1
+  _rv_name=$2
+  _rv_src="$_rv_repo/.crucible/skills/$_rv_name"
+  [ -d "$_rv_src" ] && [ ! -L "$_rv_src" ] || return 0
+  for _rv_rel in \
+    .crucible/.grok/skills \
+    .crucible/.claude/skills \
+    .crucible/.agents/skills \
+    .crucible/.kiro/skills \
+    .grok/skills \
+    .claude/skills \
+    .agents/skills \
+    .kiro/skills
+  do
+    _rv_dest="$_rv_repo/$_rv_rel/$_rv_name"
+    case $_rv_dest in
+      "$_rv_repo"/*) ;;
+      *) die "refused: view path outside repo: $_rv_dest" ;;
+    esac
+    rm -rf "$_rv_dest"
+    mkdir -p "$_rv_dest"
+    cp -R "$_rv_src/." "$_rv_dest/" || die "refused: could not copy skill view $_rv_dest"
+  done
+}
+
 adopt_restore_kept_batteries() {
   _rk_keep=$1
   _rk_repo=$2
@@ -4864,7 +4890,8 @@ adopt_restore_kept_batteries() {
     esac
     rm -rf "$_rk_dest"
     mkdir -p "$_rk_dest"
-    cp -R "$_rk_kept/." "$_rk_dest/"
+    cp -R "$_rk_kept/." "$_rk_dest/" || die "refused: KEEP restore failed for $_rk_name"
+    adopt_refresh_skill_views "$_rk_repo" "$_rk_name"
   done
   rm -rf "$_rk_keep"
 }

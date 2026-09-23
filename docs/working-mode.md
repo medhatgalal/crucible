@@ -25,8 +25,10 @@ Guided loop (default `adopt work --managed`): `cycle` / `drive`. Working-mode
 
 After `adopt work --managed --working-mode`, `<program>` is `work`. Invoke
 `.crucible/<program>/wm.sh` from the target root (not a bare `wm` on `PATH`).
-Skills live in the repo (`.crucible/skills/` and harness views). There is no
-`$HOME` skill runtime.
+Skills live in the repo. Canonical is `.crucible/skills/`. Harness directories
+`.grok` / `.claude` / `.agents` / `.kiro` `/skills` are real copies of that
+tree, not symlinks. There is no `$HOME` skill runtime. `$HOME` copies are not
+the source of truth.
 
 ## Install or update
 
@@ -299,7 +301,7 @@ flowchart LR
   op[Operator] --> adopt["crucible adopt --working-mode"]
   adopt --> engine[".crucible/work/wm.sh"]
   adopt --> skills[".crucible/skills/*"]
-  skills --> views["./.grok .claude .agents /skills"]
+  skills --> views["./.grok .claude .agents .kiro /skills"]
   engine --> panel[".wm/PANEL.tsv"]
   engine --> map["MAP.md / slices.tsv"]
   engine --> brick[".wm/FALSIFIER .wm/CLOSED"]
@@ -515,8 +517,10 @@ dave	grok	grok-4	high	grok --session-id {SESSION} --always-approve --no-subagent
 `{BRIEF}` is the absolute brief path; `{SESSION}` is a fresh UUID per `wm run`.
 The engine quotes both replacements. Do not wrap `{BRIEF}` or `{SESSION}` in
 quotes in the command. One kind is never labelled CROSS-FAMILY. Skills
-resolve from repo-root `.grok/skills/`, `.claude/skills/`, `.agents/skills/`
-— the engine does not read `$HOME` skill trees. Live kiro inherits host
-HOME (keychain) and may also load `~/.kiro/skills`; that is not
-CROSS-FAMILY isolation. Mapper, critique, and maker must be distinct agents.
+resolve from repo-root `.grok/skills/`, `.claude/skills/`, `.agents/skills/`,
+and `.kiro/skills/` — those views are the source of truth, not `$HOME`.
+Live kiro inherits host HOME for the keychain. If `.kiro/skills/<name>` is
+missing, that CLI may also load `~/.kiro/skills/<name>`; that home file is
+not the installed skill and is not CROSS-FAMILY isolation. Mapper, critique,
+and maker must be distinct agents.
 Reviewer re-runs the named falsifier.

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Skills
+- Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`
+  `/skills/<name>`) are real copies of `skills/<name>`, not symlinks.
+  `adopt --working-mode` copies the same four from canonical `.crucible/skills/`.
+  KEEP restore recopies that battery into the harness directories.
+  `$HOME` skill trees are not the source of truth. Codex stays on
+  `.agents/skills` (no second `.codex/skills` tree). No VERSION bump.
+
 ### Room
 - `crucible room` asks external `herdr` for a workspace and standing tabs
   (chat, orchestrator, watcher, reaper, dashboard). A second run does not

@@ -91,9 +91,11 @@ also install the working-mode runner and batteries into the **target** (no
 
 That copies the Rust `crucible` binary and exec-wrapper `wm.sh` into
 `.crucible/work/`, canonical skills into `.crucible/skills/`, harness views
-under `.crucible/.{grok,claude,agents}/skills/` and repo-root
-`.{grok,claude,agents}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
-of the installing tree). Adapters are copied when the source tree has `adapters/`;
+under `.crucible/.{grok,claude,agents,kiro}/skills/` and repo-root
+`.{grok,claude,agents,kiro}/skills/`, `ROUTING.tsv`, and `ENGINE-SOURCE` (version + sha256
+of the installing tree). Canonical skills are `.crucible/skills/` (in this
+engine repo, `skills/`). The harness directories are real copies of that tree,
+not symlinks. `$HOME` skill trees are not. Adapters are copied when the source tree has `adapters/`;
 missing `adapters/` does not fail adopt. `.crucible/.gitignore` still ignores
 `*/agents.tsv` and `*/worktrees/`; it does **not** ignore `skills/`.
 
@@ -124,14 +126,18 @@ unless you pass `--overwrite-batteries`.
 
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
 produced it if it is in Git, so commit `.crucible/` in the target repository.
-After `--working-mode`, also commit the repo-root harness views — Grok discovers
-`./.grok/skills` (then `$HOME`) and does **not** scan `.crucible/.grok/skills`:
+After `--working-mode`, also commit the repo-root harness views. Grok reads
+`./.grok/skills` before `$HOME` and does **not** scan `.crucible/.grok/skills`.
+Kiro CLI reads `./.kiro/skills` before `~/.kiro/skills` (same name: workspace wins).
+Codex reads `./.agents/skills`, not a second `.codex/skills` tree. `$HOME` copies
+are not the installed skill:
 
 ```sh
 git add .crucible
 [ -d .grok/skills ] && git add .grok/skills
 [ -d .claude/skills ] && git add .claude/skills
 [ -d .agents/skills ] && git add .agents/skills
+[ -d .kiro/skills ] && git add .kiro/skills
 git commit -m "chore: record program state"
 ```
 
@@ -139,7 +145,7 @@ git commit -m "chore: record program state"
 machine-local agent invocations and isolated worktrees stay out of the commit. Everything
 else under `.crucible/<program>/` — `PROBLEM.md`, `CLAIMS.md`, `PROPOSAL.md`, `APPROVAL`,
 `PANEL*`, `claims/`, `items/`, `attempts/`, `history/` — is the durable record, plus
-working-mode's repo-root `.{grok,claude,agents}/skills` views. Commit
+working-mode's repo-root `.{grok,claude,agents,kiro}/skills` views. Commit
 again after each human gate; `cycle clean` preserves these files but nothing restores them
 if they were never committed.
 

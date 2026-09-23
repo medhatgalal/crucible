@@ -2,10 +2,11 @@
 
 How this machine launches Codex. Not a battery. Not the engine. No secrets.
 
-Working-mode does **not** read `$HOME/.codex` skill trees or `$HOME/.agents/skills`.
-After `crucible adopt PROGRAM --managed --working-mode`, Codex/agents discovery
-uses repo-root `.agents/skills/` (views of canonical `.crucible/skills/`). Nested
-`.crucible/.agents/skills/` is a projection copy.
+Working-mode does **not** install skills under `$HOME/.codex` or `$HOME/.agents/skills`.
+After `crucible adopt PROGRAM --managed --working-mode`, Codex discovery uses
+repo-root `.agents/skills/` (views of canonical `.crucible/skills/`). Nested
+`.crucible/.agents/skills/` is a projection copy. There is no `.codex/skills`
+view: a second tree would duplicate skill names. `$HOME` is not the source of truth.
 
 ## Invoke
 
