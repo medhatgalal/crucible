@@ -1625,6 +1625,16 @@ fn serve_second_on_busy_port_fails() {
     assert!(!st.success(), "busy port must fail (no SO_REUSEPORT)");
 }
 
+struct KillServe(Option<String>);
+
+impl Drop for KillServe {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0.take() {
+            let _ = Command::new("kill").args(["-TERM", pid.trim()]).status();
+        }
+    }
+}
+
 fn path_without_herdr() -> std::ffi::OsString {
     let mut dirs = Vec::new();
     for d in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"] {
@@ -1707,6 +1717,7 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
     let mut child = bin()
         .current_dir(&tmp.root)
         .env("PATH", &path)
+        .env_remove("CRUCIBLE_HERDR")
         .arg("room")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1715,10 +1726,10 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
     let st = wait_exit(&mut child, Duration::from_secs(3))
         .expect("missing herdr must exit (must not hang in serve)");
     let (stdout, stderr) = read_child_stdio(&mut child);
-    assert_ne!(
+    assert_eq!(
         st.code(),
-        Some(0),
-        "missing herdr must be nonzero: stdout={stdout:?} stderr={stderr:?}"
+        Some(2),
+        "missing herdr must exit 2: stdout={stdout:?} stderr={stderr:?}"
     );
     assert!(
         !stdout.to_ascii_lowercase().contains("listening"),
@@ -1810,6 +1821,7 @@ exit 0
         .current_dir(&tmp.root)
         .env("PATH", path_prefix(&bindir))
         .env("CRUCIBLE_ROOM_MARKER", &tmp.root)
+        .env_remove("CRUCIBLE_HERDR")
         .arg("room")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1818,6 +1830,12 @@ exit 0
     let st = wait_exit(&mut child, Duration::from_secs(8))
         .expect("room must exit after health GET (must not hang)");
     let (stdout, stderr) = read_child_stdio(&mut child);
+    let _kill = KillServe(
+        stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("serve pid "))
+            .map(|s| s.trim().to_string()),
+    );
     assert_eq!(
         st.code(),
         Some(0),
@@ -1858,9 +1876,31 @@ exit 0
         "IDEA.md must start go as a process, not HTTP: {stdout}"
     );
     assert!(!stdout.contains("POST"), "room must not POST /go: {stdout}");
-    if let Some(pid) = stdout.lines().find_map(|l| l.strip_prefix("serve pid ")) {
-        let _ = std::process::Command::new("kill")
-            .args(["-TERM", pid.trim()])
-            .status();
+    let reused = stdout.contains("serve reused");
+    if reused {
+        assert!(
+            !stdout.contains("serve pid "),
+            "reuse must not spawn: {stdout}"
+        );
+        assert!(
+            !stdout.lines().any(|l| l.starts_with("listening ")),
+            "{stdout}"
+        );
+    } else {
+        assert!(
+            stdout.contains("listening 127.0.0.1:1734"),
+            "spawn bind: stdout={stdout:?} stderr={stderr:?}"
+        );
     }
+    let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+    assert!(
+        !log.split_whitespace().any(|w| w == "server"),
+        "no herdr server:\n{log}"
+    );
+    assert!(!log.contains("config.toml"), "{log}");
+    assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
+    assert!(
+        !log.split_whitespace().any(|w| w == "reap"),
+        "pid 0 must not reap:\n{log}"
+    );
 }

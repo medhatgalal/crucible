@@ -309,7 +309,8 @@ fn cmd_room(args: &[String], cwd: &Path) -> i32 {
         }
     };
     let path = env::var_os("PATH").unwrap_or_default();
-    crucible_room::run(&exe, cwd, &path)
+    let herdr_override = env::var_os("CRUCIBLE_HERDR");
+    crucible_room::run(&exe, cwd, &path, herdr_override.as_deref())
 }
 
 fn cmd_camera(args: &[String]) -> i32 {

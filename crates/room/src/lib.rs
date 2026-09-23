@@ -1,11 +1,12 @@
-//! `crucible room` starts loopback `serve` if needed, then asks external `herdr`
-//! for standing tabs. Cameras GET the API. `go` is a process in the orchestrator
-//! tab, never `POST /go`. Do not vendor an init tree. No Herdr crate.
+//! `crucible room` probes loopback `GET /health` before listen, then asks
+//! external `herdr` for standing tabs. Cameras GET the API. `go` is a process
+//! in the orchestrator tab, never `POST /go`. Do not vendor an init tree.
+//! No Herdr crate.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -14,9 +15,15 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-const SERVE_BIND: &str = "127.0.0.1:0";
+const ROOM_BIND: &str = "127.0.0.1:1734";
+
+const PRODUCT_VERSION: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION"));
 
 pub const ROLES: [&str; 5] = ["chat", "orchestrator", "watcher", "reaper", "dashboard"];
+
+fn product_version() -> &'static str {
+    PRODUCT_VERSION.trim()
+}
 
 fn resolve_herdr(path: &OsStr) -> Option<PathBuf> {
     for dir in std::env::split_paths(path) {
@@ -59,62 +66,193 @@ impl Drop for ChildGuard {
     }
 }
 
-/// Require `herdr` on `path`, spawn this `exe serve`, then create standing tabs.
-/// Missing herdr: exit 2, do not spawn, do not listen.
-pub fn run(exe: &Path, cwd: &Path, path: &OsStr) -> i32 {
-    let Some(herdr) = resolve_herdr(path) else {
-        let _ = writeln!(io::stderr(), "room: herdr not found on PATH");
+/// Require herdr (`path`, else `herdr_override`). Probe health, then listen
+/// only on connection refused. Missing herdr: exit 2, no listen, no TRACE.
+/// Any other probe result: exit 1, no listen, no herdr calls.
+pub fn run(exe: &Path, cwd: &Path, path: &OsStr, herdr_override: Option<&OsStr>) -> i32 {
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+    let stderr = io::stderr();
+    let mut stderr = stderr.lock();
+    drive(
+        exe,
+        cwd,
+        path,
+        herdr_override,
+        ROOM_BIND,
+        &mut stdout,
+        &mut stderr,
+    )
+}
+
+// Resolve before the probe so a missing binary never listens.
+fn locate_herdr(
+    path: &OsStr,
+    override_bin: Option<&OsStr>,
+    err: &mut dyn Write,
+) -> Option<PathBuf> {
+    if let Some(found) = resolve_herdr(path) {
+        return Some(found);
+    }
+    let Some(raw) = override_bin else {
+        let _ = writeln!(err, "room: herdr not found on PATH");
+        return None;
+    };
+    let candidate = PathBuf::from(raw);
+    if is_executable(&candidate) {
+        let _ = writeln!(
+            err,
+            "room: herdr not found on PATH; using CRUCIBLE_HERDR {}",
+            candidate.display()
+        );
+        Some(candidate)
+    } else {
+        let _ = writeln!(
+            err,
+            "room: herdr not found on PATH; CRUCIBLE_HERDR {} is missing or not executable",
+            candidate.display()
+        );
+        None
+    }
+}
+
+#[derive(Debug)]
+enum HealthProbe {
+    Refused,
+    Match(String),
+    Other(String),
+}
+
+fn health_matches(body: &str, version: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    v.get("ok").and_then(Value::as_bool) == Some(true)
+        && v.get("version").and_then(Value::as_str) == Some(version)
+}
+
+/// One connection: 100ms connect, then a 2s read. No reconnect.
+fn probe_health(addr: &str, version: &str) -> HealthProbe {
+    let sock: SocketAddr = match addr.parse() {
+        Ok(s) => s,
+        Err(e) => return HealthProbe::Other(format!("addr {addr}: {e}")),
+    };
+    let mut stream = match TcpStream::connect_timeout(&sock, Duration::from_millis(100)) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => return HealthProbe::Refused,
+        Err(e) => return HealthProbe::Other(format!("GET /health {addr}: {e}")),
+    };
+    if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(2))) {
+        return HealthProbe::Other(format!("GET /health {addr}: {e}"));
+    }
+    if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(2))) {
+        return HealthProbe::Other(format!("GET /health {addr}: {e}"));
+    }
+    if let Err(e) = write!(
+        stream,
+        "GET /health HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n"
+    )
+    .and_then(|_| stream.flush())
+    {
+        return HealthProbe::Other(format!("GET /health {addr}: {e}"));
+    }
+    let mut raw = Vec::new();
+    if let Err(e) = stream.read_to_end(&mut raw) {
+        return HealthProbe::Other(format!("GET /health {addr}: {e}"));
+    }
+    let text = String::from_utf8_lossy(&raw);
+    let body = text
+        .split("\r\n\r\n")
+        .nth(1)
+        .or_else(|| text.split("\n\n").nth(1))
+        .unwrap_or("")
+        .trim();
+    if body.is_empty() {
+        return HealthProbe::Other(format!("GET /health {addr}: empty body"));
+    }
+    if health_matches(body, version) {
+        HealthProbe::Match(body.to_string())
+    } else {
+        HealthProbe::Other(format!("GET /health {addr}: version mismatch"))
+    }
+}
+
+fn drive(
+    exe: &Path,
+    cwd: &Path,
+    path: &OsStr,
+    herdr_override: Option<&OsStr>,
+    bind: &str,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let Some(herdr) = locate_herdr(path, herdr_override, err) else {
         return 2;
     };
-    let (addr, pid, guard) = match spawn_serve(exe, cwd) {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = writeln!(io::stderr(), "room: {e}");
-            return 1;
+    let version = product_version();
+    // Only connection refused may spawn. Anything else must not listen.
+    let (addr, body, spawned) = match probe_health(bind, version) {
+        HealthProbe::Match(body) => (bind.to_string(), body, None),
+        HealthProbe::Refused => {
+            let (addr, pid, guard) = match spawn_serve(exe, cwd, bind) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = writeln!(err, "room: {e}");
+                    return 1;
+                }
+            };
+            match probe_health(&addr, version) {
+                HealthProbe::Match(body) => (addr, body, Some((pid, guard))),
+                HealthProbe::Refused => {
+                    let _ = writeln!(err, "room: spawned serve did not accept {addr}");
+                    return 1;
+                }
+                HealthProbe::Other(msg) => {
+                    let _ = writeln!(err, "room: {msg}");
+                    return 1;
+                }
+            }
         }
-    };
-    let body = match http_get(&addr, "/health") {
-        Ok(b) => b,
-        Err(e) => {
-            let _ = writeln!(io::stderr(), "room: {e}");
-            drop(guard);
+        HealthProbe::Other(msg) => {
+            let _ = writeln!(err, "room: {msg}");
             return 1;
         }
     };
     let report = match arrange(&herdr, exe, cwd, &addr) {
         Ok(r) => r,
         Err(e) => {
-            let _ = writeln!(io::stderr(), "room: {e}");
-            drop(guard);
+            let _ = writeln!(err, "room: {e}");
             return 1;
         }
     };
-    let stdout = io::stdout();
-    let mut stdout = stdout.lock();
     let _ = writeln!(
-        stdout,
+        out,
         "standing roles: chat, orchestrator, watcher, reaper, dashboard"
     );
-    let _ = writeln!(stdout, "listening {addr}");
-    let _ = writeln!(stdout, "serve pid {pid}");
-    let _ = writeln!(stdout, "GET /health {addr}");
-    let _ = writeln!(stdout, "{body}");
-    let _ = writeln!(stdout, "workspace {}", report.workspace_id);
-    let _ = writeln!(stdout, "tabs {}", report.labels.join(" "));
-    if report.started_go {
-        let _ = writeln!(stdout, "go orchestrator");
+    if let Some((pid, guard)) = spawned {
+        let _ = writeln!(out, "listening {addr}");
+        let _ = writeln!(out, "serve pid {pid}");
+        // Serve stays up for cameras. Forgetting the guard skips the kill-on-drop.
+        std::mem::forget(guard);
     } else {
-        let _ = writeln!(stdout, "go waiting");
+        let _ = writeln!(out, "serve reused");
     }
-    let _ = stdout.flush();
-    // Serve stays up for cameras. Forgetting the guard skips the kill-on-drop.
-    std::mem::forget(guard);
+    let _ = writeln!(out, "GET /health {addr}");
+    let _ = writeln!(out, "{body}");
+    let _ = writeln!(out, "workspace {}", report.workspace_id);
+    let _ = writeln!(out, "tabs {}", report.labels.join(" "));
+    if report.started_go {
+        let _ = writeln!(out, "go orchestrator");
+    } else {
+        let _ = writeln!(out, "go waiting");
+    }
+    let _ = out.flush();
     0
 }
 
-fn spawn_serve(exe: &Path, cwd: &Path) -> Result<(String, u32, ChildGuard), String> {
+fn spawn_serve(exe: &Path, cwd: &Path, bind: &str) -> Result<(String, u32, ChildGuard), String> {
     let mut child = Command::new(exe)
-        .args(["serve", "--bind", SERVE_BIND])
+        .args(["serve", "--bind", bind])
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -290,8 +428,11 @@ fn pane_by_label(herdr: &Path, workspace_id: &str) -> Result<Vec<(String, String
 }
 
 fn go_pid(herdr: &Path, pane: &str) -> Option<u32> {
-    let text = herdr_ok(herdr, &["pane", "process-info", pane]).ok()?;
-    let raw = first_key(&text, "pid")?;
+    // Live herdr takes --pane. A positional id is "unknown option" and the reaper never runs.
+    // Prefer the process group: kill -TERM -N signals a group, and a nested pid can be the pane shell.
+    let text = herdr_ok(herdr, &["pane", "process-info", "--pane", pane]).ok()?;
+    let raw =
+        first_key(&text, "foreground_process_group_id").or_else(|| first_key(&text, "pid"))?;
     let pid: u32 = raw.parse().ok()?;
     if pid < 2 {
         None
@@ -528,7 +669,9 @@ pub fn http_get(addr: &str, path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     static SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -566,6 +709,10 @@ mod tests {
     }
 
     fn fake_herdr(tmp: &Tmp) -> PathBuf {
+        fake_herdr_pid(tmp, 0)
+    }
+
+    fn fake_herdr_pid(tmp: &Tmp, pid: u32) -> PathBuf {
         let bin = tmp.root.join("bin");
         fs::create_dir_all(&bin).unwrap();
         let state = tmp.root.join("tabs.jsonl");
@@ -602,7 +749,7 @@ elif [ "$cmd" = "tab create" ]; then
 elif [ "$cmd" = "pane list" ]; then
   printf '%s\n' '{{"result":{{"panes":[{{"pane_id":"pane-chat","tab_id":"tab-chat"}},{{"pane_id":"pane-orchestrator","tab_id":"tab-orchestrator"}},{{"pane_id":"pane-watcher","tab_id":"tab-watcher"}},{{"pane_id":"pane-reaper","tab_id":"tab-reaper"}},{{"pane_id":"pane-dashboard","tab_id":"tab-dashboard"}}]}}}}'
 elif [ "$cmd" = "pane process-info" ]; then
-  printf '%s\n' '{{"result":{{"pid":0}}}}'
+  printf '%s\n' '{{"result":{{"pid":{pid}}}}}'
 else
   printf '%s\n' '{{"result":{{"ok":true}}}}'
 fi
@@ -610,6 +757,7 @@ exit 0
 "#,
             log = log.display(),
             state = state.display(),
+            pid = pid,
         );
         let path = bin.join("herdr");
         write_exec(&path, &script);
@@ -655,11 +803,15 @@ exit 0
             &exe,
             "#!/bin/sh\nprintf spawned > \"$(dirname \"$0\")/SPAWNED\"\nexit 0\n",
         );
-        let code = run(&exe, &tmp.root, empty.as_os_str());
+        let code = run(&exe, &tmp.root, empty.as_os_str(), None);
         assert_eq!(code, 2, "missing herdr is nonzero");
         assert!(
             !tmp.root.join("SPAWNED").exists(),
             "must not spawn current_exe serve when herdr is missing"
+        );
+        assert!(
+            !tmp.root.join(".wm").exists(),
+            "missing herdr must not write TRACE"
         );
     }
 
@@ -672,6 +824,16 @@ exit 0
             "room is a GET client; it must not bind"
         );
         assert!(!prod.contains("bind_listener"));
+        assert!(!prod.contains("SO_REUSEPORT"));
+        assert!(!prod.contains("reuseport"));
+        assert!(!prod.contains("env_clear"));
+        assert!(!prod.contains("config.toml"));
+        assert!(!prod.contains("\"server\""));
+        assert!(!prod.contains("127.0.0.1:0"));
+        assert!(prod.contains("127.0.0.1:1734"));
+        assert!(prod.contains("serve reused"));
+        assert!(!ROLES.contains(&"terminal"));
+        assert_eq!(ROLES.len(), 5);
     }
 
     #[test]
@@ -698,6 +860,10 @@ exit 0
             !watcher.contains("pane-orchestrator"),
             "watcher must not target the go pane: {watcher}"
         );
+        assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
+        assert!(!log.split_whitespace().any(|w| w == "server"), "{log}");
+        assert!(!log.contains("config.toml"), "{log}");
+        assert!(!log.contains("terminal"), "{log}");
     }
 
     #[test]
@@ -769,10 +935,431 @@ exit 0
                 "cargo tree -p {pkg}: {}",
                 String::from_utf8_lossy(&out.stderr)
             );
-            let tree = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
-            assert!(!tree.contains("herdr"), "herdr in {pkg} tree:\n{tree}");
-            assert!(!tree.contains("grok"), "grok in {pkg} tree:\n{tree}");
-            assert!(!tree.contains("engos"), "engos in {pkg} tree:\n{tree}");
+            let raw = String::from_utf8_lossy(&out.stdout).to_ascii_lowercase();
+            // Manifest paths are not crates. This checkout lives under `.grok`.
+            let mut tree = String::new();
+            let mut depth = 0i32;
+            for c in raw.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' if depth > 0 => depth -= 1,
+                    _ if depth == 0 => tree.push(c),
+                    _ => {}
+                }
+            }
+            assert!(!tree.contains("herdr"), "herdr in {pkg} tree:\n{raw}");
+            assert!(!tree.contains("grok"), "grok in {pkg} tree:\n{raw}");
+            assert!(!tree.contains("engos"), "engos in {pkg} tree:\n{raw}");
+        }
+    }
+
+    fn http_json(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    struct HealthSrv {
+        addr: String,
+        hits: Arc<AtomicUsize>,
+        stop: Arc<AtomicBool>,
+        join: Option<thread::JoinHandle<()>>,
+    }
+
+    impl HealthSrv {
+        fn start(body: String) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let hits = Arc::new(AtomicUsize::new(0));
+            let stop = Arc::new(AtomicBool::new(false));
+            let hits2 = hits.clone();
+            let stop2 = stop.clone();
+            let join = thread::spawn(move || {
+                listener.set_nonblocking(true).unwrap();
+                while !stop2.load(Ordering::Relaxed) {
+                    match listener.accept() {
+                        Ok((mut sock, _)) => {
+                            hits2.fetch_add(1, Ordering::Relaxed);
+                            let _ = sock.set_read_timeout(Some(Duration::from_secs(1)));
+                            let mut buf = [0u8; 2048];
+                            let _ = sock.read(&mut buf);
+                            let resp = http_json(&body);
+                            let _ = sock.write_all(resp.as_bytes());
+                            let _ = sock.flush();
+                            let _ = sock.shutdown(std::net::Shutdown::Write);
+                        }
+                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            Self {
+                addr,
+                hits,
+                stop,
+                join: Some(join),
+            }
+        }
+    }
+
+    impl Drop for HealthSrv {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Some(join) = self.join.take() {
+                let _ = join.join();
+            }
+        }
+    }
+
+    fn spawn_marker(tmp: &Tmp) -> PathBuf {
+        let path = tmp.root.join("crucible");
+        write_exec(
+            &path,
+            "#!/bin/sh\nprintf spawned > \"$(dirname \"$0\")/SPAWNED\"\nexit 0\n",
+        );
+        path
+    }
+
+    #[test]
+    fn health_reuse_keeps_fixture_accepting() {
+        let tmp = Tmp::new();
+        let body = serde_json::json!({
+            "ok": true,
+            "version": product_version(),
+            "bind": "127.0.0.1:9"
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        let herdr = fake_herdr(&tmp);
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        let stdout = String::from_utf8(out).unwrap();
+        let stderr = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("serve reused"), "{stdout}");
+        assert!(
+            !stdout.lines().any(|l| l.starts_with("listening ")),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("serve pid "), "{stdout}");
+        assert!(!tmp.root.join("SPAWNED").exists(), "reuse must not spawn");
+        assert!(!tmp.root.join(".wm").exists(), "reuse must not write TRACE");
+        let again = http_get(&srv.addr, "/health").expect("fixture still accepts");
+        assert!(again.contains(product_version()), "{again}");
+        assert!(
+            srv.hits.load(Ordering::Relaxed) >= 2,
+            "probe plus a later accept"
+        );
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("camera"), "{log}");
+        assert!(!log.contains("pane-chat"), "{log}");
+        assert!(!log.split_whitespace().any(|w| w == "server"), "{log}");
+    }
+
+    #[test]
+    fn stranger_port_does_not_listen_or_call_herdr() {
+        let tmp = Tmp::new();
+        let body = serde_json::json!({
+            "ok": true,
+            "version": "0.0.0",
+            "bind": "127.0.0.1:9"
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        let herdr = fake_herdr(&tmp);
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 1, "{}", String::from_utf8_lossy(&err));
+        assert!(String::from_utf8_lossy(&err).contains("version mismatch"));
+        assert!(!tmp.root.join("SPAWNED").exists());
+        assert!(
+            !tmp.root.join("herdr.log").exists(),
+            "stranger must not call herdr"
+        );
+        assert!(!tmp.root.join(".wm").exists());
+        let again = http_get(&srv.addr, "/health").expect("stranger fixture still accepts");
+        assert!(again.contains("0.0.0"), "{again}");
+        assert!(out.is_empty(), "stranger must not print serve reused");
+    }
+
+    #[test]
+    fn probe_refuses_not_ok_even_when_version_matches() {
+        let body = serde_json::json!({
+            "ok": false,
+            "version": product_version()
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        match probe_health(&srv.addr, product_version()) {
+            HealthProbe::Other(msg) => assert!(msg.contains("version mismatch"), "{msg}"),
+            other => panic!("expected other, got {other:?}"),
+        }
+        let again = http_get(&srv.addr, "/health").expect("fixture still accepts");
+        assert!(
+            again.contains("false") || again.contains("False") || again.contains("ok"),
+            "{again}"
+        );
+    }
+
+    #[test]
+    fn probe_connection_refused_is_not_other() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        match probe_health(&addr, product_version()) {
+            HealthProbe::Refused => {}
+            other => panic!("expected refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn refused_spawns_once_and_skips_herdr_when_child_is_not_healthy() {
+        let tmp = Tmp::new();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let addr = format!("127.0.0.1:{port}");
+        let args_path = tmp.root.join("args");
+        let exe = tmp.root.join("crucible");
+        write_exec(
+            &exe,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > {}\nprintf 'listening {}\\n'\nexec sleep 30\n",
+                args_path.display(),
+                addr
+            ),
+        );
+        let herdr = fake_herdr(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &addr,
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 1, "{}", String::from_utf8_lossy(&err));
+        let args = fs::read_to_string(&args_path).unwrap();
+        assert_eq!(args.trim(), format!("serve --bind {addr}"));
+        assert!(!tmp.root.join("herdr.log").exists());
+        assert!(!String::from_utf8(out).unwrap().contains("serve reused"));
+    }
+
+    #[test]
+    fn accept_without_body_exits_without_spawn_or_herdr() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let thr = thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            while !stop2.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut sock, _)) => {
+                        let _ = sock.set_read_timeout(Some(Duration::from_secs(1)));
+                        let mut buf = [0u8; 512];
+                        let _ = sock.read(&mut buf);
+                        while !stop2.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        let tmp = Tmp::new();
+        let herdr = fake_herdr(&tmp);
+        let exe = spawn_marker(&tmp);
+        let started = std::time::Instant::now();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &addr,
+            &mut out,
+            &mut err,
+        );
+        let elapsed = started.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        let _ = thr.join();
+        assert_eq!(code, 1, "{}", String::from_utf8_lossy(&err));
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "probe must not retry for long: {elapsed:?}"
+        );
+        assert!(!tmp.root.join("SPAWNED").exists());
+        assert!(!tmp.root.join("herdr.log").exists());
+    }
+
+    #[test]
+    fn missing_override_names_path_and_does_not_listen() {
+        let tmp = Tmp::new();
+        let empty = tmp.root.join("empty");
+        fs::create_dir(&empty).unwrap();
+        let override_path = tmp.root.join("missing-herdr");
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            empty.as_os_str(),
+            Some(override_path.as_os_str()),
+            "127.0.0.1:9",
+            &mut out,
+            &mut err,
+        );
+        assert_eq!(code, 2);
+        let stderr = String::from_utf8(err).unwrap();
+        assert!(
+            stderr.contains(&override_path.display().to_string()),
+            "{stderr}"
+        );
+        assert!(!tmp.root.join("SPAWNED").exists());
+        assert!(!tmp.root.join(".wm").exists());
+        assert!(!tmp.root.join("herdr.log").exists());
+    }
+
+    #[test]
+    fn path_miss_uses_executable_override_and_names_it() {
+        let tmp = Tmp::new();
+        let empty = tmp.root.join("empty");
+        fs::create_dir(&empty).unwrap();
+        let herdr = fake_herdr(&tmp);
+        let body = serde_json::json!({
+            "ok": true,
+            "version": product_version()
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            empty.as_os_str(),
+            Some(herdr.as_os_str()),
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        let stdout = String::from_utf8(out).unwrap();
+        let stderr = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stderr.contains(&herdr.display().to_string()), "{stderr}");
+        assert!(stdout.contains("serve reused"), "{stdout}");
+        assert!(!tmp.root.join("SPAWNED").exists());
+        assert!(tmp.root.join("herdr.log").exists());
+        let _ = http_get(&srv.addr, "/health").expect("fixture still accepts");
+    }
+
+    #[test]
+    fn reaper_command_absent_when_pid_is_0() {
+        let tmp = Tmp::new();
+        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+        let herdr = fake_herdr_pid(&tmp, 0);
+        let exe = exe_marker(&tmp);
+        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
+        assert!(report.started_go);
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(
+            !log.split_whitespace().any(|w| w == "reap"),
+            "pid 0 must not reap:\n{log}"
+        );
+        assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
+        let go = log
+            .lines()
+            .find(|l| l.split_whitespace().any(|w| w == "go"))
+            .expect(&log);
+        assert!(go.contains("pane-orchestrator"), "{go}");
+    }
+
+    #[test]
+    fn reap_follows_go_only_when_pid_at_least_2() {
+        let tmp = Tmp::new();
+        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+        let herdr = fake_herdr_pid(&tmp, 2);
+        let exe = exe_marker(&tmp);
+        arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        let lines: Vec<_> = log.lines().collect();
+        let go_at = lines
+            .iter()
+            .position(|l| l.split_whitespace().any(|w| w == "go"))
+            .expect(&log);
+        let reap_at = lines
+            .iter()
+            .position(|l| l.split_whitespace().any(|w| w == "reap"))
+            .expect(&log);
+        assert!(reap_at > go_at, "{log}");
+        let reap = lines[reap_at];
+        assert!(reap.contains("pane-reaper"), "{reap}");
+        assert!(
+            reap.split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .any(|w| w == ["--pid", "2"]),
+            "{reap}"
+        );
+        assert!(!log.contains("pane-chat"), "{log}");
+    }
+
+    #[test]
+    #[ignore = "live herdr list; set CRUCIBLE_ROOM_LIVE=1"]
+    fn live_herdr_list_commands() {
+        if std::env::var("CRUCIBLE_ROOM_LIVE").ok().as_deref() != Some("1") {
+            return;
+        }
+        let bin = std::env::var("CRUCIBLE_HERDR").unwrap_or_else(|_| "herdr".to_string());
+        for args in [
+            &["workspace", "list"][..],
+            &["tab", "list"][..],
+            &["pane", "list"][..],
+        ] {
+            let out = Command::new(&bin)
+                .args(args)
+                .output()
+                .unwrap_or_else(|e| panic!("spawn {bin} {args:?}: {e}"));
+            assert!(
+                out.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let text = String::from_utf8_lossy(&out.stdout);
+            parse_json(&text).unwrap_or_else(|e| panic!("{args:?}: {e}: {text}"));
         }
     }
 }
