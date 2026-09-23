@@ -19,8 +19,14 @@ All notable changes to this project are documented here. This project follows
   create the same tab again. Watcher and dashboard run `camera` (GET only).
   `go` is `herdr pane run` in the orchestrator only when `IDEA.md` is
   non-empty or a READY `BACKLOG.tsv` row exists. `reap --pid` sends SIGTERM
-  to that process group. Missing `herdr`: nonzero, no serve, no TRACE.
-  No `POST /go`. No Herdr crate.
+  to that process group only when process-info pid is >= 2. Missing `herdr`:
+  exit 2, no serve, no TRACE. No `POST /go`. No Herdr crate.
+- Before listen, `crucible room` probes `GET /health` on `127.0.0.1:1734`
+  (one 100ms connect, one 2s read). A matching VERSION is reused (`serve
+  reused`). Only connection refused spawns this binary's `serve --bind
+  127.0.0.1:1734`. Any other probe exits 1 and does not call herdr (no
+  `SO_REUSEPORT`). Herdr is `PATH`, else `CRUCIBLE_HERDR`. Never `herdr
+  server`. No `config.toml` write.
 
 ### Web
 - `crucible web` is a loopback GET page (default `127.0.0.1:1735`) that
@@ -36,11 +42,14 @@ All notable changes to this project are documented here. This project follows
   stale versus that ADR-HASH (unit tests inject HOME; not a walk CHECK).
 
 ### Room
-- `crucible room` requires `herdr` on PATH, then spawns this binary's
-  (`current_exe`) `serve --bind 127.0.0.1:0` — not PATH `wm`/`crucible` —
-  prints standing roles (chat, orchestrator, watcher, reaper, dashboard),
-  and GET `/health`. Missing herdr: nonzero, no serve, no TRACE, no listen.
-  Not a herdr-init copy. No `POST /go`. Kernel/contract stay Herdr-free.
+- `crucible room` probes `GET /health` on `127.0.0.1:1734` before any listen.
+  Matching VERSION reuses that process (`serve reused`). Only connection
+  refused spawns this binary's (`current_exe`) `serve --bind 127.0.0.1:1734`
+  — not PATH `wm`/`crucible`, and not `SO_REUSEPORT`. Any other probe exits 1
+  and does not call herdr. Herdr is on `PATH`, else `CRUCIBLE_HERDR`. Missing
+  or non-executable: exit 2, no listen, no TRACE. Standing roles (chat,
+  orchestrator, watcher, reaper, dashboard). Not a herdr-init copy. No
+  `POST /go`. Kernel/contract stay Herdr-free.
 
 ### Docs
 - `/crucible` skill forbids `/execute-plan` as the product walker for adopted
