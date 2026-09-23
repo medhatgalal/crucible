@@ -10,4 +10,4 @@ Room cameras and this page are clients of the same JSON. Herdr stays an external
 
 ## Addendum (2026-09-23)
 
-The page may append `BACKLOG.tsv` and `.wm/CHAT.md` and may `POST /act/go`, which only spawns `go` as a process group. `crucible serve` still never writes. The page is still not a second kernel.
+The page may append `BACKLOG.tsv` and `.wm/CHAT.md` only, and may `POST /act/go`, which only spawns `go` as a process group. `crucible serve` still never writes. The page is still not a second kernel.

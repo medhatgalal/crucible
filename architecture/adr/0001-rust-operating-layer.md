@@ -146,7 +146,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
 | D9 | Contracts: `crucible.walk/v1` + events WAL + **panel-as-files** (cast state `go` already requires; **not** a `WalkSnapshot` key in v1). CLI **read-only** JSON **equals** HTTP JSON. Files always written (human/`cat` without HTTP). |
 | D10 | Kernel HTTP: **GET** `/walk` `/stats?since=` `/health`. **No `POST /go`.** Room starts `go` as a **process**, not an HTTP walk. |
-| D11 | **herdr-crucible is required** (next crate). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
+| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` + POSIX guided entry + files + cargo for contributors. CHANGELOG 1.17.0 records the break from “POSIX sh is the **working-mode** engine.” |
@@ -154,7 +154,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Campaign WIP stays gitignored under `architecture/wip/`. Rotting `docs/superpowers/plans/` deleted. |
 | D17 | Web is a **client of GET JSON**, not a second kernel. Timing is ADR 0002 and the web drive: the page may append `BACKLOG.tsv` and `.wm/CHAT.md`, and `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. No walker logic in the UI. |
 | D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec wrapper (absolute sibling). Engine-tree POSIX `./crucible` is not overwritten by `cargo build`; the tarball installs Rust `crucible` beside `crucible-guided`. |
-| D19 | v1 Rust owns working-mode + `serve`. Guided `cycle`/`drive` (and `adopt`/`refresh` on the POSIX entry) stay on `./crucible` / `crucible-guided` until a later tag, same schema. `room` is the next crate. |
+| D19 | v1 Rust owns working-mode + `serve`. Guided `cycle`/`drive` (and `adopt`/`refresh` on the POSIX entry) stay on `./crucible` / `crucible-guided` until a later tag, same schema. `room` has landed. |
 | D20 | **Operator override:** `crucible serve` never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. `status --json` and GET `/walk` stay read-only. Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. |
 | D21 | Herdr is an **external process** (`herdr` on PATH). Default musl `crucible` has **zero** Herdr crates. |
 | D22 | WAL path is **`.wm/EVENTS`** (JSONL, no `.jsonl` suffix). |
@@ -206,7 +206,7 @@ Published language: **`crucible.walk/v1`**. Canonical JSON: UTF-8, sorted object
 
 | Verb | Mutates board? |
 | --- | --- |
-| `crucible status` (human, no `--json`) | **FLOOR only** — rewrites `.wm/FLOOR.md`. Does not append TRACE or EVENTS. Does not increment FAIL retries. |
+| `crucible status` (human, no `--json`) | Writes `.wm/FLOOR.md` and may create `t0`. Does not append TRACE or EVENTS. Does not increment FAIL retries. |
 | `crucible status --json` | **No** — `WalkSnapshot::from_wm_dir` only. |
 | GET `/walk` | **No** — same parser. |
 | `crucible serve` | **No** — never writes. |
@@ -260,15 +260,16 @@ Second server: probe GET `/health` first. If `ok: true` and `version` matches, d
 
 ## Room (landed)
 
-`crucible room` (product cwd). Herdr = external process (D21). Default musl links **no** Herdr crate. Missing `herdr` (and unset/unusable `CRUCIBLE_HERDR`): exit **nonzero**, print a refusal, **do not** invent TRACE, **do not** listen.
+`crucible room` (product cwd). Herdr = external process (D21). Default musl links **no** Herdr crate.
 
 Sequence:
 
-1. Probe GET `/health` on `127.0.0.1:1734`. Matching VERSION: reuse (`serve reused`). Only connection refused spawns **`current_exe() serve --bind 127.0.0.1:1734`**. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
-2. Spawn Herdr with structured tabs: **chat**, **orchestrator**, **watcher** (GET only; must not write the go PTY), **reaper** (kill `go` process group), **dashboard**.
-3. Standing labels; second attach does not duplicate tabs.
-4. Spawn **`current_exe() go`** in orchestrator **only if** `IDEA.md` is non-empty **or** a READY `BACKLOG.tsv` row exists. Else wait for chat.
-5. Missing FLOOR → snapshot `available: false`. Cameras are GET clients.
+1. Resolve external `herdr` (`PATH`, else `CRUCIBLE_HERDR`). Missing or not executable: exit **nonzero**, print a refusal, no listen, no TRACE, and no health probe.
+2. Probe GET `/health` on `127.0.0.1:1734`. Matching VERSION: reuse (`serve reused`). Only connection refused spawns **`current_exe() serve --bind 127.0.0.1:1734`**. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
+3. Spawn Herdr with structured tabs: **chat**, **orchestrator**, **watcher** (GET only; must not write the go PTY), **reaper** (kill `go` process group), **dashboard**.
+4. Standing labels; second attach does not duplicate tabs.
+5. Spawn **`current_exe() go`** in orchestrator **only if** `IDEA.md` is non-empty **or** a READY `BACKLOG.tsv` row exists. Else wait for chat.
+6. Missing FLOOR → snapshot `available: false`. Cameras are GET clients.
 
 Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on default musl; auto-go via `POST /go`; watcher writes to the go PTY; spawn PATH `crucible`; missing herdr still listens or writes TRACE.
 
