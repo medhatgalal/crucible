@@ -62,6 +62,13 @@ All notable changes to this project are documented here. This project follows
   EVENTS file still uses `METRICS.tsv` (`source: "metrics"`). A JSONL line
   that does not parse, or whose `t` is not RFC3339 Zulu, is skipped.
 
+### Status
+- Bare `crucible status` rewrites `.wm/FLOOR.md` from the on-disk card and
+  prints `FLOOR t=+Ns station=… card=… wip=…`. Station, wip, andon, and
+  evidence come from the kernel. TRACE and EVENTS are not appended. `t0`
+  may be created when FLOOR exists and `t0` does not. No card on disk:
+  exit 1, write nothing. `status --json` and GET `/walk` stay read-only.
+
 ### Observability
 - `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
   `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,
