@@ -428,8 +428,11 @@ fn pane_by_label(herdr: &Path, workspace_id: &str) -> Result<Vec<(String, String
 }
 
 fn go_pid(herdr: &Path, pane: &str) -> Option<u32> {
-    let text = herdr_ok(herdr, &["pane", "process-info", pane]).ok()?;
-    let raw = first_key(&text, "pid")?;
+    // Live herdr takes --pane. A positional id is "unknown option" and the reaper never runs.
+    // Prefer the process group: kill -TERM -N signals a group, and a nested pid can be the pane shell.
+    let text = herdr_ok(herdr, &["pane", "process-info", "--pane", pane]).ok()?;
+    let raw =
+        first_key(&text, "foreground_process_group_id").or_else(|| first_key(&text, "pid"))?;
     let pid: u32 = raw.parse().ok()?;
     if pid < 2 {
         None
