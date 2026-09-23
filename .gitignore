@@ -40,3 +40,12 @@ architecture/wip/
 
 # Rust workspace build
 target/
+
+# .wm runtime churn
+.wm/TRACE.tsv
+.wm/EVENTS
+.wm/METRICS.tsv
+.wm/CHAT.md
+.wm/briefs/
+.wm/worktrees/
+.wm/archive/
