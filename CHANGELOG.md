@@ -56,6 +56,12 @@ All notable changes to this project are documented here. This project follows
   repos. Inner loop remains wrapper `.crucible/work/wm.sh go` (execs rust).
   Product machines need no rustc. Loopback GET serve is a camera, not a walker.
 
+### Stats
+- `crucible stats --json` and `GET /stats` count `.wm/EVENTS` when that file
+  is readable (`source: "events"`) and do not read `METRICS.tsv`. A missing
+  EVENTS file still uses `METRICS.tsv` (`source: "metrics"`). A JSONL line
+  that does not parse, or whose `t` is not RFC3339 Zulu, is skipped.
+
 ### Observability
 - `crucible serve [--bind 127.0.0.1:PORT]` is GET-only on loopback (`127.0.0.1` or
   `[::1]`; default `127.0.0.1:1734`). `GET /walk` matches `status --json`,

@@ -4,6 +4,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::clock::Clock;
+use crate::event::{Event, EventKind};
 use crate::layout;
 use crate::timeutil::{format_rfc3339_z, parse_rfc3339_z, parse_since};
 
@@ -51,8 +52,87 @@ pub struct Halt {
     pub iterations: Option<i64>,
 }
 
+fn blank_window(since: String, until: String, source: &str) -> StatsWindow {
+    StatsWindow {
+        schema: STATS_SCHEMA.to_string(),
+        available: false,
+        since,
+        until,
+        source: source.to_string(),
+        counts: StatsCounts {
+            halt: 0,
+            card: 0,
+            invoke_end: 0,
+        },
+        halts: Vec::new(),
+    }
+}
+
+/// One bad line must not fail the window or drop the rest of the file.
+fn window_from_events(
+    text: &str,
+    since_unix: i64,
+    now: i64,
+    since_s: String,
+    until_s: String,
+) -> StatsWindow {
+    let mut halts = Vec::new();
+    let mut card = 0u64;
+    let mut invoke_end = 0u64;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(ev) = Event::from_jsonl_line(line) else {
+            continue;
+        };
+        let Some(tu) = parse_rfc3339_z(&ev.t) else {
+            continue;
+        };
+        if tu < since_unix || tu > now {
+            continue;
+        }
+        match ev.kind {
+            EventKind::Card => card += 1,
+            EventKind::InvokeEnd => invoke_end += 1,
+            EventKind::Halt => {
+                let outcome = ev.card.unwrap_or_default();
+                if outcome.is_empty() {
+                    continue;
+                }
+                halts.push(Halt {
+                    t: ev.t,
+                    outcome,
+                    slices: 0,
+                    bound: 0,
+                    note: ev.note.unwrap_or_else(|| "-".to_string()),
+                    elapsed_s: ev.elapsed_s,
+                    iterations: ev.iterations,
+                });
+            }
+            EventKind::WalkStart | EventKind::Lesson => {}
+        }
+    }
+    let halt_n = halts.len() as u64;
+    StatsWindow {
+        schema: STATS_SCHEMA.to_string(),
+        available: true,
+        since: since_s,
+        until: until_s,
+        source: "events".to_string(),
+        counts: StatsCounts {
+            halt: halt_n,
+            card,
+            invoke_end,
+        },
+        halts,
+    }
+}
+
 impl StatsWindow {
-    /// PR-1: read `.wm/METRICS.tsv` only. `since` is RFC3339 Z or `Ns`/`Nm`/`Nh`/`Nd`.
+    /// Readable `.wm/EVENTS` is the only source. Missing EVENTS keeps `.wm/METRICS.tsv`.
+    /// `since` is RFC3339 Z or `Ns`/`Nm`/`Nh`/`Nd`.
     pub fn from_wm_dir(
         dir: impl AsRef<Path>,
         since: &str,
@@ -66,23 +146,19 @@ impl StatsWindow {
         })?;
         let until_s = format_rfc3339_z(now);
         let since_s = format_rfc3339_z(since_unix);
-        let empty = || StatsWindow {
-            schema: STATS_SCHEMA.to_string(),
-            available: false,
-            since: since_s.clone(),
-            until: until_s.clone(),
-            source: "metrics".to_string(),
-            counts: StatsCounts {
-                halt: 0,
-                card: 0,
-                invoke_end: 0,
-            },
-            halts: Vec::new(),
-        };
         let (_repo, wm) = layout::resolve(dir.as_ref());
+        let events_path = wm.join("EVENTS");
+        match fs::read_to_string(&events_path) {
+            Ok(text) => {
+                return Ok(window_from_events(&text, since_unix, now, since_s, until_s));
+            }
+            // Missing WAL falls back. Any other read error must not invent METRICS rows.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Ok(blank_window(since_s, until_s, "events")),
+        }
         let path = wm.join("METRICS.tsv");
         let Ok(text) = fs::read_to_string(&path) else {
-            return Ok(empty());
+            return Ok(blank_window(since_s, until_s, "metrics"));
         };
         let mut halts = Vec::new();
         for (i, line) in text.lines().enumerate() {
@@ -255,35 +331,61 @@ when\toutcome\tslices\tbound\tnote
     }
 
     #[test]
-    fn stats_ignores_events_wal_inside_window() {
+    fn stats_reads_events_wal_inside_window() {
         let tmp = Tmp::new();
         write_metrics(&tmp.root, METRICS);
+        let events = tmp.root.join(".wm").join("EVENTS");
         fs::write(
-            tmp.root.join(".wm").join("EVENTS"),
+            &events,
             concat!(
+                "{not json}\n",
+                r#"{"t":"2026-09-20T11:32:00+00:00","kind":"halt","card":"SKIP-OFFSET"}"#,
+                "\n",
+                r#"{"t":"not-a-time","kind":"halt","card":"SKIP-TIME"}"#,
+                "\n",
+                r#"{"t":"2026-09-20T01:00:00Z","kind":"card","card":"OUTSIDE","station":"BUILD"}"#,
+                "\n",
                 r#"{"t":"2026-09-20T11:30:00Z","kind":"card","card":"NEXT RED","station":"BUILD"}"#,
                 "\n",
                 r#"{"t":"2026-09-20T11:31:00Z","kind":"invoke_end","session":"00000000-0000-0000-0000-000000000001","card":"NEXT RUN maker-build","elapsed_s":7,"exit":0}"#,
                 "\n",
                 r#"{"t":"2026-09-20T11:32:00Z","kind":"halt","card":"STOP-ASK FROM-EVENTS","elapsed_s":90,"iterations":3}"#,
                 "\n",
+                r#"{"t":"2026-09-20T11:33:00Z","kind":"halt","card":"STOP-ASK NOTED","note":"kept","elapsed_s":4,"iterations":1}"#,
+                "\n",
             ),
         )
         .unwrap();
+        let metrics_before = fs::read(tmp.root.join(".wm").join("METRICS.tsv")).unwrap();
+        let events_before = fs::read(&events).unwrap();
         let now = now_unix();
         let w = StatsWindow::from_wm_dir(&tmp.root, "8h", &FixedClock::new(now)).unwrap();
         assert!(w.available);
-        assert_eq!(w.source, "metrics");
-        assert_eq!(w.halts.len(), 1);
-        assert_eq!(w.halts[0].outcome, "CLOSED PASS");
-        assert_eq!(w.halts[0].slices, 1);
-        assert_eq!(w.halts[0].bound, 40);
-        assert!(!w
-            .halts
-            .iter()
-            .any(|h| h.outcome.contains("FROM-EVENTS") || h.t == "2026-09-20T11:32:00Z"));
-        assert_eq!(w.counts.halt, 1);
-        assert_eq!(w.counts.card, 0);
-        assert_eq!(w.counts.invoke_end, 0);
+        assert_eq!(w.source, "events");
+        assert_eq!(w.halts.len(), 2);
+        assert_eq!(w.halts[0].t, "2026-09-20T11:32:00Z");
+        assert_eq!(w.halts[0].outcome, "STOP-ASK FROM-EVENTS");
+        assert_eq!(w.halts[0].slices, 0);
+        assert_eq!(w.halts[0].bound, 0);
+        assert_eq!(w.halts[0].note, "-");
+        assert_eq!(w.halts[0].elapsed_s, Some(90));
+        assert_eq!(w.halts[0].iterations, Some(3));
+        assert_eq!(w.halts[1].outcome, "STOP-ASK NOTED");
+        assert_eq!(w.halts[1].note, "kept");
+        assert_eq!(w.halts[1].slices, 0);
+        assert_eq!(w.halts[1].bound, 0);
+        assert_eq!(w.counts.halt, 2);
+        assert_eq!(w.counts.card, 1);
+        assert_eq!(w.counts.invoke_end, 1);
+        assert!(!w.halts.iter().any(|h| {
+            h.outcome.contains("CLOSED")
+                || h.outcome.contains("QUESTIONS")
+                || h.outcome.contains("SKIP")
+        }));
+        assert_eq!(
+            fs::read(tmp.root.join(".wm").join("METRICS.tsv")).unwrap(),
+            metrics_before
+        );
+        assert_eq!(fs::read(&events).unwrap(), events_before);
     }
 }
