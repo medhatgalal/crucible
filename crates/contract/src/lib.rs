@@ -4,6 +4,7 @@
 
 mod clock;
 mod event;
+mod intake;
 mod json;
 mod layout;
 mod snapshot;
@@ -12,6 +13,7 @@ mod timeutil;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use event::{Event, EventKind};
+pub use intake::intake_ready;
 pub use json::canonical_json;
 pub use layout::resolve as resolve_wm;
 pub use snapshot::{Closed, Floor, TraceRow, WalkSnapshot, WALK_SCHEMA};

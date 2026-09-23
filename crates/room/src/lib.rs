@@ -4,7 +4,6 @@
 //! No Herdr crate.
 
 use std::ffi::OsStr;
-use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -582,32 +581,8 @@ fn collect_all_strings(v: &Value, out: &mut Vec<String>) {
     }
 }
 
-pub fn intake_ready(cwd: &Path) -> bool {
-    idea_nonempty(cwd) || backlog_ready(cwd)
-}
-
-fn idea_nonempty(cwd: &Path) -> bool {
-    fs::read_to_string(cwd.join("IDEA.md"))
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-}
-
-fn backlog_ready(cwd: &Path) -> bool {
-    let Ok(text) = fs::read_to_string(cwd.join("BACKLOG.tsv")) else {
-        return false;
-    };
-    for line in text.lines().skip(1) {
-        if line.trim().is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut cols = line.split('\t');
-        let status = cols.nth(4).unwrap_or("");
-        if status == "READY" {
-            return true;
-        }
-    }
-    false
-}
+// Room and the web camera share one check: non-empty IDEA.md or a READY row.
+pub use crucible_contract::intake_ready;
 
 /// SIGTERM the process group of `pid` (the go process herdr started). Refuses pid < 2.
 pub fn kill_process_group(pid: u32) -> Result<(), String> {
@@ -666,6 +641,7 @@ pub fn http_get(addr: &str, path: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -898,6 +874,29 @@ exit 0
         let exe = exe_marker(&tmp);
         let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
         assert!(report.started_go);
+    }
+
+    #[test]
+    fn intake_ready_is_nonempty_idea_or_ready_backlog_row() {
+        let tmp = Tmp::new();
+        assert!(!intake_ready(&tmp.root));
+        fs::write(tmp.root.join("IDEA.md"), "  \n").unwrap();
+        assert!(!intake_ready(&tmp.root), "whitespace IDEA is not intake");
+        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+        assert!(intake_ready(&tmp.root));
+        fs::remove_file(tmp.root.join("IDEA.md")).unwrap();
+        fs::write(
+            tmp.root.join("BACKLOG.tsv"),
+            "id\tsize\trisk\tidea_path\tstatus\n# note\n\ns1\tS\tLOW\tIDEA.md\tDONE\n",
+        )
+        .unwrap();
+        assert!(!intake_ready(&tmp.root));
+        fs::write(
+            tmp.root.join("BACKLOG.tsv"),
+            "id\tsize\trisk\tidea_path\tstatus\ns1\tS\tLOW\tIDEA.md\tREADY\n",
+        )
+        .unwrap();
+        assert!(intake_ready(&tmp.root));
     }
 
     #[test]
