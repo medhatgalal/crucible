@@ -193,7 +193,13 @@ fn cmd_status(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         let _ = writeln!(io::stderr(), "no card on disk");
         return 1;
     };
-    match floor_write_with(cwd, &floor.card, &floor.independence, clock, false) {
+    // A missing independence line parses as empty. Writing that blank erases the default.
+    let independence = if floor.independence.is_empty() {
+        "SUBAGENT-ISOLATED"
+    } else {
+        floor.independence.as_str()
+    };
+    match floor_write_with(cwd, &floor.card, independence, clock, false) {
         Ok(r) => {
             println!(
                 "FLOOR t=+{}s station={} card={} wip={}",

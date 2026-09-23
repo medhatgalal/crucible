@@ -279,6 +279,25 @@ fn status_without_json_writes_floor_not_trace() {
 }
 
 #[test]
+fn status_missing_independence_keeps_the_default() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    fs::write(
+        wm.join("FLOOR.md"),
+        "station: SHAPE\ncard: NEXT INTAKE\nwip: -\nandon: -\nevidence:\n",
+    )
+    .unwrap();
+    let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let floor = fs::read_to_string(wm.join("FLOOR.md")).unwrap();
+    assert!(
+        floor.contains("independence: SUBAGENT-ISOLATED\n"),
+        "{floor}"
+    );
+}
+
+#[test]
 fn status_without_card_exits_1_and_writes_nothing() {
     let tmp = Tmp::new();
     let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
