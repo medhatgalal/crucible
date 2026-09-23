@@ -270,11 +270,11 @@ fn act(stream: &mut TcpStream, cwd: &Path, exe: &Path, req: &Incoming) -> Result
 fn act_headers(headers: &[(String, String)]) -> Result<(), &'static str> {
     let ct = header(headers, "content-type").unwrap_or("");
     if !json_content_type(ct) {
-        return Err("bad headers\n");
+        return Err("not json\n");
     }
     match header(headers, "x-crucible-act") {
         Some(v) if v.trim() == "1" => Ok(()),
-        _ => Err("bad headers\n"),
+        _ => Err("not an act\n"),
     }
 }
 
@@ -290,7 +290,7 @@ fn json_content_type(value: &str) -> bool {
 fn post_backlog(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), String> {
     let v = match serde_json::from_slice::<serde_json::Value>(body) {
         Ok(v) => v,
-        Err(_) => return write_resp(stream, 400, "text/plain", "not json\n", false),
+        Err(_) => return write_resp(stream, 400, "text/plain", "bad backlog\n", false),
     };
     let row = match row_from_json(&v) {
         Ok(row) => row,
@@ -340,7 +340,7 @@ fn go_body(body: &[u8]) -> Result<(), &'static str> {
     let v: serde_json::Value = serde_json::from_slice(body).map_err(|_| "not json\n")?;
     match v.as_object() {
         Some(map) if map.is_empty() => Ok(()),
-        _ => Err("not an act\n"),
+        _ => Err("bad go\n"),
     }
 }
 
@@ -631,7 +631,7 @@ fn read_request(stream: &mut TcpStream) -> Result<Incoming, ReadErr> {
                         }
                         continue;
                     } else if buf.len() >= HEADER_CAP {
-                        return Err(ReadErr::Http(400, "malformed request\n"));
+                        return Err(ReadErr::Http(400, "bad headers\n"));
                     }
                 }
             }
@@ -1131,7 +1131,7 @@ mod tests {
     fn backlog_post_appends_one_row() {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 9);
+        let addr = start_server(&tmp.root, &exe, 10);
         let a = serde_json::json!({
             "id": "a",
             "size": "S",
@@ -1230,6 +1230,13 @@ mod tests {
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/backlog", &too_wide, "application/json", Some("1")),
+        );
+        assert_eq!(code, 400);
+        assert_eq!(body, "bad backlog\n");
+        assert_eq!(fs::read(tmp.root.join("BACKLOG.tsv")).unwrap(), kept);
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/backlog", "{", "application/json", Some("1")),
         );
         assert_eq!(code, 400);
         assert_eq!(body, "bad backlog\n");
@@ -1349,7 +1356,7 @@ mod tests {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
         ready_backlog(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 4);
+        let addr = start_server(&tmp.root, &exe, 5);
         let missing = b"POST /act/go HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nX-Crucible-Act: 1\r\nConnection: close\r\n\r\n{}";
         let (code, _, _) = exchange(&addr, missing);
         assert_eq!(code, 400);
@@ -1366,6 +1373,9 @@ mod tests {
         );
         assert_eq!(code, 400);
         assert_eq!(body, "not json\n");
+        let (code, _, body) = exchange(&addr, &vec![b'A'; HEADER_CAP]);
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "bad headers\n");
         assert!(!marker(&tmp.root));
         assert!(!tmp.root.join(".wm").exists());
     }
@@ -1387,25 +1397,25 @@ mod tests {
             ),
         );
         assert_eq!(code, 400);
-        assert_eq!(body, "bad headers\n");
+        assert_eq!(body, "not json\n");
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", "{}", "application/json", None),
         );
         assert_eq!(code, 400);
-        assert_eq!(body, "bad headers\n");
+        assert_eq!(body, "not an act\n");
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", "{}", "application/json", Some("2")),
         );
         assert_eq!(code, 400);
-        assert_eq!(body, "bad headers\n");
+        assert_eq!(body, "not an act\n");
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", r#"{"x":1}"#, "application/json", Some("1")),
         );
         assert_eq!(code, 400, "{body}");
-        assert_eq!(body, "not an act\n");
+        assert_eq!(body, "bad go\n");
         let (code, headers, body) = exchange(&addr, &simple("HEAD", "/act/go"));
         assert_eq!(code, 405, "{body}");
         assert!(body.is_empty(), "{body}");
@@ -1419,13 +1429,19 @@ mod tests {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
         fs::write(tmp.root.join("IDEA.md"), " \n").unwrap();
-        let addr = start_server(&tmp.root, &exe, 4);
+        let addr = start_server(&tmp.root, &exe, 5);
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/go", "[]", "application/json", Some("1")),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "bad go\n");
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", r#"{"x":1}"#, "application/json", Some("1")),
         );
         assert_eq!(code, 400, "{body}");
-        assert_eq!(body, "not an act\n");
+        assert_eq!(body, "bad go\n");
         let (code, _, body) = exchange(
             &addr,
             &act_request("/act/go", "{", "application/json", Some("1")),
