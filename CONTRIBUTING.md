@@ -17,7 +17,7 @@ multi-agent independence stronger than the CHECKs in RULES.md and the guided cyc
 ./scripts/verify-package.sh                # reproducible release archive
 ./scripts/verify-working-mode.sh            # working-mode kernel CHECKs (empty HOME)
 ./scripts/verify-working-mode-map.sh        # working-mode map CHECKs (HIGH one-kind / pack / wall)
-/bin/sh -n crucible                        # it must stay POSIX sh
+/bin/sh -n crucible                        # guided adopt/cycle/drive stays POSIX sh
 ```
 
 Run `./scripts/selftest.sh -v` before release or whenever a refusal changes.
@@ -52,8 +52,10 @@ introduced it.
 
 Constraints that are not negotiable, because the project is worthless without them:
 
-- **No dependencies.** POSIX shell and markdown. No package manager, no runtime, no service. If a
-  change needs more than `sh` and `git`, that is a defect in the change.
+- **Working-mode is the Rust `crucible` binary.** Contributors use cargo, rustfmt, and clippy.
+  Product machines need no rustc. Guided `adopt`, `refresh`, `cycle`, and `drive` stay POSIX
+  through 1.17.x (repo-root `./crucible`; release name `crucible-guided`). `/bin/sh -n crucible`
+  checks that guided script only.
 - **Nothing outside the repository.** No absolute paths, no other project's name, no machine
   specifics. CI asserts this.
 - **A refusal, never a warning.** Missing, empty, stale or malformed input fails closed. If losing
