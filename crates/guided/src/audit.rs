@@ -13,7 +13,7 @@ use crate::cycle::{
     attempt_dir, attempt_event, attempt_meta, attempt_state, attempt_transport, is_claim_slug,
 };
 use crate::dispatch::{is_maker, need, require_registered, require_role_cast};
-use crate::panel::{h12, is_regular, kind_of};
+use crate::panel::{contains_ci, h12, is_regular, kind_of};
 use crate::program::uses_managed_lifecycle;
 use crate::state::{state_update_item, state_value};
 use crate::{message, records, GuidedError};
@@ -398,11 +398,6 @@ fn contract_structural_ok(ad: &Path, role: &str) -> Result<bool, GuidedError> {
         "claim-auditor" | "scout" => Ok(text.contains("claim") || text.contains("Claim")),
         _ => Ok(true),
     }
-}
-
-fn contains_ci(hay: &str, needle: &str) -> bool {
-    hay.to_ascii_lowercase()
-        .contains(&needle.to_ascii_lowercase())
 }
 
 /// `crucible plan-audit`.

@@ -9,7 +9,9 @@ use crucible_contract::Clock;
 use crate::attempt::{result_field, result_files};
 use crate::claims::require_attempt_independence;
 use crate::cycle::{attempt_dir, attempt_meta, attempt_state, attempt_transport, workid, MARK};
-use crate::dispatch::{item_dir, review_relation, task_live_count, task_owns_path, tgt};
+use crate::dispatch::{
+    git_quiet, git_rev12, item_dir, review_relation, task_live_count, task_owns_path, tgt,
+};
 use crate::panel::split_tabs;
 use crate::program::uses_managed_lifecycle;
 use crate::state::{state_update_item, state_value};
@@ -294,7 +296,7 @@ fn maker_wid(
                 let repo = tgt(root, slug, "repo")?;
                 let base = tgt(root, slug, "base")?;
                 let mut diff_base = dispatch_wid.to_string();
-                if !git_ok(
+                if !git_quiet(
                     &repo,
                     &[
                         "rev-parse",
@@ -496,26 +498,6 @@ fn git_bytes(repo: &str, args: &[&str]) -> Vec<u8> {
 
 fn git_text(repo: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&git_bytes(repo, args)).into_owned()
-}
-
-fn git_rev12(repo: &str, args: &[&str]) -> String {
-    let text = git_text(repo, args);
-    text.chars()
-        .filter(|c| *c != '\n' && *c != '\r')
-        .take(12)
-        .collect()
-}
-
-fn git_ok(repo: &str, args: &[&str]) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

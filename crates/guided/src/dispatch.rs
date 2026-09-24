@@ -827,9 +827,8 @@ fn dispatch_managed(root: &Path, clock: &dyn Clock, args: &[&str]) -> Result<Str
     if !is_posint(&seconds) {
         return Err(message("attempt budget must be a positive integer"));
     }
-    let seconds: i64 = seconds
-        .parse()
-        .map_err(|_| message("attempt budget must be a positive integer"))?;
+    // `$((now + seconds))`: a leading 0 is octal, so 010 is 8 and 08 aborts.
+    let seconds = shell_arith(&seconds)?;
     let now = clock.now_unix();
     let minted = mint_attempt(root, now)?;
     guard.staging = Some(minted.staging.clone());
@@ -1001,7 +1000,34 @@ fn env_or(key: &str, default: &str) -> String {
     }
 }
 
-fn git_quiet(repo: &str, args: &[&str]) -> bool {
+/// POSIX `$(( ))` on a digit string. A leading zero selects octal; 8 and 9 are not digits there.
+fn shell_arith(value: &str) -> Result<i64, GuidedError> {
+    let bytes = value.as_bytes();
+    if bytes.first() == Some(&b'0') {
+        let mut n: i64 = 0;
+        for &byte in bytes {
+            if !matches!(byte, b'0'..=b'7') {
+                return Err(message(format!(
+                    "{value}: value too great for base (error token is \"{value}\")"
+                )));
+            }
+            n = n
+                .checked_mul(8)
+                .and_then(|n| n.checked_add(i64::from(byte - b'0')))
+                .ok_or_else(|| {
+                    message(format!(
+                        "{value}: value too great for base (error token is \"{value}\")"
+                    ))
+                })?;
+        }
+        return Ok(n);
+    }
+    value
+        .parse()
+        .map_err(|_| message("attempt budget must be a positive integer"))
+}
+
+pub(crate) fn git_quiet(repo: &str, args: &[&str]) -> bool {
     Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -1013,7 +1039,7 @@ fn git_quiet(repo: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-fn git_rev12(repo: &str, args: &[&str]) -> String {
+pub(crate) fn git_rev12(repo: &str, args: &[&str]) -> String {
     let out = Command::new("git").arg("-C").arg(repo).args(args).output();
     let Ok(out) = out else {
         return String::new();
@@ -1100,7 +1126,7 @@ fn managed_contract(c: &ManagedContract<'_>, root: &Path) -> Result<String, Guid
                 c.task_worktree, c.task_branch
             ));
             body.push_str("Owned paths:\n\n");
-            let paths = fs::read_to_string(c.dir.join(c.paths_file)).unwrap_or_default();
+            let paths = fs::read_to_string(c.dir.join(c.paths_file))?;
             for owned in records(&paths) {
                 body.push_str(&format!("- `{owned}`\n"));
             }
@@ -1146,8 +1172,7 @@ fn managed_contract(c: &ManagedContract<'_>, root: &Path) -> Result<String, Guid
 }
 
 fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
-    let mut files = list_files(dir);
-    files.retain(|path| path.is_file());
+    let files = list_files(dir);
     if files.is_empty() {
         return Ok("(none. Absence of evidence is a finding, never a pass.)\n".to_string());
     }
@@ -1155,8 +1180,9 @@ fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
     for path in files {
         let name = file_name(&path);
         out.push_str(&format!("### {name}\n```\n"));
-        out.push_str(&fs::read_to_string(&path).unwrap_or_default());
-        if !out.ends_with('\n') {
+        let text = fs::read_to_string(&path)?;
+        out.push_str(&text);
+        if !text.ends_with('\n') {
             out.push('\n');
         }
         out.push_str("```\n");
@@ -1180,13 +1206,11 @@ fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> 
             out.push_str(&ensure_nl(&log.unwrap_or_default()));
         }
         out.push_str("```\n### files changed\n```\n");
-        if let Some(stat) = git_capture(&repo, &["diff", "--stat", &format!("{base}..{branch}")]) {
-            out.push_str(&ensure_nl(&stat));
-        }
+        let stat = git_required(&repo, &["diff", "--stat", &format!("{base}..{branch}")])?;
+        out.push_str(&ensure_nl(&stat));
         out.push_str("```\n### diff\n```diff\n");
-        if let Some(diff) = git_capture(&repo, &["diff", "-U10", &format!("{base}..{branch}")]) {
-            out.push_str(&ensure_nl(&diff));
-        }
+        let diff = git_required(&repo, &["diff", "-U10", &format!("{base}..{branch}")])?;
+        out.push_str(&ensure_nl(&diff));
         out.push_str("```\n");
         return Ok(out);
     }
@@ -1194,13 +1218,35 @@ fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> 
     for path in list_files(&dir.join("work")) {
         let rel = path.strip_prefix(&dir).unwrap_or(&path);
         out.push_str(&format!("### {}\n```\n", rel.display()));
-        out.push_str(&fs::read_to_string(&path).unwrap_or_default());
-        if !out.ends_with('\n') {
+        let text = fs::read_to_string(&path)?;
+        out.push_str(&text);
+        if !text.ends_with('\n') {
             out.push('\n');
         }
         out.push_str("```\n");
     }
     Ok(out)
+}
+
+fn git_required(repo: &str, args: &[&str]) -> Result<String, GuidedError> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stderr(Stdio::piped())
+        .output()?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        if err.is_empty() {
+            return Err(message(format!(
+                "git {} failed",
+                args.first().copied().unwrap_or("diff")
+            )));
+        }
+        return Err(message(err.to_string()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn git_capture(repo: &str, args: &[&str]) -> Option<String> {
@@ -1422,28 +1468,11 @@ fn dispatch_legacy(root: &Path, slug: &str, role: &str, name: &str) -> Result<St
         push(&mut body, "");
         push(&mut body, "## Recorded evidence");
         push(&mut body, "");
-        body.push_str(&legacy_evidence(&dir.join("evidence"))?);
+        body.push_str(&evidence_block(&dir.join("evidence"))?);
     }
     fs::write(&out, body)?;
     eprint_run(root, name, role, &out, None, true);
     Ok(format!("{}\n", out.display()))
-}
-
-fn legacy_evidence(dir: &Path) -> Result<String, GuidedError> {
-    let files = list_files(dir);
-    if files.is_empty() {
-        return Ok("(none. Absence of evidence is a finding, never a pass.)\n".to_string());
-    }
-    let mut out = String::new();
-    for path in files {
-        out.push_str(&format!("### {}\n```\n", file_name(&path)));
-        out.push_str(&fs::read_to_string(&path).unwrap_or_default());
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str("```\n");
-    }
-    Ok(out)
 }
 
 fn archive_verdict(root: &Path, dir: &Path, name: &str, wid: &str) -> Result<(), GuidedError> {
@@ -1712,6 +1741,10 @@ pub(crate) fn validate_task_dag(root: &Path, slug: &str) -> Result<(), GuidedErr
     for task in &tasks {
         let text = fs::read_to_string(dir.join(&task.paths_file))?;
         for line in records(&text) {
+            // The shell joins task and path with a tab, so a tab inside the path makes NF != 2.
+            if line.is_empty() || line.contains('\t') {
+                return Err(message("invalid TASKS.tsv: blank or malformed owned path"));
+            }
             owned.push((task.id.clone(), line.to_string()));
         }
     }
@@ -2045,13 +2078,22 @@ pub(crate) fn task_live_count(root: &Path, slug: &str) -> Result<u64, GuidedErro
     let mut count = 0u64;
     for path in attempt_child_dirs(root) {
         let id = file_name(&path);
-        if attempt_meta(root, &id, 2)? != slug {
+        // A stray directory whose ledger cannot be read is skipped, as the shell's `|| continue` does.
+        let Ok(item) = attempt_meta(root, &id, 2) else {
+            continue;
+        };
+        if item != slug {
             continue;
         }
-        if attempt_meta(root, &id, 3)? == "-" {
+        let Ok(task) = attempt_meta(root, &id, 3) else {
+            continue;
+        };
+        if task == "-" {
             continue;
         }
-        let status = attempt_state(root, &id)?;
+        let Ok(status) = attempt_state(root, &id) else {
+            continue;
+        };
         if !attempt_terminal(&status) || (status == "RETURNED" && !path.join("result.md").is_file())
         {
             count += 1;
@@ -2427,5 +2469,158 @@ stop
         assert!(task_attempt_for_run(root, "alpha", "ada", root)
             .unwrap()
             .is_none());
+        fs::write(item.join("tasks/a.paths"), "src/a.rs\tb.rs\n").unwrap();
+        assert_eq!(
+            validate_task_dag(root, "alpha").unwrap_err().to_string(),
+            "invalid TASKS.tsv: blank or malformed owned path"
+        );
+    }
+
+    #[test]
+    fn unreadable_attempt_does_not_fail_task_live_count() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let bad = root.join("attempts/A1.0.1");
+        let good = root.join("attempts/A2.0.1");
+        write_min_attempt(&bad, "A1.0.1", "alpha", "T1", "RUNNING");
+        write_min_attempt(&good, "A2.0.1", "alpha", "T1", "RUNNING");
+        let mut perms = fs::metadata(&bad).unwrap().permissions();
+        perms.set_mode(0o0);
+        fs::set_permissions(&bad, perms).unwrap();
+        let _unlock = Unlock(bad);
+        assert_eq!(task_live_count(root, "alpha").unwrap(), 1);
+    }
+
+    #[test]
+    fn octal_maker_budget_matches_shell_arithmetic() {
+        let _lock = crate::claims::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        maker_ready(root);
+        let clock = FixedClock::new(EPOCH);
+        let _env = EnvSet::set("CRUCIBLE_MAKER_SECONDS", "010");
+        dispatch(root, &["alpha", "maker", "ada"], &clock).unwrap();
+        let id = format!("A{EPOCH}.{}.1", std::process::id());
+        let meta = fs::read_to_string(root.join("attempts").join(&id).join("meta.tsv")).unwrap();
+        assert!(
+            meta.contains(&format!("\t{EPOCH}\t{}\t-\n", EPOCH + 8)),
+            "{meta}"
+        );
+        drop(tmp);
+        drop(_env);
+
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        maker_ready(root);
+        let _env = EnvSet::set("CRUCIBLE_MAKER_SECONDS", "08");
+        assert_eq!(
+            dispatch(root, &["alpha", "maker", "ada"], &clock)
+                .unwrap_err()
+                .to_string(),
+            "08: value too great for base (error token is \"08\")"
+        );
+        assert!(!root.join("attempts").exists());
+    }
+
+    #[test]
+    fn failing_git_diff_does_not_publish_the_attempt() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        fs::write(root.join("agents.tsv"), "dee\tother\tm\th\techo {BRIEF}\n").unwrap();
+        fs::create_dir_all(root.join("roles")).unwrap();
+        fs::write(
+            root.join("roles/judge.md"),
+            "purpose: j\nmay-read: a\nmust-not-read: b\nreturn: c\nverify: d\n\n## Instructions\nLook.\n",
+        )
+        .unwrap();
+        let item = root.join("items/alpha");
+        fs::create_dir_all(&item).unwrap();
+        fs::write(item.join("ITEM.md"), "# alpha\n\n- [ ] A1\n").unwrap();
+        let repo = root.join("not-a-repo");
+        fs::write(
+            item.join("TARGET"),
+            format!("repo: {}\nbranch: missing\nbase: missing\n", repo.display()),
+        )
+        .unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tREVIEW\tEMPTY\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        assert!(dispatch(root, &["alpha", "judge", "dee"], &FixedClock::new(EPOCH)).is_err());
+        let attempts = root.join("attempts");
+        if attempts.is_dir() {
+            for ent in fs::read_dir(&attempts).unwrap().flatten() {
+                let name = ent.file_name().to_string_lossy().into_owned();
+                assert!(
+                    !name.starts_with('A') && !name.starts_with('.'),
+                    "{name} was published"
+                );
+            }
+        }
+    }
+
+    fn maker_ready(root: &Path) {
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        fs::write(root.join("agents.tsv"), "ada\tgrok\tm\th\techo {BRIEF}\n").unwrap();
+        fs::create_dir_all(root.join("roles")).unwrap();
+        fs::write(
+            root.join("roles/maker.md"),
+            "purpose: make\nmay-read: item\nmust-not-read: v\nreturn: DONE\nverify: run\n\n## Instructions\nBuild.\n",
+        )
+        .unwrap();
+        let item = root.join("items/alpha");
+        fs::create_dir_all(item.join("work")).unwrap();
+        fs::write(item.join("ITEM.md"), "# alpha\n\n- [ ] A1 do the thing\n").unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tBUILD\tEMPTY\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+    }
+
+    fn write_min_attempt(dir: &Path, id: &str, slug: &str, task: &str, state: &str) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("meta.tsv"),
+            format!(
+                "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\t{slug}\t{task}\tw\tmaker\tada\tgrok\tA1\tFOCUSED\tDISPATCHED\t1\t2\t-\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("events.tsv"),
+            format!("state\tepoch\tpid\treason\n{state}\t1\t-\tseed\n"),
+        )
+        .unwrap();
+    }
+
+    struct Unlock(PathBuf);
+
+    impl Drop for Unlock {
+        fn drop(&mut self) {
+            let perms = fs::Permissions::from_mode(0o755);
+            let _ = fs::set_permissions(&self.0, perms);
+        }
+    }
+
+    struct EnvSet(&'static str);
+
+    impl EnvSet {
+        fn set(key: &'static str, value: &str) -> Self {
+            // SAFETY: the caller holds ENV_LOCK for this process-global key.
+            unsafe { std::env::set_var(key, value) };
+            Self(key)
+        }
+    }
+
+    impl Drop for EnvSet {
+        fn drop(&mut self) {
+            // SAFETY: dropped while ENV_LOCK is still held.
+            unsafe { std::env::remove_var(self.0) };
+        }
     }
 }
