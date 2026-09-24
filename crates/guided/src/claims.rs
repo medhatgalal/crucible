@@ -813,7 +813,12 @@ fn paste_pairs(lines: &[&str]) -> String {
     out
 }
 
-fn rewrite_claim_line(root: &Path, n: &str, field: &str, value: &str) -> Result<(), GuidedError> {
+pub(crate) fn rewrite_claim_line(
+    root: &Path,
+    n: &str,
+    field: &str,
+    value: &str,
+) -> Result<(), GuidedError> {
     let path = root.join("CLAIMS.md");
     if !path.is_file() {
         return Ok(());

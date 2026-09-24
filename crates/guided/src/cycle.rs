@@ -1930,7 +1930,7 @@ pub(crate) fn workid(root: &Path, slug: &str) -> Result<String, GuidedError> {
     Ok(crate::panel::h12(manifest.as_bytes()))
 }
 
-fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
+pub(crate) fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
     let dir = root.join("items").join(slug).join("evidence");
     let mut paths = read_dir_paths(&dir);
     paths.sort();
@@ -1942,7 +1942,8 @@ fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if name.starts_with(".partial.") {
+        // `evidence/*` does not match dotfiles, including `.partial.*` and `.notes.txt`.
+        if name.starts_with('.') {
             continue;
         }
         let Some(stem) = name.strip_suffix(".txt") else {

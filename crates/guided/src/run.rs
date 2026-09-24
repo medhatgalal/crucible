@@ -14,6 +14,12 @@ use crate::{message, GuidedError};
 
 static RUN_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// `p{pid}s{n}`, shared with `run` the way the shell's one `RUN_SEQ` is.
+pub(crate) fn next_run_token() -> String {
+    let seq = RUN_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("p{}s{seq}", std::process::id())
+}
+
 /// `crucible run-claim CN NAME -- CMD...`. Command failure is recorded, not returned.
 pub fn run_claim(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
     if args.len() < 2 {
@@ -41,8 +47,7 @@ pub fn run_claim(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String
     }
     let evidence = cdir.join("evidence");
     fs::create_dir_all(&evidence)?;
-    let seq = RUN_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    let tok = format!("p{}s{seq}", std::process::id());
+    let tok = next_run_token();
     let out = evidence.join(format!("{name}.{tok}.txt"));
     let tmp = evidence.join(format!(".partial.{name}.{tok}"));
     let mut header = String::new();
@@ -73,7 +78,7 @@ pub fn run_claim(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String
     Ok(format!("{} (exit {rc})\n", out.display()))
 }
 
-fn append_command(tmp: &Path, cmd: &[&str]) -> std::io::Result<i32> {
+pub(crate) fn append_command(tmp: &Path, cmd: &[&str]) -> std::io::Result<i32> {
     let file = OpenOptions::new().append(true).open(tmp)?;
     let stdout = Stdio::from(file.try_clone()?);
     let stderr = Stdio::from(file);

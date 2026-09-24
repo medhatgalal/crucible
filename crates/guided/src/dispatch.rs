@@ -628,7 +628,12 @@ impl Drop for DispatchGuard {
     }
 }
 
-fn dispatch_managed(root: &Path, clock: &dyn Clock, args: &[&str]) -> Result<String, GuidedError> {
+/// Managed dispatch. `task dispatch` calls this directly so a slug like `C1` is an item, not a claim.
+pub(crate) fn dispatch_managed(
+    root: &Path,
+    clock: &dyn Clock,
+    args: &[&str],
+) -> Result<String, GuidedError> {
     let slug = args[0];
     let role = args[1];
     let agent = args[2];
@@ -1171,7 +1176,7 @@ fn managed_contract(c: &ManagedContract<'_>, root: &Path) -> Result<String, Guid
     Ok(body)
 }
 
-fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
+pub(crate) fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
     let files = list_files(dir);
     if files.is_empty() {
         return Ok("(none. Absence of evidence is a finding, never a pass.)\n".to_string());
@@ -1180,7 +1185,8 @@ fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
     for path in files {
         let name = file_name(&path);
         out.push_str(&format!("### {name}\n```\n"));
-        let text = fs::read_to_string(&path)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         push_cat(&mut out, &text);
         out.push_str("```\n");
     }
@@ -1195,7 +1201,7 @@ fn push_cat(out: &mut String, text: &str) {
     }
 }
 
-fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> {
+pub(crate) fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> {
     let dir = item_dir(root, slug);
     if dir.join("TARGET").is_file() {
         let repo = tgt(root, slug, "repo")?;
@@ -1223,7 +1229,8 @@ fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> 
     for path in list_files(&dir.join("work")) {
         let rel = path.strip_prefix(&dir).unwrap_or(&path);
         out.push_str(&format!("### {}\n```\n", rel.display()));
-        let text = fs::read_to_string(&path)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         push_cat(&mut out, &text);
         out.push_str("```\n");
     }
@@ -1560,7 +1567,7 @@ pub fn validate_managed_item(root: &Path, slug: &str) -> Result<(), GuidedError>
     Ok(())
 }
 
-fn section_lines(text: &str, heading: &str) -> Vec<String> {
+pub(crate) fn section_lines(text: &str, heading: &str) -> Vec<String> {
     let want = format!("## {heading}");
     let mut on = false;
     let mut lines = Vec::new();
