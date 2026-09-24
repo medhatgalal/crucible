@@ -10,6 +10,11 @@ mod root;
 pub mod run;
 mod state;
 pub mod triage;
+pub mod attempt;
+pub mod audit;
+pub mod dispatch;
+pub mod phase;
+pub mod result;
 
 use std::fmt;
 use std::io;

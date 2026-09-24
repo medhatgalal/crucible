@@ -177,7 +177,7 @@ fn assign_role_known(role: &str) -> bool {
     KNOWN_ROLES.contains(&role)
 }
 
-fn assign_role_normalize(role: &str) -> &str {
+pub(crate) fn assign_role_normalize(role: &str) -> &str {
     if role == "judge" {
         "reviewer"
     } else {

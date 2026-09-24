@@ -952,7 +952,7 @@ fn claim_attempt_is_sealed(root: &Path, id: &str) -> bool {
         .any(|line| line.starts_with("VERDICT: PASS"))
 }
 
-fn require_panel_approval(root: &Path) -> Result<(), GuidedError> {
+pub(crate) fn require_panel_approval(root: &Path) -> Result<(), GuidedError> {
     if !uses_guided_cycle(root)? || panel_approval_current(root)? {
         return Ok(());
     }
@@ -962,7 +962,7 @@ fn require_panel_approval(root: &Path) -> Result<(), GuidedError> {
     )))
 }
 
-fn require_attempt_independence(root: &Path, id: &str) -> Result<(), GuidedError> {
+pub(crate) fn require_attempt_independence(root: &Path, id: &str) -> Result<(), GuidedError> {
     if !uses_guided_cycle(root)? {
         return Ok(());
     }

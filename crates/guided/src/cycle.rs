@@ -1317,7 +1317,7 @@ pub(crate) fn attempt_transport(root: &Path, id: &str) -> Result<Option<String>,
     }
 }
 
-fn attempt_dir(root: &Path, id: &str) -> Result<PathBuf, GuidedError> {
+pub(crate) fn attempt_dir(root: &Path, id: &str) -> Result<PathBuf, GuidedError> {
     if !valid_attempt_id(id) {
         return Err(message(format!("invalid attempt id: {id}")));
     }
@@ -1360,7 +1360,7 @@ fn valid_attempt_id(id: &str) -> bool {
         && tail.bytes().all(|b| b.is_ascii_digit())
 }
 
-fn attempt_meta(root: &Path, id: &str, column: usize) -> Result<String, GuidedError> {
+pub(crate) fn attempt_meta(root: &Path, id: &str, column: usize) -> Result<String, GuidedError> {
     let text = fs::read_to_string(attempt_dir(root, id)?.join("meta.tsv"))?;
     let row = records(&text).get(1).copied().unwrap_or("");
     Ok(split_tabs(row)
@@ -1382,7 +1382,7 @@ pub(crate) fn attempt_state(root: &Path, id: &str) -> Result<String, GuidedError
     Ok(state)
 }
 
-fn attempt_pid(root: &Path, id: &str) -> Result<String, GuidedError> {
+pub(crate) fn attempt_pid(root: &Path, id: &str) -> Result<String, GuidedError> {
     let text = fs::read_to_string(attempt_dir(root, id)?.join("events.tsv"))?;
     let mut pid = "-".to_string();
     for (idx, rec) in records(&text).into_iter().enumerate() {
@@ -1397,7 +1397,7 @@ fn attempt_pid(root: &Path, id: &str) -> Result<String, GuidedError> {
     Ok(pid)
 }
 
-fn attempt_pid_alive(root: &Path, id: &str) -> Result<bool, GuidedError> {
+pub(crate) fn attempt_pid_alive(root: &Path, id: &str) -> Result<bool, GuidedError> {
     let pid = attempt_pid(root, id)?;
     Ok(pid_alive(&pid))
 }
@@ -1415,7 +1415,7 @@ fn pid_alive(pid: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn attempt_terminal(state: &str) -> bool {
+pub(crate) fn attempt_terminal(state: &str) -> bool {
     matches!(
         state,
         "RETURNED" | "TIMEOUT" | "STOPPED" | "ABANDONED" | "SUPERSEDED"
@@ -1455,7 +1455,11 @@ pub(crate) fn attempt_event(
     result
 }
 
-fn reclaim_dead_attempt(root: &Path, clock: &dyn Clock, id: &str) -> Result<(), GuidedError> {
+pub(crate) fn reclaim_dead_attempt(
+    root: &Path,
+    clock: &dyn Clock,
+    id: &str,
+) -> Result<(), GuidedError> {
     let current = attempt_state(root, id)?;
     match current.as_str() {
         "RUNNING" | "OVERDUE" => {}
@@ -1487,7 +1491,7 @@ fn reclaim_dead_attempt(root: &Path, clock: &dyn Clock, id: &str) -> Result<(), 
     state_attempt_update(root, clock, &slug, "BLOCKED", "-", block)
 }
 
-fn state_attempt_update(
+pub(crate) fn state_attempt_update(
     root: &Path,
     clock: &dyn Clock,
     slug: &str,
@@ -1503,7 +1507,7 @@ fn state_attempt_update(
     )
 }
 
-fn is_claim_slug(slug: &str) -> bool {
+pub(crate) fn is_claim_slug(slug: &str) -> bool {
     let bytes = slug.as_bytes();
     bytes.len() >= 2 && bytes[0] == b'C' && bytes[1].is_ascii_digit()
 }
@@ -1957,7 +1961,7 @@ fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
     out
 }
 
-fn ls_mode(mode: u32) -> String {
+pub(crate) fn ls_mode(mode: u32) -> String {
     let mut out = String::with_capacity(10);
     out.push(match mode & 0o170000 {
         0o100000 => '-',
@@ -1987,7 +1991,7 @@ fn ls_mode(mode: u32) -> String {
     out
 }
 
-fn list_files(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn list_files(dir: &Path) -> Vec<PathBuf> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for path in read_dir_paths(dir) {
             let Ok(meta) = fs::symlink_metadata(&path) else {
@@ -2171,7 +2175,7 @@ fn remove_empty_dirs(dir: &Path) {
     let _ = fs::remove_dir(dir);
 }
 
-fn attempt_child_dirs(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn attempt_child_dirs(root: &Path) -> Vec<PathBuf> {
     let mut paths = read_dir_paths(&root.join("attempts"));
     // `"$ROOT"/attempts/*` skips dot-names.
     paths.retain(|path| path.is_dir() && !file_name(path).starts_with('.'));
