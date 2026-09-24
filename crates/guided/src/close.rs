@@ -16,7 +16,9 @@ use crate::cycle::{
     stale_evidence, workid, MARK,
 };
 use crate::dispatch::{is_maker, need, validate_managed_item};
-use crate::panel::{h12, is_posint, kind_of, min_kinds, panel_required_count};
+use crate::panel::{
+    h12, is_posint, is_regular, kind_of, min_kinds, panel_required_count, split_tabs,
+};
 use crate::phase::phase_of;
 use crate::program::{uses_guided_cycle, uses_managed_lifecycle};
 use crate::state::{state_update_item, state_validate_file, state_value};
@@ -361,7 +363,9 @@ fn check_evidence(
             say(out, bad, &format!("FAIL empty evidence {name}"));
             continue;
         }
-        let text = fs::read_to_string(&path)?;
+        // `head`/`sed` are byte tools. A non-UTF-8 output byte must not abort the gate.
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         let first = records(&text).first().copied().unwrap_or("");
         if first != MARK {
             say(
@@ -507,7 +511,8 @@ fn check_verdicts(
             say(out, bad, &format!("FAIL empty verdict {nm}.md"));
             continue;
         }
-        let text = fs::read_to_string(&path)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         let lines: Vec<&str> = records(&text);
         let l1 = lines.first().copied().unwrap_or("");
         if l1 != "VERDICT: PASS" {
@@ -574,7 +579,7 @@ fn check_verdicts(
             );
             continue;
         }
-        let body = h12(tail_from_line(&text, 3));
+        let body = h12(tail_from_line(&bytes, 3));
         if bodies.iter().any(|seen| seen == &body) {
             say(
                 out,
@@ -622,7 +627,7 @@ fn managed_verdict_ok(
         return Ok(false);
     }
     let result_path = root.join("attempts").join(result_id).join("result.md");
-    if !is_regular_file(&result_path) {
+    if !is_regular(&result_path) {
         say(
             out,
             bad,
@@ -676,8 +681,7 @@ fn cites_own_evidence(dir: &Path, nm: &str, wid: &str, verdict: &str) -> bool {
     false
 }
 
-fn tail_from_line(text: &str, line_no: usize) -> &[u8] {
-    let bytes = text.as_bytes();
+fn tail_from_line(bytes: &[u8], line_no: usize) -> &[u8] {
     if line_no <= 1 {
         return bytes;
     }
@@ -691,12 +695,6 @@ fn tail_from_line(text: &str, line_no: usize) -> &[u8] {
         }
     }
     &[]
-}
-
-fn is_regular_file(path: &Path) -> bool {
-    fs::symlink_metadata(path)
-        .map(|meta| meta.file_type().is_file())
-        .unwrap_or(false)
 }
 
 fn is_alnum(value: &str) -> bool {
@@ -721,14 +719,6 @@ fn field_line(text: &str, key: &str) -> String {
         .find_map(|line| line.strip_prefix(&prefix))
         .unwrap_or("")
         .to_string()
-}
-
-fn split_tabs(rec: &str) -> Vec<&str> {
-    if rec.is_empty() {
-        Vec::new()
-    } else {
-        rec.split('\t').collect()
-    }
 }
 
 fn guided_min_judges(root: &Path) -> Result<u64, GuidedError> {
@@ -929,9 +919,10 @@ fn last_pass_wid(dir: &Path) -> String {
     files.sort();
     let mut last = String::new();
     for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
+        let Ok(bytes) = fs::read(&path) else {
             continue;
         };
+        let text = String::from_utf8_lossy(&bytes);
         if result_field(&text, "VERDICT") == "PASS" {
             last = result_field(&text, "WORK-ID");
         }
@@ -1146,5 +1137,92 @@ Undo the change to src/widget.rs and confirm the focused check then fails loudly
             "refused: alpha is not closeable"
         );
         assert!(!root.join("items/alpha/.closing").exists());
+    }
+
+    #[test]
+    fn non_utf8_evidence_does_not_abort_check_or_stick_closing() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let dir = root.join("items/alpha");
+        fs::create_dir_all(dir.join("work")).unwrap();
+        fs::create_dir_all(dir.join("evidence")).unwrap();
+        fs::create_dir_all(dir.join("verdicts")).unwrap();
+        fs::write(dir.join("work/note.txt"), "body\n").unwrap();
+        fs::write(dir.join("MAKER"), "mk1\n").unwrap();
+        fs::write(dir.join("ITEM.md"), ITEM).unwrap();
+        fs::write(
+            root.join("agents.tsv"),
+            "mk1\tkindA\tm\thigh\ttrue\nj1\tkindB\tm\thigh\ttrue\n",
+        )
+        .unwrap();
+        let wid = workid(root, "alpha").unwrap();
+        let mut body = format!(
+            "crucible-run/1\nagent: j1\nwork-id: {wid}\nwhen: 1970-01-01T00:00:00Z\ncommand: /bin/echo x\n--- output ---\n"
+        )
+        .into_bytes();
+        body.push(0xff);
+        body.extend(b"\n--- exit 0 ---\n");
+        fs::write(dir.join(format!("evidence/j1.tok.{wid}.txt")), &body).unwrap();
+        let report = check(root, &["alpha"]).expect("non-utf8 evidence must not abort check");
+        assert_eq!(report.status, 1, "{}", report.text);
+        assert!(report.text.contains("NOT CLOSEABLE\n"), "{}", report.text);
+        assert_eq!(
+            close(root, &["alpha", "nope"], &FixedClock::new(0))
+                .unwrap_err()
+                .to_string(),
+            "refused: alpha is not closeable"
+        );
+        assert!(
+            !dir.join(".closing").exists(),
+            "a close the shell would continue must not leave .closing"
+        );
+    }
+
+    #[test]
+    fn dotfile_evidence_does_not_make_close_stale() {
+        let _lock = env_lock();
+        let _judges = unset_env("CRUCIBLE_MIN_JUDGES");
+        let _kinds = unset_env("CRUCIBLE_MIN_KINDS");
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let dir = root.join("items/alpha");
+        fs::create_dir_all(dir.join("work")).unwrap();
+        fs::create_dir_all(dir.join("evidence")).unwrap();
+        fs::create_dir_all(dir.join("verdicts")).unwrap();
+        fs::write(dir.join("work/note.txt"), "body\n").unwrap();
+        fs::write(dir.join("MAKER"), "mk1\n").unwrap();
+        fs::write(dir.join("ITEM.md"), ITEM).unwrap();
+        fs::write(
+            root.join("agents.tsv"),
+            "mk1\tkindA\tm\thigh\ttrue\nj1\tkindB\tm\thigh\ttrue\nj2\tkindB\tm\thigh\ttrue\n",
+        )
+        .unwrap();
+        let clock = FixedClock::new(0);
+        let wid = workid(root, "alpha").unwrap();
+        let o1 = run(root, &["alpha", "j1", "--", "/bin/echo", "one"], &clock).unwrap();
+        let o2 = run(root, &["alpha", "j2", "--", "/bin/echo", "two"], &clock).unwrap();
+        let n1 = Path::new(o1.split_whitespace().next().unwrap())
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        let n2 = Path::new(o2.split_whitespace().next().unwrap())
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        fs::write(
+            dir.join("verdicts/j1.md"),
+            format!("VERDICT: PASS\nWORK-ID: {wid}\ncites {n1} from judge one\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("verdicts/j2.md"),
+            format!("VERDICT: PASS\nWORK-ID: {wid}\ncites {n2} from judge two\n"),
+        )
+        .unwrap();
+        // Glob `evidence/*` never sees this. Its stem is not the current work id.
+        fs::write(dir.join("evidence/.notes.txt"), "stale-looking\n").unwrap();
+        let closed = close(root, &["alpha", "kept the dotfile"], &clock).unwrap();
+        assert_eq!(closed, format!("closed alpha at {wid}\n"));
+        assert!(dir.join("evidence/.notes.txt").is_file());
     }
 }

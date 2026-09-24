@@ -11,11 +11,12 @@ use crucible_contract::Clock;
 
 use crate::cycle::{state_attempt_update, workid};
 use crate::dispatch::{
-    dispatch, git_quiet, item_dir, need, section_lines, task_all_pass, task_assert_frozen,
+    dispatch_managed, git_quiet, item_dir, need, section_lines, task_all_pass, task_assert_frozen,
     task_contract_id, task_dependencies_pass, task_live_attempt, task_live_count, task_pass_exists,
     task_render_file, task_result_file, task_retry_available, task_topological_order, tgt,
     validate_managed_item, validate_task_dag,
 };
+use crate::panel::split_tabs;
 use crate::phase::phase_of;
 use crate::program::uses_managed_lifecycle;
 use crate::state::{state_update_item, state_validate_file, state_value};
@@ -132,7 +133,7 @@ fn ready_view(root: &Path, slug: &str) -> Result<String, GuidedError> {
         if idx == 0 {
             continue;
         }
-        let fields = split_row(rec);
+        let fields = split_tabs(rec);
         let task_id = fields.first().copied().unwrap_or("");
         let deps = fields.get(1).copied().unwrap_or("");
         if task_pass_exists(root, slug, task_id)? {
@@ -189,10 +190,10 @@ fn dispatch_task(
         Some(value) if !value.is_empty() => value,
         _ => "-",
     };
-    dispatch(
+    dispatch_managed(
         root,
-        &[slug, "maker", agent, criterion, class, retry, task_id],
         clock,
+        &[slug, "maker", agent, criterion, class, retry, task_id],
     )
 }
 
@@ -421,14 +422,6 @@ fn rel_under(root: &Path, path: &Path) -> String {
         .unwrap_or_else(|_| path.display().to_string())
 }
 
-fn split_row(rec: &str) -> Vec<&str> {
-    if rec.is_empty() {
-        Vec::new()
-    } else {
-        rec.split('\t').collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,6 +574,34 @@ T3\tT1\ttasks/T3.paths\ttasks/T3.verify.sh
         assert_eq!(
             crate::inspect::next(&tmp.0).unwrap(),
             format!("NEXT alpha BUILD {sp} phase alpha BUILD\n")
+        );
+    }
+
+    #[test]
+    fn task_dispatch_of_c1_is_managed_not_a_claim() {
+        let clock = FixedClock::new(1_700_000_000);
+        let tmp = Tmp::new();
+        valid_dag(&tmp.0);
+        let root = tmp.0.as_path();
+        fs::rename(root.join("items/alpha"), root.join("items/C1")).unwrap();
+        let state = fs::read_to_string(root.join("STATE.tsv")).unwrap();
+        fs::write(root.join("STATE.tsv"), state.replace("alpha\t", "C1\t")).unwrap();
+        fs::write(
+            root.join("items/C1/ITEM.md"),
+            item_md().replace("# alpha", "# C1"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("roles")).unwrap();
+        fs::write(root.join("roles/maker.md"), "purpose: make\n").unwrap();
+        fs::write(root.join("agents.tsv"), "mk1\tkindA\tm\thigh\ttrue\n").unwrap();
+        assert_eq!(ready(root, &["C1"], &clock).unwrap(), "C1 is now READY\n");
+        let err = task(root, &["dispatch", "C1", "T1", "mk1", "A1"], &clock)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "maker dispatch requires BUILD");
+        assert!(
+            !err.contains("no such claim") && !err.contains("CLAIMS.md"),
+            "{err}"
         );
     }
 

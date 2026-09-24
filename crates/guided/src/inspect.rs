@@ -685,21 +685,32 @@ pub fn panes(root: &Path, args: &[&str]) -> Result<String, GuidedError> {
             created
         };
         let script = format!("sh '{watch_q}' {view} 5");
-        if !tmux_status(&["respawn-pane", "-k", "-t", &target, &script]) {
-            let _ = tmux_status(&[
+        let respawn = tmux_run(&["respawn-pane", "-k", "-t", &target, &script])?;
+        if !respawn.ok {
+            let send = tmux_run(&[
                 "send-keys",
                 "-t",
                 &target,
                 "C-c",
                 &format!("exec {script}"),
                 "C-m",
-            ]);
+            ])?;
+            // `respawn || send-keys` is fatal under `set -e`. Do not print overlaid.
+            if !send.ok {
+                let err = if send.stderr.is_empty() {
+                    respawn.stderr
+                } else {
+                    send.stderr
+                };
+                return Err(tmux_note(&err));
+            }
         }
         let _ = tmux_status(&["select-pane", "-t", &target, "-T", view]);
     }
     let _ = tmux_status(&["select-layout", "-t", &keep, "main-vertical"]);
-    if !tmux_status(&["select-pane", "-t", &keep]) {
-        return Err(message("tmux select-pane failed"));
+    let selected = tmux_run(&["select-pane", "-t", &keep])?;
+    if !selected.ok {
+        return Err(tmux_note(&selected.stderr));
     }
     let listed = views.join(" ");
     Ok(format!(
@@ -722,6 +733,28 @@ fn pane_views(args: &[&str]) -> Vec<String> {
     } else {
         split
     }
+}
+
+struct TmuxOut {
+    ok: bool,
+    stderr: String,
+}
+
+fn tmux_run(args: &[&str]) -> Result<TmuxOut, GuidedError> {
+    let out = Command::new("tmux").args(args).output()?;
+    Ok(TmuxOut {
+        ok: out.status.success(),
+        stderr: String::from_utf8_lossy(&out.stderr).trim().to_string(),
+    })
+}
+
+/// Surface tmux's own stderr. Do not invent a crucible die string.
+fn tmux_note(stderr: &str) -> GuidedError {
+    message(if stderr.is_empty() {
+        "tmux failed".to_string()
+    } else {
+        stderr.to_string()
+    })
 }
 
 fn tmux_text(args: &[&str]) -> Result<String, GuidedError> {
@@ -1226,5 +1259,63 @@ mod tests {
             err,
             "not inside tmux — start a session first (e.g. your session manager, then re-run)"
         );
+    }
+
+    #[test]
+    fn panes_does_not_claim_overlay_when_respawn_and_send_keys_fail() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _lock = crate::claims::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let tmp = Tmp::new();
+        let bin = tmp.0.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(tmp.0.join("scripts")).unwrap();
+        fs::write(tmp.0.join("scripts/watch.sh"), "#!/bin/sh\nexit 0\n").unwrap();
+        let tmux = bin.join("tmux");
+        fs::write(
+            &tmux,
+            "\
+#!/bin/sh
+case \"$1\" in
+  display-message) printf '%s\\n' '%1' ;;
+  list-panes) printf '%s\\n' '%1' ;;
+  split-window) printf '%s\\n' '%2' ;;
+  respawn-pane) printf '%s\\n' 'respawn failed' >&2; exit 1 ;;
+  send-keys) printf '%s\\n' 'send-keys failed' >&2; exit 1 ;;
+  *) exit 0 ;;
+esac
+",
+        )
+        .unwrap();
+        let mut perm = fs::metadata(&tmux).unwrap().permissions();
+        perm.set_mode(0o755);
+        fs::set_permissions(&tmux, perm).unwrap();
+        let prev_path = std::env::var_os("PATH");
+        let prev_tmux = std::env::var_os("TMUX");
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        // SAFETY: ENV_LOCK is held; both variables are restored before the lock drops.
+        unsafe {
+            std::env::set_var("PATH", &path);
+            std::env::set_var("TMUX", "1");
+        }
+        let err = panes(tmp.0.as_path(), &["gate"]).unwrap_err().to_string();
+        unsafe {
+            match prev_path {
+                Some(value) => std::env::set_var("PATH", value),
+                None => std::env::remove_var("PATH"),
+            }
+            match prev_tmux {
+                Some(value) => std::env::set_var("TMUX", value),
+                None => std::env::remove_var("TMUX"),
+            }
+        }
+        assert!(!err.contains("overlaid"), "{err}");
+        assert!(err.contains("send-keys failed"), "{err}");
     }
 }

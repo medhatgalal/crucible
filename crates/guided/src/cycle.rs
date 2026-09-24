@@ -1942,7 +1942,8 @@ pub(crate) fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> 
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if name.starts_with(".partial.") {
+        // `evidence/*` does not match dotfiles, including `.partial.*` and `.notes.txt`.
+        if name.starts_with('.') {
             continue;
         }
         let Some(stem) = name.strip_suffix(".txt") else {

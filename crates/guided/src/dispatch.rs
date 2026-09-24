@@ -628,7 +628,12 @@ impl Drop for DispatchGuard {
     }
 }
 
-fn dispatch_managed(root: &Path, clock: &dyn Clock, args: &[&str]) -> Result<String, GuidedError> {
+/// Managed dispatch. `task dispatch` calls this directly so a slug like `C1` is an item, not a claim.
+pub(crate) fn dispatch_managed(
+    root: &Path,
+    clock: &dyn Clock,
+    args: &[&str],
+) -> Result<String, GuidedError> {
     let slug = args[0];
     let role = args[1];
     let agent = args[2];
@@ -1180,7 +1185,8 @@ pub(crate) fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
     for path in files {
         let name = file_name(&path);
         out.push_str(&format!("### {name}\n```\n"));
-        let text = fs::read_to_string(&path)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         push_cat(&mut out, &text);
         out.push_str("```\n");
     }
@@ -1223,7 +1229,8 @@ pub(crate) fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, Gu
     for path in list_files(&dir.join("work")) {
         let rel = path.strip_prefix(&dir).unwrap_or(&path);
         out.push_str(&format!("### {}\n```\n", rel.display()));
-        let text = fs::read_to_string(&path)?;
+        let bytes = fs::read(&path)?;
+        let text = String::from_utf8_lossy(&bytes);
         push_cat(&mut out, &text);
         out.push_str("```\n");
     }
