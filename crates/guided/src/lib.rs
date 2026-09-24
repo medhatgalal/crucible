@@ -1,6 +1,8 @@
 //! Root resolution, managed STATE / PROGRAM parsers, and adopt.
 
 mod adopt;
+mod cycle;
+mod panel;
 mod program;
 mod project;
 mod root;
@@ -15,7 +17,11 @@ pub use adopt::{
     adopt_refresh_skill_views, adopt_restore_kept_batteries, adopt_src_sha256,
     adopt_sync_gitignore, adopt_working_mode_installed, adopt_write_engine_source, cmd_adopt,
 };
+use crucible_kernel::KernelError;
+
 pub use crucible_contract::{Clock, FixedClock};
+pub use cycle::{cycle, cycle_investigation_state, cycle_worth, write_cycle_status};
+pub use panel::{panel_approval_current, panel_id, panel_valid, proposal_id, proposal_valid};
 pub use program::{lifecycle_mode, uses_guided_cycle, uses_managed_lifecycle, LifecycleMode};
 pub use project::project_cycle_line;
 pub use root::root;
@@ -44,6 +50,15 @@ impl std::error::Error for GuidedError {}
 impl From<io::Error> for GuidedError {
     fn from(e: io::Error) -> Self {
         GuidedError::Io(e)
+    }
+}
+
+impl From<KernelError> for GuidedError {
+    fn from(e: KernelError) -> Self {
+        match e {
+            KernelError::Io(e) => GuidedError::Io(e),
+            KernelError::Json(s) | KernelError::Message(s) => GuidedError::Message(s),
+        }
     }
 }
 
