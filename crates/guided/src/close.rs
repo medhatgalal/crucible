@@ -416,7 +416,11 @@ fn check_evidence(
 }
 
 fn skip_task_evidence(root: &Path, path: &Path) -> Result<bool, GuidedError> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    // Same byte read as the main loop. `read_to_string` drops the attempt id when the output has a non-UTF-8 byte.
+    let Ok(bytes) = fs::read(path) else {
+        return Ok(false);
+    };
+    let text = String::from_utf8_lossy(&bytes);
     let attempt = field_line(&text, "attempt-id");
     if attempt.is_empty() {
         return Ok(false);
@@ -989,6 +993,7 @@ mod tests {
     use super::*;
     use crate::claims::ENV_LOCK;
     use crate::inspect::run;
+    use crate::state::STATE_HEADER;
     use crucible_contract::FixedClock;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1224,5 +1229,92 @@ Undo the change to src/widget.rs and confirm the focused check then fails loudly
         let closed = close(root, &["alpha", "kept the dotfile"], &clock).unwrap();
         assert_eq!(closed, format!("closed alpha at {wid}\n"));
         assert!(dir.join("evidence/.notes.txt").is_file());
+    }
+
+    #[test]
+    fn non_utf8_task_evidence_is_still_skipped() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tREVIEW\tw1\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        let dir = root.join("items/alpha");
+        fs::create_dir_all(dir.join("work")).unwrap();
+        fs::create_dir_all(dir.join("evidence")).unwrap();
+        fs::create_dir_all(dir.join("verdicts")).unwrap();
+        fs::write(dir.join("work/note.txt"), "body\n").unwrap();
+        fs::write(dir.join("MAKER"), "mk1\n").unwrap();
+        fs::write(
+            dir.join("ITEM.md"),
+            "\
+# alpha — task evidence
+
+## Goal
+
+Keep task evidence off the item gate.
+
+## Non-goals
+
+None.
+
+## Risk
+
+LOW
+
+## Owned files
+
+- src/one
+
+## Acceptance criteria
+
+- [ ] A1
+
+## Focused falsifier
+
+scripts/verify-task-dag.sh
+
+## Expensive evidence
+
+NONE
+
+## Stop conditions
+
+Stop if task evidence closes the item.
+",
+        )
+        .unwrap();
+        fs::write(
+            root.join("agents.tsv"),
+            "mk1\tkindA\tm\thigh\ttrue\nj1\tkindB\tm\thigh\ttrue\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("attempts/A1700.1.1")).unwrap();
+        fs::write(
+            root.join("attempts/A1700.1.1/meta.tsv"),
+            "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+A1700.1.1\talpha\tT1\tw\tmaker\tj1\tkindB\tA1\tFOCUSED\tRUNNING\t1\t2\t-
+",
+        )
+        .unwrap();
+        let wid = workid(root, "alpha").unwrap();
+        let mut body = format!(
+            "crucible-run/1\nagent: j1\nwork-id: {wid}\nattempt-id: A1700.1.1\nwhen: 1970-01-01T00:00:00Z\ncommand: /bin/echo x\n--- output ---\n"
+        )
+        .into_bytes();
+        body.push(0xff);
+        body.extend(b"\n--- exit 0 ---\n");
+        fs::write(dir.join(format!("evidence/j1.tok.{wid}.txt")), body).unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            report
+                .text
+                .contains(&format!("no usable evidence for {wid}")),
+            "task evidence must be skipped, got {}",
+            report.text
+        );
     }
 }
