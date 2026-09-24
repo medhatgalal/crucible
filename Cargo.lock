@@ -23,6 +23,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-guided"
+version = "0.1.0"
+dependencies = [
+ "crucible-contract",
+]
+
+[[package]]
 name = "crucible-http"
 version = "0.1.0"
 dependencies = [

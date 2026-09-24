@@ -1,0 +1,10 @@
+[package]
+name = "crucible-guided"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Guided cycle library: root resolution and managed STATE parsers"
+
+[dependencies]
+crucible-contract = { path = "../contract" }
