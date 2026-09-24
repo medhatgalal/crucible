@@ -64,12 +64,8 @@ impl DoctorReport {
     }
 }
 
-pub fn repo_router_path(cwd: &Path) -> PathBuf {
-    cwd.join(".grok").join("rules").join("loop-router.md")
-}
-
-pub fn home_router_path(home: Option<&Path>) -> Option<PathBuf> {
-    Some(home?.join(".grok").join("rules").join("loop-router.md"))
+pub fn router_path(root: &Path) -> PathBuf {
+    root.join(".grok").join("rules").join("loop-router.md")
 }
 
 pub fn fixture_adr_hash() -> String {
@@ -96,7 +92,9 @@ pub fn check_router(path: &Path, expected_hash: &str, site: RouterSite) -> Docto
     };
     let label = site_label(site);
     // Stat of the final path follows a symlink parent. Classify parents first.
-    let Some((grok, rules)) = router_parents(path) else {
+    let rules = path.parent();
+    let grok = rules.and_then(Path::parent);
+    let (Some(rules), Some(grok)) = (rules, grok) else {
         report.warnings.push(format!(
             "{label} loop-router unreadable ({}): no parent",
             path.display()
@@ -170,7 +168,7 @@ pub fn check_router(path: &Path, expected_hash: &str, site: RouterSite) -> Docto
 /// `Err` is a refusal or an I/O failure. The caller prints `warn:` and returns 1.
 /// It does not call `check_router` on that error.
 pub fn install_home_router(home: &Path) -> Result<PathBuf, HomeWriteError> {
-    let dest = home_router_path(Some(home)).expect("home path");
+    let dest = router_path(home);
     let rules = dest.parent().expect("router parent");
     let grok = rules.parent().expect("rules parent");
     ensure_real_dir(grok)?;
@@ -194,12 +192,6 @@ fn site_label(site: RouterSite) -> &'static str {
         RouterSite::Repo => "repo",
         RouterSite::Home => "home",
     }
-}
-
-fn router_parents(path: &Path) -> Option<(&Path, &Path)> {
-    let rules = path.parent()?;
-    let grok = rules.parent()?;
-    Some((grok, rules))
 }
 
 enum NodeKind {
@@ -358,10 +350,6 @@ mod tests {
         }
     }
 
-    fn router_path(tmp: &Tmp) -> PathBuf {
-        repo_router_path(&tmp.root)
-    }
-
     fn assert_repo_text(text: &str, path: &Path) {
         assert!(text.contains(&path.display().to_string()), "{text}");
         assert!(!text.contains("~/.grok"), "{text}");
@@ -466,7 +454,7 @@ mod tests {
     #[test]
     fn doctor_warns_missing_without_reading_process_home() {
         let tmp = Tmp::new();
-        let path = repo_router_path(&tmp.root);
+        let path = router_path(&tmp.root);
         assert!(!path.exists());
         let r = check_router(&path, "abcd", RouterSite::Repo);
         assert!(!r.is_clean());
@@ -488,7 +476,7 @@ mod tests {
     #[test]
     fn doctor_warns_stale_hash() {
         let tmp = Tmp::new();
-        let path = router_path(&tmp);
+        let path = router_path(&tmp.root);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
@@ -506,7 +494,7 @@ mod tests {
     #[test]
     fn doctor_ok_when_router_has_current_hash() {
         let tmp = Tmp::new();
-        let path = router_path(&tmp);
+        let path = router_path(&tmp.root);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, ROUTER_FIXTURE).unwrap();
         let want = fixture_adr_hash();
@@ -521,7 +509,7 @@ mod tests {
     #[test]
     fn doctor_stale_when_hash_line_missing() {
         let tmp = Tmp::new();
-        let path = router_path(&tmp);
+        let path = router_path(&tmp.root);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "/crucible live → follow Crucible\n").unwrap();
         let r = check_router(&path, &fixture_adr_hash(), RouterSite::Repo);
@@ -534,7 +522,7 @@ mod tests {
     #[test]
     fn doctor_does_not_read_symlink_router() {
         let tmp = Tmp::new();
-        let path = router_path(&tmp);
+        let path = router_path(&tmp.root);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let sentinel = tmp.root.join("sentinel.md");
         let body = "ADR-HASH: 1111111111111111111111111111111111111111111111111111111111111111\n";
@@ -561,7 +549,7 @@ mod tests {
         .unwrap();
         let grok = tmp.root.join(".grok");
         symlink(&real, &grok).unwrap();
-        let path = router_path(&tmp);
+        let path = router_path(&tmp.root);
         let r = check_router(&path, &fixture_adr_hash(), RouterSite::Repo);
         let w = r.warnings.join("\n");
         assert!(w.contains("repo loop-router parent is a symlink"), "{w}");

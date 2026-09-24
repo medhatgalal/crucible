@@ -693,7 +693,7 @@ fn cmd_doctor(args: &[String], cwd: &Path) -> i32 {
 }
 
 fn doctor_repo(cwd: &Path) -> i32 {
-    let path = doctor::repo_router_path(cwd);
+    let path = doctor::router_path(cwd);
     let report = doctor::check_router(&path, &doctor::fixture_adr_hash(), doctor::RouterSite::Repo);
     let _ = report.write_lines(io::stdout());
     0
