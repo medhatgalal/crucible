@@ -212,7 +212,24 @@ expect 'closed program is done' '^DONE$' "$P/crucible" next
 
 item_file="$tmp/item-file"
 mkdir -p "$item_file"
-cp "$C" "$item_file/crucible"
+# The release binary, not the finder. A copied finder has no sibling binary here.
+item_bin=$HERE/target/release/crucible
+if [ -n "${CRUCIBLE_BIN:-}" ] && [ -x "$CRUCIBLE_BIN" ]; then
+  _sig=$(dd if="$CRUCIBLE_BIN" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" != '#!' ]; then
+    item_bin=$CRUCIBLE_BIN
+  fi
+fi
+[ -x "$item_bin" ] || {
+  echo "verify-managed-lifecycle: no release binary (cargo build --release, or set CRUCIBLE_BIN)" >&2
+  exit 1
+}
+_sig=$(dd if="$item_bin" bs=2 count=1 2>/dev/null || true)
+[ "$_sig" != '#!' ] || {
+  echo "verify-managed-lifecycle: $item_bin is a script, not the release binary" >&2
+  exit 1
+}
+cp "$item_bin" "$item_file/crucible"
 chmod +x "$item_file/crucible"
 (
   cd "$item_file"

@@ -53,13 +53,38 @@ ok()   { PASS=$((PASS+1)); [ "$VERBOSE" = 1 ] && printf '  ok   %s\n' "$1" || pr
 bad()  { FAIL=$((FAIL+1)); FAILED="$FAILED
   FAILED: $1"; printf '\n  FAIL %s\n' "$1"; }
 
+# The release binary, not the repo-root finder. A copied finder looks for
+# target/release next to the fixture and exits 1 before any assertion.
+fixture_bin() {
+  if [ -n "${CRUCIBLE_BIN:-}" ] && [ -x "$CRUCIBLE_BIN" ]; then
+    _sig=$(dd if="$CRUCIBLE_BIN" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$CRUCIBLE_BIN"
+      return 0
+    fi
+  fi
+  _rel="$HERE/target/release/crucible"
+  if [ -x "$_rel" ]; then
+    _sig=$(dd if="$_rel" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$_rel"
+      return 0
+    fi
+  fi
+  echo "selftest: no release binary (cargo build --release, or set CRUCIBLE_BIN)" >&2
+  exit 1
+}
+
 # A fresh run root with a registered panel, one item, a written falsifier and work.
 # Prints the directory. The caller must cd into it: `cd "$(fresh)"`.
 # Setup runs in a subshell so this function never changes the caller's directory.
 mkrun() {
   d=$(mktemp -d "$SELFTEST_TMP/run.XXXXXX")
+  rel=$(fixture_bin) || exit 1
   ( cd "$d"
-    cp "$C" ./crucible; cp -R "$HERE/roles" .; cp "$HERE/RULES.md" .
+    cp "$rel" ./crucible
+    chmod +x ./crucible
+    cp -R "$HERE/roles" .; cp "$HERE/RULES.md" .
     printf 'mk\tkiro\tm\thigh\techo {BRIEF}\n'  > agents.tsv
     printf 'j1\tkiro\tm\thigh\techo {BRIEF}\n' >> agents.tsv
     printf 'j2\tgrok\tm\thigh\techo {BRIEF}\n' >> agents.tsv

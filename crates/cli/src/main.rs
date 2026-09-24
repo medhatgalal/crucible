@@ -90,7 +90,7 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
 /// One match so the verb set is readable as a table. `scripts/selftest.sh` enumerates these
 /// arms; a second table in the wrapper would be a second kernel.
 fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
-    let args = arg_refs(rest);
+    let args: Vec<&str> = rest.iter().map(String::as_str).collect();
     match verb {
         "go" => cmd_go(rest, cwd, clock),
         "status" => cmd_status(rest, cwd, clock),
@@ -184,10 +184,6 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         "help" => cmd_help(rest),
         other => unknown_verb(other),
     }
-}
-
-fn arg_refs(args: &[String]) -> Vec<&str> {
-    args.iter().map(String::as_str).collect()
 }
 
 fn with_guided_root(body: impl FnOnce(&Path) -> i32) -> i32 {
