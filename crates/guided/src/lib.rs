@@ -1,5 +1,6 @@
-//! Root resolution and managed STATE / PROGRAM parsers for the guided cycle.
+//! Root resolution, managed STATE / PROGRAM parsers, and adopt.
 
+mod adopt;
 mod program;
 mod project;
 mod root;
@@ -8,6 +9,12 @@ mod state;
 use std::fmt;
 use std::io;
 
+pub use adopt::{
+    adopt_battery_kept, adopt_check_required_batteries, adopt_copy_panel_from, adopt_find_rust_bin,
+    adopt_gitignore_reason, adopt_install_engine, adopt_install_working_mode, adopt_is_script,
+    adopt_refresh_skill_views, adopt_restore_kept_batteries, adopt_src_sha256,
+    adopt_sync_gitignore, adopt_working_mode_installed, adopt_write_engine_source, cmd_adopt,
+};
 pub use crucible_contract::{Clock, FixedClock};
 pub use program::{lifecycle_mode, uses_guided_cycle, uses_managed_lifecycle, LifecycleMode};
 pub use project::project_cycle_line;
