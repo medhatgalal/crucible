@@ -1,8 +1,8 @@
 name: selftest
 
 # The gate must prove it refuses what it claims, on every push and every pull request.
-# No dependencies are installed: if this needs anything beyond a POSIX shell and git,
-# that is itself a defect.
+# The engine job builds the crucible binary before any step that runs ./crucible.
+# The release tarball still runs on machines with no rustc.
 
 on:
   push:
@@ -23,6 +23,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: build the release binary
+        run: cargo build --release --locked
 
       - name: every shell file parses under /bin/sh
         run: |
@@ -120,6 +123,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: build the release binary
+        run: cargo build --release --locked
       - name: demand pairing holds under BSD grep
         run: ./scripts/verify-demand.sh
       - name: every shell file parses under /bin/sh

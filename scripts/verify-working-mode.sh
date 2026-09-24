@@ -34,7 +34,7 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 130' 2
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
-[ "$VERSION" = 1.17.0 ] && ok || bad "VERSION wanted 1.17.0 got $VERSION"
+[ "$VERSION" = 1.18.0 ] && ok || bad "VERSION wanted 1.18.0 got $VERSION"
 
 sh -n "$WM" && ok || bad 'wm.sh is not valid POSIX sh'
 if grep -q 'WM_WRAPPER' "$WM" && grep -q 'exec' "$WM" && grep -q 'crucible' "$WM"; then
@@ -71,13 +71,13 @@ WM="$STAGE/wm.sh"
 export WM_ENGINE="$WM"
 
 ver=$("$STAGE/crucible" --version 2>"$ERR") || ver=
-[ "$ver" = 1.17.0 ] && ok || bad "crucible --version wanted 1.17.0 got $ver"
+[ "$ver" = 1.18.0 ] && ok || bad "crucible --version wanted 1.18.0 got $ver"
 ver=$("$STAGE/crucible" -V 2>"$ERR") || ver=
-[ "$ver" = 1.17.0 ] && ok || bad "crucible -V wanted 1.17.0 got $ver"
+[ "$ver" = 1.18.0 ] && ok || bad "crucible -V wanted 1.18.0 got $ver"
 
 # Wrapper execs the sibling binary (not POSIX ./crucible).
 wrap=$("$WM" --version 2>"$ERR") || wrap=
-[ "$wrap" = 1.17.0 ] && ok || bad "wm.sh --version (wrapper exec) wanted 1.17.0 got $wrap err=$(cat "$ERR")"
+[ "$wrap" = 1.18.0 ] && ok || bad "wm.sh --version (wrapper exec) wanted 1.18.0 got $wrap err=$(cat "$ERR")"
 
 # go without IDEA.md is STOP-ASK INTAKE (rust). Do not use wm.sh go as the
 # product walker except to prove the wrapper execs rust.
@@ -108,14 +108,16 @@ wrap=$("$WM" --version 2>"$ERR") || wrap=
   fi
 )
 
-# Guided POSIX adopt still lives at repo-root ./crucible.
+# Repo-root crucible is the thin exec, not the guided kernel.
 if [ -f "$HERE/crucible" ]; then
   _sig=$(dd if="$HERE/crucible" bs=2 count=1 2>/dev/null || true)
-  [ "$_sig" = '#!' ] && ok || bad 'repo-root ./crucible must remain the POSIX guided script'
-  grep -q -- '--working-mode' "$HERE/crucible" && ok || bad 'POSIX adopt must accept --working-mode'
+  [ "$_sig" = '#!' ] && ok || bad 'repo-root ./crucible must stay #!/bin/sh'
 else
-  bad 'repo-root POSIX ./crucible missing'
+  bad 'repo-root ./crucible missing'
 fi
+help_out=$("$HERE/target/release/crucible" help 2>"$ERR") || help_out=
+printf '%s\n' "$help_out" | grep -q -- '--working-mode' && ok \
+  || bad "release crucible help must print --working-mode, got $(printf '%s' "$help_out") err=$(cat "$ERR")"
 
 # Task 3: START/BOOTSTRAP discoverability — one opt-in pointer; guided default
 # stays adopt work --managed without --working-mode.

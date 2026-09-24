@@ -23,9 +23,11 @@ Working-mode outer loop: `/crucible` (Grok, Kiro CLI, or Codex) then [working-mo
 ## First install
 
 Need a Crucible source (clone or `crucible-<version>.tar.gz` from the GitHub release).
-A checkout's `./crucible` is the POSIX adopt/cycle/drive script. A tarball's
-`crucible` is the host-built binary; `adopt` still runs via sibling
-`crucible-guided`. Product machines need no rustc.
+A checkout's `./crucible` finds the release binary (`cargo build --release`, or
+`CRUCIBLE_BIN`) and execs it. A tarball's `crucible` is that host-built binary;
+`crucible-guided` only execs the sibling binary. `./crucible` from a product
+directory is exit 127 unless that wrapper finds a binary. Product machines need
+no rustc.
 
 ```sh
 <path-to-crucible>/scripts/verify-agent-cycle.sh
@@ -79,9 +81,10 @@ parent runs the `agents.tsv` line. Crucible does not ship that adapter; see
 
 ## Opt-in working-mode
 
-On **1.17.0**, default adopt is still the guided cycle (1.6.6 **layout**): no
-`wm.sh` unless `--working-mode`. Working-mode installs the Rust `crucible`
-binary plus an exec-wrapper `wm.sh`. Product machines need **no rustc**. To
+Default adopt is still the guided cycle (1.6.6 **layout**): no
+`wm.sh` unless `--working-mode`. Both the guided entry and working-mode install
+the Rust `crucible` binary. Working-mode also installs exec-wrapper `wm.sh`.
+Product machines need **no rustc**. To
 also install the working-mode runner and batteries into the **target** (no
 `$HOME` skill trees):
 

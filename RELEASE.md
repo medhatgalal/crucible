@@ -32,8 +32,8 @@ git push origin "v$version"
 ```
 
 Wait for both Linux and macOS tag jobs at that exact SHA. Then build from the immutable tag and publish
-the two assets. The tarball is host-built `crucible` plus wrapper `wm.sh` and
-POSIX `crucible-guided`. Product machines need no rustc.
+the two assets. The tarball is the host-built `crucible` binary plus wrapper `wm.sh` and
+the thin exec `crucible-guided`. Product machines need no rustc.
 
 ```sh
 ./scripts/package-release.sh "$version" "v$version" dist

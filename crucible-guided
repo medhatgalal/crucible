@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+bindir=$(CDPATH=; cd -- "$(dirname -- "$0")" && pwd)
+CRUCIBLE_WRAPPER=$0
+export CRUCIBLE_WRAPPER
+exec "$bindir/crucible" "$@"

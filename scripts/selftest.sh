@@ -513,21 +513,29 @@ cd "$HERE"
 # `attempt` and `cycle` — so `brief` was never presented to the accept side at all, under either
 # form. Writing an observation that did not happen is the failure this release exists to stop,
 # and it does not get an exception in this file. What is true about `brief` is a different fact
-# and still worth recording: it is dispatched (`brief)` sits in the case table, `./crucible
+# and still worth recording: it is dispatched (`"brief"` is a dispatch_verb arm, `./crucible
 # brief` answers "need a slug") and it appears in neither `help` nor `help protocol`, so nothing
 # in this suite asserts help completeness for it. That is a gap in the help text.
 #
-# Enumerate it. The engine's trailing `case ${1:-help} in` dispatch table IS the set of verbs;
-# nothing else decides what the script accepts. Read that table and match exactly. Note it is
-# the accept-set that is authoritative here, not help: a verb missing from help is a help
-# defect, and `brief` above is exactly that defect — asserting help membership on this line
-# would report it as a documentation error in whichever code block happened to name it.
-#
-# `tr '|' '\n'` splits the `a|b)` alternation forms. The `^ *[a-z]` anchor is deliberate: it
-# keeps `-h|--help)` and the `*)` catch-all out, since those are flags and a refusal, not verbs,
-# and the doc extractor below can never emit a leading `-` or `*` anyway.
-dispatch_verbs=$(awk '/^case .*\$\{?1/,/^esac/' ./crucible 2>/dev/null \
-  | grep -oE '^ *[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sort -u)
+# Enumerate it. The accept-set is the match in `fn dispatch_verb` in
+# crates/cli/src/main.rs. Repo-root ./crucible is the finder wrapper and has no
+# case table; reading it extracts nothing and this check would fail closed.
+# Help text is not the accept-set: a verb missing from help is a help defect
+# (`brief` above). Flags and the unknown-verb arm are not quoted string arms,
+# so they stay out of the set.
+dispatch_verbs=$(awk '
+  /fn dispatch_verb\(/ { in_fn = 1 }
+  in_fn && /^}/ { exit }
+  in_fn {
+    line = $0
+    sub(/^[[:space:]]*/, "", line)
+    if (line ~ /^"[a-z][a-z0-9-]*" =>/) {
+      sub(/^"/, "", line)
+      sub(/".*/, "", line)
+      print line
+    }
+  }
+' crates/cli/src/main.rs | sort -u)
 n_dispatch=$(printf '%s\n' "$dispatch_verbs" | grep -c '[a-z]' || true)
 # Fail closed. An extractor that silently matches nothing turns this assertion into "every doc
 # verb is in the empty set", which agrees with any documentation at all — the exact shape of
@@ -636,7 +644,7 @@ else
 # `lifecycle`. Validating the full two-word spelling would need a second authoritative set, and
 # there is no second table to read — each subverb is parsed inside its own `cmd_*` function, in
 # forms that differ per command, so any enumeration of them would itself be a proxy and would
-# rot the moment one function changed. The head verb is what `case ${1:-help}` decides, so the
+# rot the moment one function changed. The head verb is what `dispatch_verb` decides, so the
 # head verb is what this line can assert as a fact. It keeps its teeth where it matters: a
 # bogus head verb such as `crucible isolation` has no dispatch entry and is refused, which is
 # the failure this check exists to catch. A wrong subverb under a real head verb is out of
@@ -830,7 +838,7 @@ printf '%s' "$cur" | grep -qE "suite is [0-9]+|[0-9]+ assertions" && bad_count="
 helpv=$(./crucible help 2>/dev/null | grep -oE '^  crucible [a-z][a-z]*' | sed 's|  crucible ||' | sort -u)
 notrouted=""
 for v in $helpv; do
-  grep -qE "^$v\)|^$v\|" crucible || notrouted="$notrouted $v"
+  printf '%s\n' "$dispatch_verbs" | grep -qx "$v" || notrouted="$notrouted $v"
 done
 [ -z "$notrouted" ] && ok "every verb in help is explicitly routed" \
   || bad "verbs in help are not routed:$notrouted"
@@ -893,7 +901,7 @@ done
 # below, which refuses the existence of `.github/actions/` and reads no composite action's shell
 # wherever that action lives. `env:`, `with:` and `defaults` are audited by nothing here.
 wf=.github/workflows/selftest.yml
-a6_pin=c17cd4acc3c4
+a6_pin=7b3558eac819
 # Assert-if-present, and the asymmetry is the point.
 #
 # `.github` is `export-ignore` in .gitattributes, so no release package contains this workflow,

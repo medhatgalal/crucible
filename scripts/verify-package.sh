@@ -119,6 +119,7 @@ _sig=$(dd if="$PACKAGE/crucible" bs=2 count=1 2>/dev/null || true)
   || { echo "verify-package: crucible --version is not $VERSION" >&2; exit 1; }
 "$PACKAGE/crucible" help >/dev/null
 sh -n "$PACKAGE/wm.sh"
+sh -n "$PACKAGE/crucible-guided"
 "$PACKAGE/scripts/verify-agent-cycle.sh" >/dev/null
 "$PACKAGE/scripts/verify-coldstart-independence.sh" >/dev/null
 [ -x "$PACKAGE/scripts/verify-drive.sh" ]

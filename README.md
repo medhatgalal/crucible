@@ -19,8 +19,10 @@ protocol from the repository, investigates whether a reported problem is real, p
 supported by evidence, waits for human approval, and iterates implementation and review until the
 approved outcome is demonstrably done.
 
-No daemon. No database. No package manager. No permanent agent memory. Just POSIX shell, Git, Markdown,
-and evidence that survives the chat which produced it.
+No daemon. No database. No package manager. No permanent agent memory. Just Git, Markdown,
+and evidence that survives the chat which produced it. Guided `adopt` / `cycle` / `drive` and
+working-mode `go` are the Rust `crucible` binary. A checkout's `./crucible` finds that binary;
+`crucible-guided` only execs it. Product machines need no rustc.
 
 ## 🔥 Start with one prompt
 

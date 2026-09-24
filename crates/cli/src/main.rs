@@ -1,19 +1,69 @@
-//! Working-mode binary `crucible` (go/status/debrief/stats/serve/room/doctor). Repo-root POSIX `./crucible` stays guided adopt.
+//! Product binary `crucible`. Working-mode verbs stay here. Guided verbs call `crucible-guided`.
+//! Repo-root `./crucible` is the finder wrapper, not a second kernel.
 
 mod doctor;
 
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 
 use crucible_contract::{
     canonical_json, parse_rfc3339_z, Clock, StatsWindow, SystemClock, WalkSnapshot,
 };
+use crucible_guided::GuidedError;
 use crucible_kernel::{floor_write_with, go};
 
 const PRODUCT_VERSION: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION"));
+
+const GUIDED_USAGE: &str = r#"Crucible runs one durable problem-to-done cycle for a coordinating agent.
+
+  crucible adopt [PROGRAM] --managed   install the cycle in the current repository
+  crucible adopt [PROGRAM] --managed --working-mode
+                                       also copy wm.sh, skills, harness views, ROUTING.tsv, ENGINE-SOURCE
+  crucible adopt [PROGRAM] --managed --panel-from SRC
+                                       sibling cycle with SRC's approved panel; leftover PROBLEM stays on SRC
+  crucible adopt [PROGRAM] --refresh   additive engine update; does not delete local adapters
+                                       refuses src == dst; KEEP batteries unless --overwrite-batteries
+  crucible cycle [status]              resume from repository evidence
+  crucible cycle problem FILE          bind a problem report to the cycle
+  crucible cycle problem FILE --next   same panel; archive this investigation; bind a new PROBLEM
+  crucible cycle problem --abandon R   archive junk INVESTIGATE without PASS or a new PROBLEM
+  crucible cycle approve-panel         record approval of the agent panel
+  crucible cycle approve               record approval of the current proposal
+  crucible drive [tick|stop]           Ralph-style outer loop; stop releases leftover lock
+  crucible help protocol               show internal agent protocol primitives
+
+Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
+"#;
+
+const PROTOCOL_USAGE: &str = r#"Agent protocol primitives. These are implementation details used by START.md; the operator does
+not drive the cycle with them.
+
+  claim add|list|verdict|scout|admit   verify a report before it becomes work
+                                      claim add requires one predicate [ABSENT|EXISTS|DEFECT]
+                                      claim verdict AGENT STALE|FALSE --like C2 C3 copies non-TRUE
+  triage                              render the evidence-grounded proposal input
+  add / ready / phase / task          create and advance bounded work
+  dispatch / attempt / result         coordinate isolated agent attempts
+  attempt transport                   record multi-agent|acp|subagent isolation
+  attempt reclaim ATTEMPT             STOPPED a RUNNING attempt whose pid is dead
+  evidence archive SLUG               park item evidence whose work-id is not current
+  contract-audit ATTEMPT AUDITOR …    file-based contract PASS|FIX|STOP by a distinct agent
+  contract-audit ATTEMPT AUDITOR PASS --like ATTEMPT2 …   copy PASS onto isomorphic DISPATCHED contracts
+  plan-audit SLUG AUDITOR PASS|FIX|STOP  ITEM.md audit before maker dispatch (guided)
+  probe-acp ok|failed|unavailable     record ACP availability for the ladder
+  run / run-claim                     record work-bound evidence
+  check / close                       refuse unsupported completion
+  agents / target / state / workid    inspect supporting state
+  lifecycle status|enable             compatibility setup for older programs
+  panes / selftest                    optional observation and engine verification
+
+Independence ladder: multi-agent preferred, then ACP, then subagent after ACP probe failure.
+If no independent agent can be invoked, STOP and warn — do not continue as solo theatre.
+"#;
 
 fn product_version() -> &'static str {
     PRODUCT_VERSION.trim()
@@ -34,86 +84,245 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         println!("{}", product_version());
         return 0;
     }
-    if args[0] == "help" {
-        if args.len() > 1 {
-            return exec_guided(args);
+    dispatch_verb(&args[0], &args[1..], cwd, clock)
+}
+
+/// One match so the verb set is readable as a table. `scripts/selftest.sh` enumerates these
+/// arms; a second table in the wrapper would be a second kernel.
+fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
+    let args = arg_refs(rest);
+    match verb {
+        "go" => cmd_go(rest, cwd, clock),
+        "status" => cmd_status(rest, cwd, clock),
+        "debrief" => cmd_debrief(cwd),
+        "stats" => cmd_stats(rest, cwd, clock),
+        "serve" => cmd_serve(rest, cwd, clock),
+        "room" => cmd_room(rest, cwd),
+        "camera" => cmd_camera(rest),
+        "reap" => cmd_reap(rest),
+        "web" => cmd_web(rest),
+        "doctor" => cmd_doctor(rest),
+        "adopt" => with_guided_root(|root| {
+            let mut out = io::stdout();
+            match crucible_guided::cmd_adopt(cwd, root, &args, &mut out) {
+                Ok(()) => 0,
+                Err(err) => guided_fail(err),
+            }
+        }),
+        "cycle" => with_guided_root(|root| guided_ok(crucible_guided::cycle(root, &args, clock))),
+        "drive" => {
+            with_guided_root(|root| guided_ok(crucible_guided::drive::drive(root, &args, clock)))
         }
+        "claim" => {
+            with_guided_root(|root| guided_ok(crucible_guided::claims::claim(root, &args, clock)))
+        }
+        "triage" => with_guided_root(|root| match crucible_guided::triage::triage(root) {
+            Ok(report) => guided_report(report.text, report.status),
+            Err(err) => guided_fail(err),
+        }),
+        "add" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::add(root, &args, clock)))
+        }
+        "dispatch" => with_guided_root(|root| {
+            guided_ok(crucible_guided::dispatch::dispatch(root, &args, clock))
+        }),
+        "attempt" => with_guided_root(|root| {
+            guided_ok(crucible_guided::attempt::attempt(root, &args, clock))
+        }),
+        "result" => {
+            with_guided_root(|root| guided_ok(crucible_guided::result::result(root, &args, clock)))
+        }
+        "contract-audit" => with_guided_root(|root| {
+            guided_ok(crucible_guided::audit::contract_audit(root, &args, clock))
+        }),
+        "plan-audit" => with_guided_root(|root| {
+            guided_ok(crucible_guided::audit::plan_audit(root, &args, clock))
+        }),
+        "probe-acp" => with_guided_root(|root| {
+            guided_ok(crucible_guided::audit::probe_acp(root, &args, clock))
+        }),
+        "phase" => {
+            with_guided_root(|root| guided_ok(crucible_guided::phase::phase(root, &args, clock)))
+        }
+        "task" => {
+            with_guided_root(|root| guided_ok(crucible_guided::task::task(root, &args, clock)))
+        }
+        "ready" => {
+            with_guided_root(|root| guided_ok(crucible_guided::task::ready(root, &args, clock)))
+        }
+        "check" => with_guided_root(|root| match crucible_guided::close::check(root, &args) {
+            Ok(report) => guided_report(report.text, report.status),
+            Err(err) => guided_fail(err),
+        }),
+        "close" => {
+            with_guided_root(|root| guided_ok(crucible_guided::close::close(root, &args, clock)))
+        }
+        "evidence" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::evidence(root, &args)))
+        }
+        "run" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::run(root, &args, clock)))
+        }
+        "run-claim" => {
+            with_guided_root(|root| guided_ok(crucible_guided::run::run_claim(root, &args, clock)))
+        }
+        "next" => with_guided_root(|root| guided_ok(crucible_guided::inspect::next(root))),
+        "agents" => with_guided_root(|root| guided_ok(crucible_guided::inspect::agents(root))),
+        "target" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::target(root, &args)))
+        }
+        "state" => with_guided_root(|root| guided_ok(crucible_guided::inspect::state(root))),
+        "lifecycle" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::lifecycle(root, &args)))
+        }
+        "brief" => with_guided_root(|root| guided_ok(crucible_guided::inspect::brief(root, &args))),
+        "workid" => {
+            with_guided_root(|root| guided_ok(crucible_guided::inspect::workid(root, &args)))
+        }
+        "panes" => with_guided_root(|root| guided_ok(crucible_guided::inspect::panes(root, &args))),
+        "selftest" => cmd_selftest(rest),
+        "help" => cmd_help(rest),
+        other => unknown_verb(other),
+    }
+}
+
+fn arg_refs(args: &[String]) -> Vec<&str> {
+    args.iter().map(String::as_str).collect()
+}
+
+fn with_guided_root(body: impl FnOnce(&Path) -> i32) -> i32 {
+    match crucible_guided::root() {
+        Ok(root) => body(&root),
+        Err(err) => guided_fail(err),
+    }
+}
+
+fn guided_ok(result: Result<String, GuidedError>) -> i32 {
+    match result {
+        Ok(text) => guided_report(text, 0),
+        Err(err) => guided_fail(err),
+    }
+}
+
+fn guided_report(text: String, status: i32) -> i32 {
+    print!("{text}");
+    let _ = io::stdout().flush();
+    status
+}
+
+/// Refusals are the shell `die` path (exit 2, `crucible: ` prefix). IO matches `cmd_go`.
+fn guided_fail(err: GuidedError) -> i32 {
+    match err {
+        GuidedError::Io(err) => {
+            let _ = writeln!(io::stderr(), "{err}");
+            1
+        }
+        GuidedError::Message(msg) => {
+            let _ = writeln!(io::stderr(), "crucible: {msg}");
+            2
+        }
+    }
+}
+
+fn cmd_selftest(args: &[String]) -> i32 {
+    match env::var("CRUCIBLE_IN_SELFTEST") {
+        Ok(value) if !value.is_empty() => {
+            let _ = writeln!(
+                io::stderr(),
+                "crucible: already inside a selftest — refusing to recurse"
+            );
+            return 2;
+        }
+        _ => {}
+    }
+    with_guided_root(|root| {
+        // SAFETY: this process is about to be replaced; no other thread reads the variable.
+        unsafe { env::set_var("CRUCIBLE_IN_SELFTEST", "1") };
+        let script = root.join("scripts/selftest.sh");
+        let err = Command::new(script).args(args).exec();
+        let _ = writeln!(io::stderr(), "{err}");
+        1
+    })
+}
+
+fn cmd_help(args: &[String]) -> i32 {
+    if args.is_empty() {
         help();
         return 0;
     }
-    match args[0].as_str() {
-        "go" => cmd_go(&args[1..], cwd, clock),
-        "status" => cmd_status(&args[1..], cwd, clock),
-        "debrief" => cmd_debrief(cwd),
-        "stats" => cmd_stats(&args[1..], cwd, clock),
-        "serve" => cmd_serve(&args[1..], cwd, clock),
-        "room" => cmd_room(&args[1..], cwd),
-        "camera" => cmd_camera(&args[1..]),
-        "reap" => cmd_reap(&args[1..]),
-        "web" => cmd_web(&args[1..]),
-        "doctor" => cmd_doctor(&args[1..]),
-        other => exec_guided_or_unknown(other, args),
+    // Extra words after `protocol` still print the protocol text, matching the shell arm.
+    if args[0] == "protocol" {
+        print!("{PROTOCOL_USAGE}");
+        let _ = io::stdout().flush();
+        return 0;
     }
-}
-
-fn guided_path() -> Option<PathBuf> {
-    let exe = env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    let p = dir.join("crucible-guided");
-    p.is_file().then_some(p)
-}
-
-fn exec_guided(args: &[String]) -> i32 {
-    let Some(guided) = guided_path() else {
-        let cmd = args.first().map(String::as_str).unwrap_or("help");
-        let _ = writeln!(io::stderr(), "unknown command: {cmd}");
-        help();
-        return 2;
-    };
-    match process::Command::new(guided).args(args).status() {
-        Ok(st) => st.code().unwrap_or(1),
-        Err(e) => {
-            let _ = writeln!(io::stderr(), "{e}");
-            1
-        }
-    }
-}
-
-fn exec_guided_or_unknown(other: &str, args: &[String]) -> i32 {
-    if guided_path().is_some() {
-        return exec_guided(args);
-    }
-    let _ = writeln!(io::stderr(), "unknown command: {other}");
-    help();
+    let _ = writeln!(io::stderr(), "crucible: usage: crucible help [protocol]");
     2
 }
 
 fn help() {
-    println!("commands: go status debrief stats serve room web camera reap doctor help");
-    println!("  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)");
-    println!(
+    let _ = write_help(&mut io::stdout());
+}
+
+fn unknown_verb(verb: &str) -> i32 {
+    let _ = writeln!(io::stderr(), "crucible: unknown verb: {verb}\n");
+    let _ = write_help(&mut io::stderr());
+    2
+}
+
+fn write_help(out: &mut dyn Write) -> io::Result<()> {
+    write!(out, "{GUIDED_USAGE}")?;
+    writeln!(out)?;
+    writeln!(
+        out,
+        "commands: go status debrief stats serve room web camera reap doctor adopt cycle drive help"
+    )?;
+    writeln!(
+        out,
+        "  go                                start walk (foreground; STOP-ASK INTAKE without IDEA.md)"
+    )?;
+    writeln!(
+        out,
         "  status                            rewrite FLOOR from the on-disk card (no TRACE/EVENTS)"
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "  status --json                     read-only WalkSnapshot (does not write FLOOR/TRACE)"
-    );
-    println!("  debrief                           FLOOR + TRACE deltas (read-only)");
-    println!("  stats --since 8h|24h|7d --json    .wm/EVENTS if readable, else METRICS.tsv");
-    println!(
+    )?;
+    writeln!(
+        out,
+        "  debrief                           FLOOR + TRACE deltas (read-only)"
+    )?;
+    writeln!(
+        out,
+        "  stats --since 8h|24h|7d --json    .wm/EVENTS if readable, else METRICS.tsv"
+    )?;
+    writeln!(
+        out,
         "  serve [--bind 127.0.0.1:PORT]    GET /walk /stats /health (loopback; default 127.0.0.1:1734)"
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "  room                              herdr tabs; cameras GET; go is a process in orchestrator"
-    );
-    println!(
+    )?;
+    writeln!(
+        out,
         "  web [--bind 127.0.0.1:1735]       backlog and chat; POST /act/go spawns; POST /go is 405"
-    );
-    println!("  camera --bind ADDR                GET /walk and /stats (read-only)");
-    println!("  reap --pid N                      SIGTERM the go process group");
-    println!(
+    )?;
+    writeln!(
+        out,
+        "  camera --bind ADDR                GET /walk and /stats (read-only)"
+    )?;
+    writeln!(
+        out,
+        "  reap --pid N                      SIGTERM the go process group"
+    )?;
+    writeln!(
+        out,
         "  doctor                            warn if home loop-router is missing or stale vs ADR-HASH"
-    );
-    println!("  --version, -V                     product VERSION");
+    )?;
+    writeln!(out, "  --version, -V                     product VERSION")?;
+    Ok(())
 }
 
 fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
