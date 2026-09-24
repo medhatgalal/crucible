@@ -127,7 +127,7 @@ fn phase_managed(
     Ok(format!("{slug} is now in {new}\n"))
 }
 
-fn judge_requested_fix(root: &Path, slug: &str) -> bool {
+pub(crate) fn judge_requested_fix(root: &Path, slug: &str) -> bool {
     let mut latest: Option<String> = None;
     for path in result_files(root) {
         let Ok(text) = fs::read_to_string(&path) else {

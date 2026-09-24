@@ -7,6 +7,7 @@ pub mod claims;
 pub mod close;
 mod cycle;
 pub mod dispatch;
+pub mod drive;
 pub mod inspect;
 mod panel;
 pub mod phase;

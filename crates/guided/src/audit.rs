@@ -212,7 +212,7 @@ fn copy_likes(root: &Path, id: &str, role: &str, likes: &[String]) -> Result<Str
     Ok(out)
 }
 
-fn contract_audit_copy_like(
+pub(crate) fn contract_audit_copy_like(
     root: &Path,
     template: &str,
     target: &str,
@@ -256,7 +256,7 @@ fn contract_audit_copy_like(
     )))
 }
 
-fn contracts_isomorphic(a: &Path, b: &Path) -> Result<bool, GuidedError> {
+pub(crate) fn contracts_isomorphic(a: &Path, b: &Path) -> Result<bool, GuidedError> {
     let left = h12(contract_normalize(&fs::read_to_string(a)?).as_bytes());
     let right = h12(contract_normalize(&fs::read_to_string(b)?).as_bytes());
     Ok(!left.is_empty() && left == right)
@@ -369,7 +369,7 @@ fn match_sed(text: &[char], pat: &[char]) -> Option<usize> {
     Some(ti)
 }
 
-fn contract_structural_ok(ad: &Path, role: &str) -> Result<bool, GuidedError> {
+pub(crate) fn contract_structural_ok(ad: &Path, role: &str) -> Result<bool, GuidedError> {
     let path = ad.join("contract.md");
     if !path.is_file() {
         return Ok(false);
