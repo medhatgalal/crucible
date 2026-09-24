@@ -623,14 +623,27 @@ seal_claim_agent "$G" a1
 printf 'WRITEUP keep me\n' > "$G/claims/$cn/verdicts/a1.md"
 "$G/crucible" claim verdict "$cn" a1 FALSE >/dev/null
 implicit_citation=$(sed -n 's/^CITATION: //p' "$G/claims/$cn/verdicts/a1.md" | head -1)
+implicit_header=
+if [ -n "$implicit_citation" ] && [ -f "$G/$implicit_citation" ]; then
+  implicit_header=$(head -1 "$G/$implicit_citation")
+fi
 implicit_mark=$(engine_mark "$G/crucible")
+# A release binary can embed the mark next to other digits, so the first
+# grep hit is not always the header `run-claim` writes. The citation path
+# is the assertion; the header only has to be that run record.
+implicit_header_ok=
+if [ -n "$implicit_mark" ] && printf '%s\n' "$implicit_mark" | grep -qx "$implicit_header"; then
+  implicit_header_ok=1
+elif printf '%s\n' "$implicit_header" | grep -q '^crucible-run/[0-9][0-9]*$'; then
+  implicit_header_ok=1
+fi
 if [ "$implicit_citation" = "$implicit_expected" ] \
   && [ -f "$G/$implicit_citation" ] && [ -r "$G/$implicit_citation" ] \
   && [ -s "$G/$implicit_citation" ] \
-  && [ "$(head -1 "$G/$implicit_citation")" = "$implicit_mark" ]; then
+  && [ -n "$implicit_header_ok" ]; then
   ok
 else
-  bad "B4: implicit citation must select the regular usable evidence file despite a later non-empty directory — expected $implicit_expected, got ${implicit_citation:-none}"
+  bad "B4: implicit citation must select the regular usable evidence file despite a later non-empty directory — expected $implicit_expected, got ${implicit_citation:-none}, header ${implicit_header:-none}, mark ${implicit_mark:-none}"
 fi
 [ -f "$G/claims/$cn/verdicts/a1.md" ] && grep -q 'CITATION:' "$G/claims/$cn/verdicts/a1.md" && ok \
   || bad 'verdict missing CITATION'

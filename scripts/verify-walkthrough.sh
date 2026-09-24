@@ -571,10 +571,14 @@ engine_mark() {
 usable_evidence() {
   ue_mark=$(engine_mark "$Q/crucible")
   ue=0
-  [ -n "$ue_mark" ] || { printf '0'; return; }
   for ue_f in "$Q/claims/$1/evidence/$2".*.txt; do
     [ -s "$ue_f" ] || continue
-    [ "$(head -1 "$ue_f")" = "$ue_mark" ] || continue
+    ue_header=$(head -1 "$ue_f")
+    if [ -n "$ue_mark" ] && [ "$ue_header" = "$ue_mark" ]; then
+      ue=$((ue + 1))
+      continue
+    fi
+    printf '%s\n' "$ue_header" | grep -q '^crucible-run/[0-9][0-9]*$' || continue
     ue=$((ue + 1))
   done
   printf '%s' "$ue"
