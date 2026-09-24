@@ -23,7 +23,7 @@ pub fn triage(root: &Path) -> Result<TriageReport, GuidedError> {
             "no CLAIMS.md — run: <engine>/crucible adopt <program>",
         ));
     }
-    let text = fs_read(&path)?;
+    let text = std::fs::read_to_string(&path)?;
     let n = count_claim_headings(&text);
     if n == 0 {
         return Err(message(
@@ -158,10 +158,6 @@ Report anything you found that the document never mentioned; do not silently add
         text: report,
         status,
     })
-}
-
-fn fs_read(path: &Path) -> Result<String, GuidedError> {
-    Ok(std::fs::read_to_string(path)?)
 }
 
 fn heading_title(text: &str, i: usize) -> String {
