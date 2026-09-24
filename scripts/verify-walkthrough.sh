@@ -551,13 +551,25 @@ admit_bar_now() {
 # non-empty, and headed by the run marker `crucible run-claim` writes. W6/G stands in the state
 # where this is ZERO for an agent whose TRUE verdict is on disk.
 #
-# The marker is read out of the ADOPTED engine's own `MARK=` assignment rather than retyped here.
-# This suite does not own the engine, and a fixture that hard-coded the string would keep reporting
-# "no usable evidence" after the engine started writing a different header — it would be measuring
-# its own constant. An unreadable marker makes this return 0 files found for every agent, which the
-# assertion below catches as a fixture failure rather than a passing state.
+# The marker is read out of the adopted engine rather than retyped here. A shell
+# kernel still has `MARK=`. The release binary embeds `crucible-run/N`. A fixture
+# that hard-coded the string would keep reporting "no usable evidence" after the
+# engine started writing a different header. An unreadable marker makes this
+# return 0 files found for every agent, which the assertion below catches.
+# Adopted `crucible` is the release binary. The evidence header is the embedded
+# `crucible-run/N` string, not a `MARK=` line. A `#!` kernel still has that line.
+engine_mark() {
+  _f=$1
+  _sig=$(dd if="$_f" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" = '#!' ]; then
+    awk -F "'" '/^MARK=/ { print $2; exit }' "$_f"
+    return
+  fi
+  LC_ALL=C grep -a -o 'crucible-run/[0-9][0-9]*' "$_f" 2>/dev/null | head -1 || true
+}
+
 usable_evidence() {
-  ue_mark=$(awk -F "'" '/^MARK=/ { print $2; exit }' "$Q/crucible")
+  ue_mark=$(engine_mark "$Q/crucible")
   ue=0
   [ -n "$ue_mark" ] || { printf '0'; return; }
   for ue_f in "$Q/claims/$1/evidence/$2".*.txt; do

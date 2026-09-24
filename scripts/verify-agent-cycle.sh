@@ -22,6 +22,18 @@ refuses() {
   if printf '%s\n' "$out" | grep -E -q "$pattern"; then ok; else bad "$label: wanted $pattern, got $out"; fi
 }
 
+# Adopted `crucible` is the release binary. The evidence header is the embedded
+# `crucible-run/N` string, not a `MARK=` line. A `#!` kernel still has that line.
+engine_mark() {
+  _f=$1
+  _sig=$(dd if="$_f" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" = '#!' ]; then
+    awk -F "'" '/^MARK=/ { print $2; exit }' "$_f"
+    return
+  fi
+  LC_ALL=C grep -a -o 'crucible-run/[0-9][0-9]*' "$_f" 2>/dev/null | head -1 || true
+}
+
 write_agents() {
   prog=$1
   {
@@ -611,7 +623,7 @@ seal_claim_agent "$G" a1
 printf 'WRITEUP keep me\n' > "$G/claims/$cn/verdicts/a1.md"
 "$G/crucible" claim verdict "$cn" a1 FALSE >/dev/null
 implicit_citation=$(sed -n 's/^CITATION: //p' "$G/claims/$cn/verdicts/a1.md" | head -1)
-implicit_mark=$(awk -F "'" '/^MARK=/ { print $2; exit }' "$G/crucible")
+implicit_mark=$(engine_mark "$G/crucible")
 if [ "$implicit_citation" = "$implicit_expected" ] \
   && [ -f "$G/$implicit_citation" ] && [ -r "$G/$implicit_citation" ] \
   && [ -s "$G/$implicit_citation" ] \

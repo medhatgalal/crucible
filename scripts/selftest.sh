@@ -1206,7 +1206,12 @@ n=0; while [ $n -lt 40 ]; do
   rm -f "items/it/evidence/mk.pad$n.$w.txt.bak"
   n=$((n+1))
 done
-( sleep 0.2; echo 'x = 2' >> items/it/work/a.py ) &
+# The shell evidence scan was slow enough that a 0.2s sleep landed between the
+# two work-id reads. The Rust check finishes sooner, so wait until close has
+# claimed the directory and then change the work. A change before `check`
+# reads the id still refuses, and the item must not be marked closed.
+( while [ ! -d items/it/.closing ]; do :; done
+  echo 'x = 2' >> items/it/work/a.py ) &
 mp=$!
 out=$(./crucible close it "should refuse" 2>&1 || true)
 wait "$mp" 2>/dev/null || true
