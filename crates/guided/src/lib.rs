@@ -1,6 +1,7 @@
 //! Root resolution and managed STATE / PROGRAM parsers for the guided cycle.
 
 mod program;
+mod project;
 mod root;
 mod state;
 
@@ -9,6 +10,7 @@ use std::io;
 
 pub use crucible_contract::{Clock, FixedClock};
 pub use program::{lifecycle_mode, uses_guided_cycle, uses_managed_lifecycle, LifecycleMode};
+pub use project::project_cycle_line;
 pub use root::root;
 pub use state::{
     state_add_item, state_commit, state_lock, state_render_file, state_unlock, state_update_item,
