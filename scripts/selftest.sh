@@ -1263,9 +1263,16 @@ cd "$HERE"
 
 # Patching once inserted the same function three times. Only the last definition takes effect,
 # so the earlier copies are dead code that /bin/sh -n accepts and no behaviour test notices.
-dupf=$(grep -oE '^cmd_[a-z_]+\(\)' crucible | sort | uniq -d | tr '\n' ' ')
-[ -z "$dupf" ] && ok "no function is defined more than once" \
-  || bad "functions defined more than once:$dupf"
+# The engine finder is a shell script. An adopted program's crucible is the
+# release binary, which has no shell functions to duplicate.
+_sig=$(dd if=crucible bs=2 count=1 2>/dev/null || true)
+if [ "$_sig" = '#!' ]; then
+  dupf=$(grep -oE '^cmd_[a-z_]+\(\)' crucible | sort | uniq -d | tr '\n' ' ')
+  [ -z "$dupf" ] && ok "no function is defined more than once" \
+    || bad "functions defined more than once:$dupf"
+else
+  ok "the release binary has no shell functions to duplicate"
+fi
 
 # README claims claim-admission enforces kind diversity, and that was unasserted: removing the
 # check left the whole suite green.
@@ -1580,7 +1587,13 @@ case $o in
   *) ok "the gate ignores the verdict archive" ;;
 esac
 cd "$HERE"
-/bin/sh -n ./crucible && ok "gate parses under /bin/sh" || bad "gate is not POSIX sh"
+# sh -n on the release binary is a syntax error. Parse only a shell kernel.
+_sig=$(dd if=./crucible bs=2 count=1 2>/dev/null || true)
+if [ "$_sig" = '#!' ]; then
+  /bin/sh -n ./crucible && ok "gate parses under /bin/sh" || bad "gate is not POSIX sh"
+else
+  ok "crucible is the release binary"
+fi
 /bin/sh -n ./scripts/selftest.sh && ok "selftest parses under /bin/sh" || bad "selftest is not POSIX sh"
 /bin/sh -n ./scripts/verify-quickstart.sh && ok "verify-quickstart parses under /bin/sh" \
   || bad "verify-quickstart is not POSIX sh"
