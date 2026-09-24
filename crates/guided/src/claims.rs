@@ -944,7 +944,7 @@ fn last_ledger_attempt(
     Ok(last)
 }
 
-fn claim_attempt_is_sealed(root: &Path, id: &str) -> bool {
+pub(crate) fn claim_attempt_is_sealed(root: &Path, id: &str) -> bool {
     let dir = root.join("attempts").join(id);
     if !dir.join("transport").is_file() || !dir.join("contract-audit.md").is_file() {
         return false;
@@ -1001,7 +1001,7 @@ pub(crate) fn require_attempt_independence(root: &Path, id: &str) -> Result<(), 
     )))
 }
 
-fn suggest_contract_auditor(root: &Path) -> Result<String, GuidedError> {
+pub(crate) fn suggest_contract_auditor(root: &Path) -> Result<String, GuidedError> {
     let path = root.join("PANEL.ASSIGN.tsv");
     if !path.is_file() {
         return Ok("<auditor-name>".to_string());
@@ -1032,7 +1032,7 @@ fn supersede_if_dispatched(
     Ok(())
 }
 
-fn claim_copy_verdict_like(
+pub(crate) fn claim_copy_verdict_like(
     root: &Path,
     from: &str,
     to: &str,

@@ -1512,7 +1512,7 @@ pub(crate) fn is_claim_slug(slug: &str) -> bool {
     bytes.len() >= 2 && bytes[0] == b'C' && bytes[1].is_ascii_digit()
 }
 
-fn drive_state_name(line: &str) -> &'static str {
+pub(crate) fn drive_state_name(line: &str) -> &'static str {
     if line.starts_with("NEXT CONFIGURE") {
         "CONFIGURE"
     } else if line.starts_with("WAIT PANEL") {
@@ -1542,7 +1542,7 @@ fn drive_state_name(line: &str) -> &'static str {
     }
 }
 
-fn drive_human_gate(state: &str) -> &'static str {
+pub(crate) fn drive_human_gate(state: &str) -> &'static str {
     match state {
         "WAIT_PANEL" => "approve-panel",
         "WAIT_APPROVAL" => "approve",
@@ -1552,14 +1552,14 @@ fn drive_human_gate(state: &str) -> &'static str {
     }
 }
 
-fn drive_active_item(root: &Path) -> Result<String, GuidedError> {
+pub(crate) fn drive_active_item(root: &Path) -> Result<String, GuidedError> {
     if !uses_managed_lifecycle(root)? || !root.join("STATE.tsv").is_file() {
         return Ok("-".to_string());
     }
     Ok(current_slug(root)?.unwrap_or_default())
 }
 
-fn drive_inflight(root: &Path, item: &str) -> Result<String, GuidedError> {
+pub(crate) fn drive_inflight(root: &Path, item: &str) -> Result<String, GuidedError> {
     if item.is_empty() || item == "-" {
         return Ok("-".to_string());
     }
@@ -1610,7 +1610,7 @@ fn engine_version(root: &Path) -> Result<String, GuidedError> {
 }
 
 /// File mtimes are the evidence files' own stamps, not an epoch this crate mints.
-fn drive_last_evidence(root: &Path) -> Result<String, GuidedError> {
+pub(crate) fn drive_last_evidence(root: &Path) -> Result<String, GuidedError> {
     let mut found = Vec::new();
     for name in ["claims", "items"] {
         collect_evidence(&root.join(name), root, &mut found);

@@ -219,7 +219,7 @@ pub(crate) fn tgt(root: &Path, slug: &str, key: &str) -> Result<String, GuidedEr
         .to_string())
 }
 
-fn invocation(root: &Path, name: &str, brief: &str) -> Result<String, GuidedError> {
+pub(crate) fn invocation(root: &Path, name: &str, brief: &str) -> Result<String, GuidedError> {
     let cmd = agent_col(root, name, 5)?;
     if cmd.is_empty() {
         return Ok(format!(
