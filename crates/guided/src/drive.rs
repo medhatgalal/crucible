@@ -51,12 +51,6 @@ impl Drop for DriveLock {
     }
 }
 
-#[derive(PartialEq, Eq)]
-enum Flow {
-    Again,
-    Done,
-}
-
 /// `crucible drive`. Stdout on success, including STOP. Refusals are the shell `die` strings.
 pub fn drive(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
     if !uses_guided_cycle(root)? {
@@ -91,6 +85,16 @@ pub fn drive(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, Gu
         worker_returned: false,
         iso_copied: false,
     };
+    // A later refusal must keep stdout already produced, including an earlier iteration.
+    match drive_loop(&mut ctx, tick, max) {
+        Ok(()) => Ok(ctx.out),
+        Err(err) => Err(combine_out(&ctx.out, err)),
+    }
+}
+
+fn drive_loop(ctx: &mut Ctx, tick: bool, max: u64) -> Result<(), GuidedError> {
+    let root = ctx.root;
+    let clock = ctx.clock;
     let mut n = 0u64;
     loop {
         n += 1;
@@ -114,55 +118,66 @@ pub fn drive(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, Gu
         let line = captured(write_cycle_status(root, clock)?);
         let state = drive_state_name(&line);
         if is_human_gate(state) {
-            print_human(&mut ctx, state, &line);
-            return Ok(ctx.out);
+            print_human(ctx, state, &line);
+            return Ok(());
         }
-        if tick && already_returned(&mut ctx)? {
-            return Ok(ctx.out);
+        if tick && already_returned(ctx)? {
+            return Ok(());
         }
         fs::create_dir_all(root.join("items"))?;
-        if state == "INVESTIGATE" && investigate_parent_tick(&mut ctx, &repo)? {
-            if flow(tick, finish_tick(&mut ctx)?) == Flow::Again {
+        if state == "INVESTIGATE" && investigate_parent_tick(ctx, &repo)? {
+            if flow(tick, finish_tick(ctx)?) {
                 continue;
             }
-            return Ok(ctx.out);
+            return Ok(());
         }
-        apply_isomorphic_audits(&mut ctx)?;
-        if invoke_sealed_worker(&mut ctx, &repo)? {
-            if flow(tick, finish_tick(&mut ctx)?) == Flow::Again {
+        apply_isomorphic_audits(ctx)?;
+        if invoke_sealed_worker(ctx, &repo)? {
+            if flow(tick, finish_tick(ctx)?) {
                 continue;
             }
-            return Ok(ctx.out);
+            return Ok(());
         }
         take_snapshot(root, &repo)?;
         let before_disp = count_dispatches(root);
-        invoke_coordinator(&mut ctx, &repo)?;
+        invoke_coordinator(ctx, &repo)?;
         check_discipline(root, &repo)?;
         if state == "WAIT" {
             refuse_second_live(root, &repo)?;
         }
         if count_dispatches(root) <= before_disp {
-            perform_legal(&mut ctx, state, &line)?;
+            perform_legal(ctx, state, &line)?;
         }
-        apply_isomorphic_audits(&mut ctx)?;
-        if invoke_sealed_worker(&mut ctx, &repo)? {
-            if flow(tick, finish_tick(&mut ctx)?) == Flow::Again {
+        apply_isomorphic_audits(ctx)?;
+        if invoke_sealed_worker(ctx, &repo)? {
+            if flow(tick, finish_tick(ctx)?) {
                 continue;
             }
-            return Ok(ctx.out);
+            return Ok(());
         }
-        if flow(tick, finish_tick(&mut ctx)?) == Flow::Again {
+        if flow(tick, finish_tick(ctx)?) {
             continue;
         }
-        return Ok(ctx.out);
+        return Ok(());
     }
 }
 
-fn flow(tick: bool, keep_going: bool) -> Flow {
-    if keep_going && !tick {
-        Flow::Again
+fn flow(tick: bool, keep_going: bool) -> bool {
+    keep_going && !tick
+}
+
+fn combine_out(prior: &str, err: GuidedError) -> GuidedError {
+    join_out(prior, &err.to_string())
+}
+
+fn join_out(prior: &str, msg: &str) -> GuidedError {
+    if prior.is_empty() {
+        return message(msg);
+    }
+    if prior.ends_with('\n') {
+        message(format!("{prior}{msg}"))
     } else {
-        Flow::Done
+        message(format!("{prior}\n{msg}"))
     }
 }
 
@@ -420,7 +435,11 @@ fn investigate_dispatch(ctx: &mut Ctx) -> Result<bool, GuidedError> {
     for i in 1..=total {
         let cn = format!("C{i}");
         if !has_claim_dispatch(ctx.root, &cn, "claim-auditor", &agent) {
-            let _ = dispatch(ctx.root, &[&cn, "claim-auditor", &agent], ctx.clock);
+            // Claim dispatch `die` exits. `|| true` does not catch it, so do not seal after.
+            record_ok(
+                ctx,
+                dispatch(ctx.root, &[&cn, "claim-auditor", &agent], ctx.clock),
+            )?;
             dispatched = true;
         }
     }
@@ -433,7 +452,10 @@ fn investigate_dispatch(ctx: &mut Ctx) -> Result<bool, GuidedError> {
             let scout_agent = scouts.first().cloned().unwrap_or_else(|| agent.clone());
             if !scout_agent.is_empty() && !has_claim_dispatch(ctx.root, &cn, "scout", &scout_agent)
             {
-                let _ = dispatch(ctx.root, &[&cn, "scout", &scout_agent], ctx.clock);
+                record_ok(
+                    ctx,
+                    dispatch(ctx.root, &[&cn, "scout", &scout_agent], ctx.clock),
+                )?;
                 dispatched = true;
             }
         }
@@ -939,25 +961,41 @@ fn invoke_coordinator(ctx: &mut Ctx, repo: &Path) -> Result<(), GuidedError> {
             ctx.out.push_str(&text);
             Ok(())
         }
-        Err(()) => Err(message(format!(
-            "refused: coordinator invoke failed — {cmd}"
-        ))),
+        Err(text) => Err(join_out(
+            &text,
+            &format!("refused: coordinator invoke failed — {cmd}"),
+        )),
     }
 }
 
-fn run_sh(repo: &Path, cmd: &str) -> Result<String, ()> {
-    let out = Command::new("sh")
+fn run_sh(repo: &Path, cmd: &str) -> Result<String, String> {
+    let out = match Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .current_dir(repo)
         .output()
-        .map_err(|_| ())?;
-    if !out.status.success() {
-        return Err(());
-    }
+    {
+        Ok(out) => out,
+        Err(err) => return Err(err.to_string()),
+    };
     let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&out.stderr));
-    Ok(text)
+    if out.status.success() {
+        Ok(text)
+    } else {
+        Err(text)
+    }
+}
+
+fn record_ok(ctx: &mut Ctx, result: Result<String, GuidedError>) -> Result<(), GuidedError> {
+    ctx.out.push_str(&result?);
+    Ok(())
+}
+
+fn keep_ok(ctx: &mut Ctx, result: Result<String, GuidedError>) {
+    if let Ok(text) = result {
+        ctx.out.push_str(&text);
+    }
 }
 
 fn write_brief(ctx: &Ctx) -> Result<(), GuidedError> {
@@ -995,7 +1033,11 @@ fn perform_legal(ctx: &mut Ctx, state: &str, line: &str) -> Result<(), GuidedErr
             if !slug.is_empty() && slug != "-" && (inf.is_empty() || inf == "-") {
                 if let Some(maker) = cast_agents(ctx.root, "maker")?.into_iter().next() {
                     if state_col(ctx.root, &slug, 3) == "BUILD" {
-                        let _ = dispatch(ctx.root, &[&slug, "maker", &maker], ctx.clock);
+                        // Managed dispatch is a subshell, so its `die` is swallowed.
+                        keep_ok(
+                            ctx,
+                            dispatch(ctx.root, &[&slug, "maker", &maker], ctx.clock),
+                        );
                     }
                 }
             }
@@ -1017,9 +1059,13 @@ fn perform_legal(ctx: &mut Ctx, state: &str, line: &str) -> Result<(), GuidedErr
             if judge_requested_fix(ctx.root, &slug) && state_col(ctx.root, &slug, 3) == "REVIEW" {
                 let idle = inf.is_empty() || inf == "-";
                 if idle || (ast == "RETURNED" && role == "judge") {
-                    let _ = phase(ctx.root, &[&slug, "BUILD"], ctx.clock);
+                    // `cmd_phase` is not a subshell, so `|| true` does not catch `die`.
+                    record_ok(ctx, phase(ctx.root, &[&slug, "BUILD"], ctx.clock))?;
                     if let Some(maker) = cast_agents(ctx.root, "maker")?.into_iter().next() {
-                        let _ = dispatch(ctx.root, &[&slug, "maker", &maker], ctx.clock);
+                        keep_ok(
+                            ctx,
+                            dispatch(ctx.root, &[&slug, "maker", &maker], ctx.clock),
+                        );
                     }
                 }
             } else if ast == "RETURNED" && role == "maker" {
@@ -1029,7 +1075,7 @@ fn perform_legal(ctx: &mut Ctx, state: &str, line: &str) -> Result<(), GuidedErr
                 }
                 if let Some(who) = reviewers.into_iter().next() {
                     if state_col(ctx.root, &slug, 3) == "REVIEW" {
-                        let _ = dispatch(ctx.root, &[&slug, "judge", &who], ctx.clock);
+                        keep_ok(ctx, dispatch(ctx.root, &[&slug, "judge", &who], ctx.clock));
                     }
                 }
             }
@@ -1883,5 +1929,197 @@ A1700000000.1.1\tC1\t-\tCLAIM\tmaker\tc0\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t1700
         assert!(elapsed >= Duration::from_millis(700), "{elapsed:?}");
         assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
         assert!(!prog.join(".drive.lock").exists());
+    }
+
+    fn meta_row(id: &str, item: &str, role: &str, agent: &str, state: &str) -> String {
+        format!(
+            "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+{id}\t{item}\t-\tw1\t{role}\t{agent}\tkindA\t-\tFOCUSED\t{state}\t1\t2\t-
+"
+        )
+    }
+
+    #[test]
+    fn claim_dispatch_die_does_not_seal_or_skip_coordinator() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        let sentinel = tmp.root.join("coordinator-ran");
+        fs::create_dir_all(&repo).unwrap();
+        program(&prog, &repo, "");
+        agents(&prog, &format!("touch {}", sentinel.display()));
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Gap\n\nA falsifiable outcome is missing.\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "# CLAIMS\n\n### C1 scope is wrong\n    status: OPEN\n",
+        )
+        .unwrap();
+        // Unsealed claim attempt. A counted dispatch would make the parent seal it and
+        // return before the coordinator. A missing role file must die first.
+        let attempt = prog.join("attempts").join("A1700000000.3.1");
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(
+            attempt.join("contract.md"),
+            "Read this file and follow it exactly.\nAuditing claim C1.\n",
+        )
+        .unwrap();
+        fs::write(attempt.join("transport"), "multi-agent\n").unwrap();
+        fs::write(
+            attempt.join("meta.tsv"),
+            meta_row("A1700000000.3.1", "C1", "claim-auditor", "a1", "DISPATCHED"),
+        )
+        .unwrap();
+        fs::write(
+            attempt.join("events.tsv"),
+            "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tfixture\n",
+        )
+        .unwrap();
+        let err = drive(&prog, &["tick"], &clock).unwrap_err().to_string();
+        assert!(err.contains("no such role: claim-auditor"), "{err}");
+        assert!(
+            !attempt.join("contract-audit.md").exists(),
+            "refused claim dispatch still sealed"
+        );
+        assert!(
+            !sentinel.exists() && !prog.join("DRIVE.BRIEF.md").exists(),
+            "claim dispatch die returned success and skipped the coordinator"
+        );
+    }
+
+    #[test]
+    fn refused_phase_to_build_does_not_start_sealed_worker() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        let sealed = prog.join("attempts").join("A1700000000.4.1");
+        let script = tmp.root.join("coord.sh");
+        // Planted after the pre-coordinator invoke, which sees no sealed attempt.
+        // A swallowed phase refusal would then start this worker.
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nmkdir -p '{dir}'\ncat > '{dir}/meta.tsv' <<'EOF'\n{meta}EOF\nprintf '%s\\n' 'state\tepoch\tpid\treason' 'DISPATCHED\t1\t-\tfixture' > '{dir}/events.tsv'\nprintf '%s\\n' 'multi-agent' > '{dir}/transport'\nprintf '%s\\n' 'VERDICT: PASS' > '{dir}/contract-audit.md'\nprintf '%s\\n' 'contract' > '{dir}/contract.md'\n",
+                dir = sealed.display(),
+                meta = meta_row("A1700000000.4.1", "alpha", "maker", "c0", "DISPATCHED"),
+            ),
+        )
+        .unwrap();
+        fs::create_dir_all(&repo).unwrap();
+        program(&prog, &repo, "");
+        agents(&prog, &format!("/bin/sh {}", script.display()));
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Broken behavior\n\nThe program does not preserve approved scope.\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "\
+# CLAIMS
+
+### C1 scope is wrong
+    scout: FULLY-EXISTS
+    item: done
+    status: CLOSED
+",
+        )
+        .unwrap();
+        let verdicts = prog.join("claims").join("C1").join("verdicts");
+        fs::create_dir_all(&verdicts).unwrap();
+        fs::write(verdicts.join("a1.md"), "CLAIM-VERDICT: TRUE\n").unwrap();
+        let claim = prog.join("attempts").join("A1.2.3");
+        fs::create_dir_all(&claim).unwrap();
+        fs::write(
+            claim.join("meta.tsv"),
+            meta_row("A1.2.3", "C1", "claim-auditor", "a1", "DISPATCHED"),
+        )
+        .unwrap();
+        fs::write(claim.join("transport"), "multi-agent\n").unwrap();
+        fs::write(claim.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+        fs::write(
+            claim.join("events.tsv"),
+            "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("PROPOSAL.md"),
+            "\
+# Proposal
+## Verified problem
+The scope was not preserved.
+## Proposed outcome
+Preserve it.
+## Non-goals
+No extra product.
+## Backlog
+None.
+## Verification
+Two recorded checks.
+",
+        )
+        .unwrap();
+        cycle(&prog, &["approve"], &clock).unwrap();
+        fs::write(
+            prog.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tREVIEW\tw1\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        let judged = prog.join("attempts").join("A1700000000.5.1");
+        fs::create_dir_all(&judged).unwrap();
+        fs::write(
+            judged.join("result.md"),
+            "ITEM: alpha\nROLE: judge\nNEXT: FIX\n",
+        )
+        .unwrap();
+        fs::write(
+            judged.join("meta.tsv"),
+            meta_row("A1700000000.5.1", "alpha", "judge", "j1", "STOPPED"),
+        )
+        .unwrap();
+        fs::write(
+            judged.join("events.tsv"),
+            "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+        )
+        .unwrap();
+        let err = drive(&prog, &["tick"], &clock).unwrap_err().to_string();
+        assert!(err.contains("no such item: alpha"), "{err}");
+        assert!(sealed.join("contract.md").is_file(), "{err}");
+        assert!(!sealed.join("invoke.log").exists(), "{err}");
+        let events = fs::read_to_string(sealed.join("events.tsv")).unwrap();
+        assert!(!events.contains("RUNNING"), "{events}");
+    }
+
+    #[test]
+    fn failing_coordinator_keeps_child_output_with_the_refusal() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        program(&prog, &repo, "");
+        agents(
+            &prog,
+            "printf 'stdout line\\n'; printf 'coordinator blew up\\n' >&2; exit 1",
+        );
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        let err = drive(&prog, &["tick"], &clock).unwrap_err().to_string();
+        let stdout_at = err.find("stdout line\n").expect(&err);
+        let stderr_at = err.find("coordinator blew up\n").expect(&err);
+        let refused_at = err
+            .find("refused: coordinator invoke failed —")
+            .expect(&err);
+        assert!(stdout_at < stderr_at && stderr_at < refused_at, "{err}");
     }
 }
