@@ -1,20 +1,20 @@
 //! Root resolution, managed STATE / PROGRAM parsers, and adopt.
 
 mod adopt;
+pub mod attempt;
+pub mod audit;
 pub mod claims;
 mod cycle;
+pub mod dispatch;
 mod panel;
+pub mod phase;
 mod program;
 mod project;
+pub mod result;
 mod root;
 pub mod run;
 mod state;
 pub mod triage;
-pub mod attempt;
-pub mod audit;
-pub mod dispatch;
-pub mod phase;
-pub mod result;
 
 use std::fmt;
 use std::io;

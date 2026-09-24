@@ -1181,13 +1181,18 @@ fn evidence_block(dir: &Path) -> Result<String, GuidedError> {
         let name = file_name(&path);
         out.push_str(&format!("### {name}\n```\n"));
         let text = fs::read_to_string(&path)?;
-        out.push_str(&text);
-        if !text.ends_with('\n') {
-            out.push('\n');
-        }
+        push_cat(&mut out, &text);
         out.push_str("```\n");
     }
     Ok(out)
+}
+
+/// `cat` of an empty file adds nothing. A non-empty body gets a newline only if it lacks one.
+fn push_cat(out: &mut String, text: &str) {
+    out.push_str(text);
+    if !text.is_empty() && !text.ends_with('\n') {
+        out.push('\n');
+    }
 }
 
 fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> {
@@ -1219,10 +1224,7 @@ fn emit_work(root: &Path, slug: &str, wid: &str) -> Result<String, GuidedError> 
         let rel = path.strip_prefix(&dir).unwrap_or(&path);
         out.push_str(&format!("### {}\n```\n", rel.display()));
         let text = fs::read_to_string(&path)?;
-        out.push_str(&text);
-        if !text.ends_with('\n') {
-            out.push('\n');
-        }
+        push_cat(&mut out, &text);
         out.push_str("```\n");
     }
     Ok(out)
@@ -2561,6 +2563,41 @@ stop
                 );
             }
         }
+    }
+
+    #[test]
+    fn empty_evidence_file_has_no_blank_line_inside_the_fence() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        fs::write(root.join("agents.tsv"), "dee\tother\tm\th\techo {BRIEF}\n").unwrap();
+        fs::create_dir_all(root.join("roles")).unwrap();
+        fs::write(
+            root.join("roles/judge.md"),
+            "purpose: j\nmay-read: a\nmust-not-read: b\nreturn: c\nverify: d\n\n## Instructions\nLook.\n",
+        )
+        .unwrap();
+        let item = root.join("items/alpha");
+        fs::create_dir_all(item.join("evidence")).unwrap();
+        fs::create_dir_all(item.join("work")).unwrap();
+        fs::write(item.join("ITEM.md"), "# alpha\n\n- [ ] A1\n").unwrap();
+        fs::write(item.join("evidence/empty.txt"), "").unwrap();
+        fs::write(item.join("work/blank"), "").unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tREVIEW\tEMPTY\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        dispatch(root, &["alpha", "judge", "dee"], &FixedClock::new(EPOCH)).unwrap();
+        let id = format!("A{EPOCH}.{}.1", std::process::id());
+        let contract =
+            fs::read_to_string(root.join("attempts").join(&id).join("contract.md")).unwrap();
+        assert!(
+            contract.contains("### work/blank\n```\n```\n"),
+            "{contract}"
+        );
+        assert!(contract.contains("### empty.txt\n```\n```\n"), "{contract}");
+        assert!(!contract.contains("```\n\n```"));
     }
 
     fn maker_ready(root: &Path) {
