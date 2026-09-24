@@ -13,6 +13,11 @@ set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 C="$HERE/crucible"
 [ -x "$C" ] || { echo "selftest: $C is not executable"; exit 2; }
+# The finder exports these before exec. root() prefers them over the fixture
+# binary's own directory, so every ./crucible in a fixture would hit the engine
+# tree. $C adopt is the finder, which sets CRUCIBLE_WRAPPER itself, or the
+# installed binary, whose directory is already the program root.
+unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
 VERBOSE=0; FAST=0
 for a in "$@"; do
   case $a in
@@ -53,16 +58,50 @@ ok()   { PASS=$((PASS+1)); [ "$VERBOSE" = 1 ] && printf '  ok   %s\n' "$1" || pr
 bad()  { FAIL=$((FAIL+1)); FAILED="$FAILED
   FAILED: $1"; printf '\n  FAIL %s\n' "$1"; }
 
+# The release binary, not the repo-root finder. A copied finder looks for
+# target/release next to the fixture and exits 1 before any assertion.
+fixture_bin() {
+  if [ -n "${CRUCIBLE_BIN:-}" ] && [ -x "$CRUCIBLE_BIN" ]; then
+    _sig=$(dd if="$CRUCIBLE_BIN" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$CRUCIBLE_BIN"
+      return 0
+    fi
+  fi
+  _rel="$HERE/target/release/crucible"
+  if [ -x "$_rel" ]; then
+    _sig=$(dd if="$_rel" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$_rel"
+      return 0
+    fi
+  fi
+  # Adopted trees install the binary as $C. The engine finder is #! and stays rejected.
+  if [ -x "$C" ]; then
+    _sig=$(dd if="$C" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$C"
+      return 0
+    fi
+  fi
+  echo "selftest: no release binary (cargo build --release, or set CRUCIBLE_BIN)" >&2
+  exit 1
+}
+
 # A fresh run root with a registered panel, one item, a written falsifier and work.
 # Prints the directory. The caller must cd into it: `cd "$(fresh)"`.
 # Setup runs in a subshell so this function never changes the caller's directory.
 mkrun() {
   d=$(mktemp -d "$SELFTEST_TMP/run.XXXXXX")
+  rel=$(fixture_bin) || exit 1
   ( cd "$d"
-    cp "$C" ./crucible; cp -R "$HERE/roles" .; cp "$HERE/RULES.md" .
+    cp "$rel" ./crucible
+    chmod +x ./crucible
+    cp -R "$HERE/roles" .; cp "$HERE/RULES.md" .
     printf 'mk\tkiro\tm\thigh\techo {BRIEF}\n'  > agents.tsv
     printf 'j1\tkiro\tm\thigh\techo {BRIEF}\n' >> agents.tsv
     printf 'j2\tgrok\tm\thigh\techo {BRIEF}\n' >> agents.tsv
+    unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
     ./crucible add it "selftest item" >/dev/null
     [ "${1:-}" = nofalsifier ] || {
       sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' items/it/ITEM.md > i.tmp
@@ -513,21 +552,29 @@ cd "$HERE"
 # `attempt` and `cycle` — so `brief` was never presented to the accept side at all, under either
 # form. Writing an observation that did not happen is the failure this release exists to stop,
 # and it does not get an exception in this file. What is true about `brief` is a different fact
-# and still worth recording: it is dispatched (`brief)` sits in the case table, `./crucible
+# and still worth recording: it is dispatched (`"brief"` is a dispatch_verb arm, `./crucible
 # brief` answers "need a slug") and it appears in neither `help` nor `help protocol`, so nothing
 # in this suite asserts help completeness for it. That is a gap in the help text.
 #
-# Enumerate it. The engine's trailing `case ${1:-help} in` dispatch table IS the set of verbs;
-# nothing else decides what the script accepts. Read that table and match exactly. Note it is
-# the accept-set that is authoritative here, not help: a verb missing from help is a help
-# defect, and `brief` above is exactly that defect — asserting help membership on this line
-# would report it as a documentation error in whichever code block happened to name it.
-#
-# `tr '|' '\n'` splits the `a|b)` alternation forms. The `^ *[a-z]` anchor is deliberate: it
-# keeps `-h|--help)` and the `*)` catch-all out, since those are flags and a refusal, not verbs,
-# and the doc extractor below can never emit a leading `-` or `*` anyway.
-dispatch_verbs=$(awk '/^case .*\$\{?1/,/^esac/' ./crucible 2>/dev/null \
-  | grep -oE '^ *[a-z][a-z|-]*\)' | tr -d ' )' | tr '|' '\n' | sort -u)
+# Enumerate it. The accept-set is the match in `fn dispatch_verb` in
+# crates/cli/src/main.rs. Repo-root ./crucible is the finder wrapper and has no
+# case table; reading it extracts nothing and this check would fail closed.
+# Help text is not the accept-set: a verb missing from help is a help defect
+# (`brief` above). Flags and the unknown-verb arm are not quoted string arms,
+# so they stay out of the set.
+dispatch_verbs=$(awk '
+  /fn dispatch_verb\(/ { in_fn = 1 }
+  in_fn && /^}/ { exit }
+  in_fn {
+    line = $0
+    sub(/^[[:space:]]*/, "", line)
+    if (line ~ /^"[a-z][a-z0-9-]*" =>/) {
+      sub(/^"/, "", line)
+      sub(/".*/, "", line)
+      print line
+    }
+  }
+' crates/cli/src/main.rs | sort -u)
 n_dispatch=$(printf '%s\n' "$dispatch_verbs" | grep -c '[a-z]' || true)
 # Fail closed. An extractor that silently matches nothing turns this assertion into "every doc
 # verb is in the empty set", which agrees with any documentation at all — the exact shape of
@@ -636,7 +683,7 @@ else
 # `lifecycle`. Validating the full two-word spelling would need a second authoritative set, and
 # there is no second table to read — each subverb is parsed inside its own `cmd_*` function, in
 # forms that differ per command, so any enumeration of them would itself be a proxy and would
-# rot the moment one function changed. The head verb is what `case ${1:-help}` decides, so the
+# rot the moment one function changed. The head verb is what `dispatch_verb` decides, so the
 # head verb is what this line can assert as a fact. It keeps its teeth where it matters: a
 # bogus head verb such as `crucible isolation` has no dispatch entry and is refused, which is
 # the failure this check exists to catch. A wrong subverb under a real head verb is out of
@@ -830,15 +877,21 @@ printf '%s' "$cur" | grep -qE "suite is [0-9]+|[0-9]+ assertions" && bad_count="
 helpv=$(./crucible help 2>/dev/null | grep -oE '^  crucible [a-z][a-z]*' | sed 's|  crucible ||' | sort -u)
 notrouted=""
 for v in $helpv; do
-  grep -qE "^$v\)|^$v\|" crucible || notrouted="$notrouted $v"
+  printf '%s\n' "$dispatch_verbs" | grep -qx "$v" || notrouted="$notrouted $v"
 done
 [ -z "$notrouted" ] && ok "every verb in help is explicitly routed" \
   || bad "verbs in help are not routed:$notrouted"
 
 # A5: a cold fresh agent cycle must cross intake, investigation, proposal and approval gates.
-./scripts/verify-quickstart.sh >/dev/null 2>&1 \
-  && ok "cold fresh-agent cycle binds approval before planning" \
-  || bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
+# Keep the verifier's own failure text. A swallowed non-zero only says the shim failed.
+qlog=$(mktemp "${TMPDIR:-/tmp}/crucible-quickstart.XXXXXX")
+if ./scripts/verify-quickstart.sh >"$qlog" 2>&1; then
+  ok "cold fresh-agent cycle binds approval before planning"
+else
+  bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
+  grep -n 'FAIL \|passed,' "$qlog" | sed 's/^/    /'
+fi
+rm -f "$qlog"
 ./scripts/verify-drive.sh >/dev/null 2>&1 \
   && ok "drive tick dispatches on INVESTIGATE and refuses owned-path writes" \
   || bad "drive contract (scripts/verify-drive.sh) failed"
@@ -893,7 +946,7 @@ done
 # below, which refuses the existence of `.github/actions/` and reads no composite action's shell
 # wherever that action lives. `env:`, `with:` and `defaults` are audited by nothing here.
 wf=.github/workflows/selftest.yml
-a6_pin=c17cd4acc3c4
+a6_pin=7b3558eac819
 # Assert-if-present, and the asymmetry is the point.
 #
 # `.github` is `export-ignore` in .gitattributes, so no release package contains this workflow,
@@ -1159,7 +1212,12 @@ n=0; while [ $n -lt 40 ]; do
   rm -f "items/it/evidence/mk.pad$n.$w.txt.bak"
   n=$((n+1))
 done
-( sleep 0.2; echo 'x = 2' >> items/it/work/a.py ) &
+# The shell evidence scan was slow enough that a 0.2s sleep landed between the
+# two work-id reads. The Rust check finishes sooner, so wait until close has
+# claimed the directory and then change the work. A change before `check`
+# reads the id still refuses, and the item must not be marked closed.
+( while [ ! -d items/it/.closing ]; do :; done
+  echo 'x = 2' >> items/it/work/a.py ) &
 mp=$!
 out=$(./crucible close it "should refuse" 2>&1 || true)
 wait "$mp" 2>/dev/null || true
@@ -1205,9 +1263,16 @@ cd "$HERE"
 
 # Patching once inserted the same function three times. Only the last definition takes effect,
 # so the earlier copies are dead code that /bin/sh -n accepts and no behaviour test notices.
-dupf=$(grep -oE '^cmd_[a-z_]+\(\)' crucible | sort | uniq -d | tr '\n' ' ')
-[ -z "$dupf" ] && ok "no function is defined more than once" \
-  || bad "functions defined more than once:$dupf"
+# The engine finder is a shell script. An adopted program's crucible is the
+# release binary, which has no shell functions to duplicate.
+_sig=$(dd if=crucible bs=2 count=1 2>/dev/null || true)
+if [ "$_sig" = '#!' ]; then
+  dupf=$(grep -oE '^cmd_[a-z_]+\(\)' crucible | sort | uniq -d | tr '\n' ' ')
+  [ -z "$dupf" ] && ok "no function is defined more than once" \
+    || bad "functions defined more than once:$dupf"
+else
+  ok "the release binary has no shell functions to duplicate"
+fi
 
 # README claims claim-admission enforces kind diversity, and that was unasserted: removing the
 # check left the whole suite green.
@@ -1522,7 +1587,13 @@ case $o in
   *) ok "the gate ignores the verdict archive" ;;
 esac
 cd "$HERE"
-/bin/sh -n ./crucible && ok "gate parses under /bin/sh" || bad "gate is not POSIX sh"
+# sh -n on the release binary is a syntax error. Parse only a shell kernel.
+_sig=$(dd if=./crucible bs=2 count=1 2>/dev/null || true)
+if [ "$_sig" = '#!' ]; then
+  /bin/sh -n ./crucible && ok "gate parses under /bin/sh" || bad "gate is not POSIX sh"
+else
+  ok "crucible is the release binary"
+fi
 /bin/sh -n ./scripts/selftest.sh && ok "selftest parses under /bin/sh" || bad "selftest is not POSIX sh"
 /bin/sh -n ./scripts/verify-quickstart.sh && ok "verify-quickstart parses under /bin/sh" \
   || bad "verify-quickstart is not POSIX sh"

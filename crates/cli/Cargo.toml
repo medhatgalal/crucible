@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Working-mode binary crucible (go/status/debrief/stats/serve/room/doctor; --version from VERSION)"
+description = "Product binary crucible (working-mode and guided verbs; --version from VERSION)"
 
 [[bin]]
 name = "crucible"
@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 crucible-contract = { path = "../contract" }
+crucible-guided = { path = "../guided" }
 crucible-http = { path = "../http" }
 crucible-kernel = { path = "../kernel" }
 crucible-room = { path = "../room" }

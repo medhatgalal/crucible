@@ -78,6 +78,26 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.18.0] - 2026-09-24
+
+### Guided verbs on the one binary
+- `adopt`, `cycle`, `drive`, and the protocol verbs run in the Rust `crucible`
+  binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN`, else
+  `target/release/crucible`). `crucible-guided` only execs the sibling binary.
+  The release tarball installs the host-built binary as `crucible` and leaves
+  the committed `crucible-guided` exec in place. Default adopt installs that
+  binary as `.crucible/<program>/crucible`, not a shell cycle runner.
+- The shell let two clocks through (`date` beside `Clock`), fell back to
+  `cksum` when both `shasum` and `sha256sum` were missing (that changed panel
+  ids), and installed the shell as the cycle runner on default adopt. This
+  port must not regress those: one `Clock`, in-process SHA-256 with no `cksum`
+  fallback, and the binary as the installed runner.
+- `crucible help` lists adopt, including `--working-mode`. `crucible help
+  protocol` prints the agent protocol. Unknown verbs exit 2 from the binary.
+  There is no fall-through into a second kernel.
+- 1.18.0 is the D19 port. D12 (shaping menu) did not ship.
+- Rollback is revert of this cut-over.
+
 ## [1.17.0] - 2026-09-21
 
 ### Rust kernel cut-over

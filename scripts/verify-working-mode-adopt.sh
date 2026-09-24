@@ -285,8 +285,8 @@ if [ ! -f "$CRUCIBLE" ]; then
   printf 'RED crucible missing\n' >&2
   exit 1
 fi
-if ! grep -q -- '--working-mode' "$CRUCIBLE"; then
-  printf 'RED crucible adopt does not accept --working-mode\n' >&2
+if ! "$RUST_BIN" help 2>/dev/null | grep -q -- '--working-mode'; then
+  printf 'RED crucible help does not list --working-mode\n' >&2
   exit 1
 fi
 
@@ -570,7 +570,8 @@ fi
 [ ! -f "$BASE/missing-opt/.crucible/skills/research/SKILL.md" ] && ok \
   || bad 'optional missing research must not invent the battery'
 
-# wm ready is POSIX kernel (dumped). rust unknown command until later.
+# ready is a guided verb. Outside a managed program it refuses; it must not
+# silently succeed the way a dumped shell kernel would.
 READY_OK="$BASE/ready-ok"
 mkdir -p "$READY_OK"
 write_ready_spec "$READY_OK"
@@ -580,10 +581,10 @@ cp "$WM" "$STAGE_WM/wm.sh"
 cp "$RUST_BIN" "$STAGE_WM/crucible"
 chmod +x "$STAGE_WM/wm.sh" "$STAGE_WM/crucible"
 if ( CDPATH=; cd "$READY_OK" && "$STAGE_WM/wm.sh" ready >"$OUT" 2>"$ERR" ); then
-  bad "rust ready must not be a silent POSIX kernel: $(cat "$OUT")"
+  bad "rust ready must not be a silent shell kernel: $(cat "$OUT")"
 else
-  grep -E -q 'unknown command' "$ERR" "$OUT" 2>/dev/null && ok \
-    || bad "ready wanted unknown command, got out=$(cat "$OUT") err=$(cat "$ERR")"
+  grep -E -q 'ready requires managed lifecycle' "$ERR" "$OUT" 2>/dev/null && ok \
+    || bad "ready wanted a managed-lifecycle refusal, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 
 # tarball via package-release includes wm.sh and skills/architecture/SKILL.md;

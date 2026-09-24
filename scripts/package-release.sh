@@ -47,13 +47,8 @@ fi
 RUST_BIN="$PKG/target/release/crucible"
 [ -x "$RUST_BIN" ] || { echo "package-release: missing $RUST_BIN" >&2; exit 2; }
 
-if [ -f "$PKG/crucible" ]; then
-  _sig=$(dd if="$PKG/crucible" bs=2 count=1 2>/dev/null || true)
-  if [ "$_sig" = '#!' ]; then
-    cp "$PKG/crucible" "$PKG/crucible-guided"
-    chmod +x "$PKG/crucible-guided" 2>/dev/null || true
-  fi
-fi
+# crucible-guided is the committed sibling exec. Do not copy the finder
+# wrapper over it. The packaged crucible name is the host-built binary.
 cp "$RUST_BIN" "$PKG/crucible"
 chmod +x "$PKG/crucible"
 rm -rf "$PKG/target"

@@ -19,7 +19,7 @@ Honest snapshot of this repo after **1.17.0** (Rust working-mode cut-over). Room
 | Kernel | Rust (`crates/kernel`). Not POSIX `floor_write`. |
 | Product binary | Cargo `[[bin]]` name **`crucible`** (`crates/cli`). **No `wm` binary.** |
 | Wrapper | Repo-root `wm.sh`: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
-| Guided POSIX | Repo-root `./crucible` is still adopt/refresh/cycle/drive through 1.17.x. Release tarball copies that script to `crucible-guided` then installs the Rust binary as `crucible`. |
+| Guided | Rust (`crates/guided`), dispatched by the `crucible` binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN` or `target/release/crucible`). `crucible-guided` only execs the sibling binary. Not a second kernel. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
 | Room | Landed (`crates/room`): `crucible room` probes `GET /health` on `127.0.0.1:1734` before listen. Matching VERSION is reused. Only connection refused spawns this binary's `serve`. External herdr; standing roles. Help lists `room` and `doctor`. |
 | Doctor | `crucible doctor` warns if home `~/.grok/rules/loop-router.md` is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15). Never `$HOME` in CI. |
@@ -300,5 +300,5 @@ All rejected. Do not reopen without a new ADR.
 
 ## Remaining (not this ADR)
 
-- Guided `adopt`, `refresh`, `cycle`, and `drive` stay POSIX through 1.17.x (D19). This snapshot does not bump `VERSION` and does not start tag 1.18.0.
+- **1.18.0** is the D19 port. Guided `adopt`, `refresh`, `cycle`, and `drive` are Rust verbs on the `crucible` binary. D12 (shaping menu) did not ship.
 - No shaping menu (D12).
