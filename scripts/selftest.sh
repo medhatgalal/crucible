@@ -883,9 +883,15 @@ done
   || bad "verbs in help are not routed:$notrouted"
 
 # A5: a cold fresh agent cycle must cross intake, investigation, proposal and approval gates.
-./scripts/verify-quickstart.sh >/dev/null 2>&1 \
-  && ok "cold fresh-agent cycle binds approval before planning" \
-  || bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
+# Keep the verifier's own failure text. A swallowed non-zero only says the shim failed.
+qlog=$(mktemp "${TMPDIR:-/tmp}/crucible-quickstart.XXXXXX")
+if ./scripts/verify-quickstart.sh >"$qlog" 2>&1; then
+  ok "cold fresh-agent cycle binds approval before planning"
+else
+  bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
+  sed -n '1,60p' "$qlog" | sed 's/^/    /'
+fi
+rm -f "$qlog"
 ./scripts/verify-drive.sh >/dev/null 2>&1 \
   && ok "drive tick dispatches on INVESTIGATE and refuses owned-path writes" \
   || bad "drive contract (scripts/verify-drive.sh) failed"
