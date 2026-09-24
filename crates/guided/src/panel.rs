@@ -212,15 +212,13 @@ pub(crate) fn panel_required_count(root: &Path, want: &str) -> Result<usize, Gui
     Ok(n)
 }
 
+const AUDITORS_DIE: &str = "CRUCIBLE_MIN_AUDITORS must be a positive integer";
+const KINDS_DIE: &str = "CRUCIBLE_MIN_KINDS must be a positive integer";
+
 /// Admit-bar floor: env override, else max(2, required claim-auditor rows) on a guided cycle.
 pub(crate) fn guided_min_auditors(root: &Path) -> Result<u64, GuidedError> {
-    if let Ok(raw) = std::env::var("CRUCIBLE_MIN_AUDITORS") {
-        if !raw.is_empty() {
-            if !is_posint(&raw) {
-                return Err(message("CRUCIBLE_MIN_AUDITORS must be a positive integer"));
-            }
-            return Ok(raw.parse().unwrap_or(2));
-        }
+    if let Some(raw) = nonempty_var("CRUCIBLE_MIN_AUDITORS") {
+        return parse_pos_override(&raw, AUDITORS_DIE);
     }
     if uses_guided_cycle(root)? {
         let n = panel_required_count(root, "claim-auditor")?;
@@ -231,16 +229,32 @@ pub(crate) fn guided_min_auditors(root: &Path) -> Result<u64, GuidedError> {
     Ok(2)
 }
 
+/// Shell prints the raw override (`03` stays `03`). The numeric bar still uses [`guided_min_auditors`].
+pub(crate) fn guided_min_auditors_label(root: &Path) -> Result<String, GuidedError> {
+    if let Some(raw) = nonempty_var("CRUCIBLE_MIN_AUDITORS") {
+        parse_pos_override(&raw, AUDITORS_DIE)?;
+        return Ok(raw);
+    }
+    Ok(guided_min_auditors(root)?.to_string())
+}
+
 pub(crate) fn min_kinds() -> Result<u64, GuidedError> {
-    if let Ok(raw) = std::env::var("CRUCIBLE_MIN_KINDS") {
-        if !raw.is_empty() {
-            if !is_posint(&raw) {
-                return Err(message("CRUCIBLE_MIN_KINDS must be a positive integer"));
-            }
-            return Ok(raw.parse().unwrap_or(1));
-        }
+    if let Some(raw) = nonempty_var("CRUCIBLE_MIN_KINDS") {
+        return parse_pos_override(&raw, KINDS_DIE);
     }
     Ok(1)
+}
+
+fn nonempty_var(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|raw| !raw.is_empty())
+}
+
+/// `posint` plus a parse into the integer the bar compares. Too big is a refusal, not a default.
+fn parse_pos_override(raw: &str, die: &str) -> Result<u64, GuidedError> {
+    if !is_posint(raw) {
+        return Err(message(die));
+    }
+    raw.parse::<u64>().map_err(|_| message(die))
 }
 
 fn maker_reviewer_waiver(root: &Path) -> Result<bool, GuidedError> {

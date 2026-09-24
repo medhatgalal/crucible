@@ -5,7 +5,7 @@
 //! `cycle_archive_investigation` is the proposal id, or `noproposal`, not `$$`.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -15,13 +15,15 @@ use crucible_contract::Clock;
 
 use crate::panel::{
     agents_registry_ready, approval_current, contains_ci, contains_word_ci, first_transport_token,
-    guided_min_auditors, hash_file, is_nonempty_regular, is_regular, kind_of, min_kinds,
-    panel_approval_current, panel_id, panel_valid, proposal_id, proposal_valid, split_tabs,
-    transport_ladder_ok,
+    guided_min_auditors, guided_min_auditors_label, hash_file, is_nonempty_regular, is_regular,
+    kind_of, min_kinds, panel_approval_current, panel_id, panel_valid, proposal_id, proposal_valid,
+    split_tabs, transport_ladder_ok,
 };
 use crate::program::{uses_guided_cycle, uses_managed_lifecycle};
 use crate::project::project_cycle_line;
-use crate::state::{state_render_file, state_update_item, state_value, STATE_HEADER};
+use crate::state::{
+    state_render_file, state_update_item, state_validate_file, state_value, STATE_HEADER,
+};
 use crate::{message, records, GuidedError};
 
 const MARK: &str = "crucible-run/1";
@@ -135,7 +137,7 @@ pub fn cycle_status(root: &Path, _clock: &dyn Clock) -> Result<String, GuidedErr
             if claims_absent_only(root)? {
                 return Ok("NEXT INVESTIGATE — independently fact-check every unresolved ABSENT claim (NO-BUILD if all FALSE/STALE)".to_string());
             }
-            let n = guided_min_auditors(root)?;
+            let n = guided_min_auditors_label(root)?;
             return Ok(format!("NEXT INVESTIGATE — independently fact-check every unresolved claim (FALSE/STALE closes a claim; admit needs {n} sealed TRUE to create work)"));
         }
         "NEEDS_SCOUT" => {
@@ -162,7 +164,7 @@ pub fn cycle_status(root: &Path, _clock: &dyn Clock) -> Result<String, GuidedErr
         ));
     }
     if uses_managed_lifecycle(root)? {
-        state_validate_managed(root)?;
+        state_validate_file(&root.join("STATE.tsv"))?;
         if let Some(blocked) = blocked_independence(root)? {
             return Ok(format!("ESCALATE INDEPENDENCE_UNAVAILABLE {blocked} — cannot invoke required independent agent; stop and warn; do not continue as solo theatre"));
         }
@@ -321,8 +323,11 @@ fn cycle_problem(root: &Path, clock: &dyn Clock, args: &[&str]) -> Result<String
         i += 1;
     }
     if abandon {
-        if next || reason.is_empty() {
+        if next {
             return Err(message(USAGE_PROBLEM));
+        }
+        if reason.is_empty() {
+            return Err(message("usage: crucible cycle problem --abandon REASON"));
         }
         if drive_locked(root) {
             return Err(message(
@@ -530,6 +535,10 @@ fn cycle_cleanup(root: &Path, clock: &dyn Clock, flag: &str) -> Result<String, G
                         "cleanup refuses while attempt {id} is {attempt_status} (live pid)"
                     )));
                 }
+                // `cmd_attempt reclaim` dies here before any ledger write.
+                if !uses_managed_lifecycle(root)? {
+                    return Err(message("attempt requires managed lifecycle behavior"));
+                }
                 reclaim_dead_attempt(root, clock, &id)?;
             }
             "DISPATCHED" => {}
@@ -586,15 +595,19 @@ fn cycle_cleanup(root: &Path, clock: &dyn Clock, flag: &str) -> Result<String, G
         if rec.path.is_empty() || !worktree.is_dir() {
             continue;
         }
-        let remove = Command::new("git")
-            .args(["-C", &rec.repo, "worktree", "remove", &rec.path])
-            .output()?;
-        if !remove.status.success() {
-            let blocker = cycle_worktree_blocker(worktree)?.unwrap_or_else(|| {
-                let err = String::from_utf8_lossy(&remove.stderr);
-                let stdout = String::from_utf8_lossy(&remove.stdout);
-                format!("git refused: {err}{stdout}")
-            });
+        let removed = match git_combined(&["-C", &rec.repo, "worktree", "remove", &rec.path]) {
+            Ok(output) => output,
+            Err(err) => {
+                return Err(message(format!(
+                    "could not safely remove worktree: {} — git refused: {err}, then retry: {} cycle clean --apply",
+                    rec.path,
+                    self_path(root)
+                )));
+            }
+        };
+        if !removed.success {
+            let blocker = cycle_worktree_blocker(worktree)?
+                .unwrap_or_else(|| format!("git refused: {}", removed.text));
             return Err(message(format!(
                 "could not safely remove worktree: {} — {blocker}, then retry: {} cycle clean --apply",
                 rec.path,
@@ -1209,6 +1222,10 @@ fn count_claim_headings(text: &str) -> usize {
 }
 
 fn write_independence_receipt(root: &Path) -> Result<(), GuidedError> {
+    // Shell returns before the attempt loop unless the cycle is guided.
+    if !uses_guided_cycle(root)? {
+        return Ok(());
+    }
     let mut body = String::from(
         "\
 # Independence receipt
@@ -1563,10 +1580,6 @@ fn blocked_independence(root: &Path) -> Result<Option<String>, GuidedError> {
     Ok(None)
 }
 
-fn state_validate_managed(root: &Path) -> Result<(), GuidedError> {
-    crate::state::state_validate_file(&root.join("STATE.tsv"))
-}
-
 fn engine_version(root: &Path) -> Result<String, GuidedError> {
     let path = root.join("VERSION");
     if !is_nonempty_regular(&path) {
@@ -1654,8 +1667,10 @@ fn receipt_transport(root: &Path) -> Result<Option<String>, GuidedError> {
             continue;
         }
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
-        if let Some(token) = cells.get(5).copied().and_then(canonical_transport) {
-            return Ok(Some(token.to_string()));
+        if let Some(token) = cells.get(5).copied() {
+            if matches!(token, "multi-agent" | "acp" | "subagent") {
+                return Ok(Some(token.to_string()));
+            }
         }
     }
     Ok(None)
@@ -1672,15 +1687,6 @@ fn first_attempt_transport(root: &Path) -> Result<Option<String>, GuidedError> {
         }
     }
     Ok(None)
-}
-
-fn canonical_transport(value: &str) -> Option<&'static str> {
-    match value {
-        "multi-agent" => Some("multi-agent"),
-        "acp" => Some("acp"),
-        "subagent" => Some("subagent"),
-        _ => None,
-    }
 }
 
 fn working_mode_yes(root: &Path) -> bool {
@@ -2120,18 +2126,29 @@ fn cycle_husk_programs(root: &Path) -> Vec<String> {
             continue;
         }
         if let Some(name) = cand.file_name().and_then(|s| s.to_str()) {
+            // `"$parent"/*` does not list dot-directories.
+            if name.starts_with('.') {
+                continue;
+            }
             out.push(format!("{name}/"));
         }
     }
     out
 }
 
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_dir())
+        .unwrap_or(false)
+}
+
+/// `find -depth -type d` without `-L`: do not descend through a symlink.
 fn remove_empty_dirs(dir: &Path) {
-    if !dir.is_dir() {
+    if !is_real_dir(dir) {
         return;
     }
     for path in read_dir_paths(dir) {
-        if path.is_dir() {
+        if is_real_dir(&path) {
             remove_empty_dirs(&path);
         }
     }
@@ -2140,9 +2157,54 @@ fn remove_empty_dirs(dir: &Path) {
 
 fn attempt_child_dirs(root: &Path) -> Vec<PathBuf> {
     let mut paths = read_dir_paths(&root.join("attempts"));
-    paths.retain(|path| path.is_dir());
+    // `"$ROOT"/attempts/*` skips dot-names.
+    paths.retain(|path| path.is_dir() && !file_name(path).starts_with('.'));
     paths.sort();
     paths
+}
+
+struct GitCombined {
+    success: bool,
+    /// Stdout and stderr merged, trailing newlines removed (`$(...)` strips them).
+    text: String,
+}
+
+fn git_combined(args: &[&str]) -> Result<GitCombined, String> {
+    let mut child = Command::new("git")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| err.to_string())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "git stdout missing".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "git stderr missing".to_string())?;
+    let out_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let err_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+    let status = child.wait().map_err(|err| err.to_string())?;
+    let mut buf = err_handle.join().unwrap_or_default();
+    buf.extend(out_handle.join().unwrap_or_default());
+    let mut text = String::from_utf8_lossy(&buf).into_owned();
+    while text.ends_with('\n') || text.ends_with('\r') {
+        text.pop();
+    }
+    Ok(GitCombined {
+        success: status.success(),
+        text,
+    })
 }
 
 fn attempt_dirs_a(root: &Path) -> Vec<PathBuf> {
@@ -2656,4 +2718,278 @@ Two recorded checks.
             .to_string();
         assert!(!err.contains("human gate"), "{err}");
     }
+
+    const PROPOSAL: &str = "\
+# Proposal
+## Verified problem
+The scope was not preserved.
+## Proposed outcome
+Preserve it.
+## Non-goals
+No extra product.
+## Backlog
+None.
+## Verification
+Two recorded checks.
+";
+
+    fn approve_proposal(prog: &Path) {
+        let id = proposal_id(prog).unwrap().unwrap();
+        fs::write(
+            prog.join("APPROVAL"),
+            format!("proposal-id: {id}\nrecord: approvals/{id}.md\n"),
+        )
+        .unwrap();
+    }
+
+    fn item_file_guided_done(prog: &Path, repo: &Path, events: &str) {
+        fs::create_dir_all(prog).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!("repo: {}\nprogram: work\ncycle: guided\n", repo.display()),
+        )
+        .unwrap();
+        agents(prog);
+        panel(prog);
+        cycle(prog, &["approve-panel"], &clock()).unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Real gap\n\nA falsifiable outcome is missing.\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "\
+# CLAIMS
+
+### C1 scope is wrong
+    scout: FULLY-EXISTS
+    item: done
+",
+        )
+        .unwrap();
+        let verdicts = prog.join("claims").join("C1").join("verdicts");
+        fs::create_dir_all(&verdicts).unwrap();
+        fs::write(verdicts.join("a1.md"), "CLAIM-VERDICT: TRUE\n").unwrap();
+        fs::write(prog.join("PROPOSAL.md"), PROPOSAL).unwrap();
+        approve_proposal(prog);
+        let attempt = prog.join("attempts").join("A1.2.3");
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(
+            attempt.join("meta.tsv"),
+            "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
+",
+        )
+        .unwrap();
+        fs::write(attempt.join("transport"), "multi-agent\n").unwrap();
+        fs::write(attempt.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+        fs::write(attempt.join("events.tsv"), events).unwrap();
+    }
+
+    #[test]
+    fn nonguided_done_does_not_write_independence_receipt() {
+        let tmp = Tmp::new();
+        let prog = tmp.root.join("prog");
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(prog.join("PROGRAM"), "program: work\n").unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Real\n\nA falsifiable outcome.\n",
+        )
+        .unwrap();
+        fs::write(prog.join("CLAIMS.md"), "# C\n\n### C1 something\n").unwrap();
+        let verdicts = prog.join("claims").join("C1").join("verdicts");
+        fs::create_dir_all(&verdicts).unwrap();
+        fs::write(verdicts.join("a1.md"), "CLAIM-VERDICT: FALSE\n").unwrap();
+        fs::write(prog.join("PROPOSAL.md"), PROPOSAL).unwrap();
+        approve_proposal(&prog);
+        let junk = prog.join("attempts").join("Anotvalid");
+        fs::create_dir_all(&junk).unwrap();
+        fs::write(junk.join("meta.tsv"), "not-an-attempt\n").unwrap();
+
+        let out = cycle(&prog, &[], &clock()).unwrap();
+        assert!(out.starts_with("DONE — "), "{out}");
+        assert!(!prog.join("INDEPENDENCE.md").exists());
+    }
+
+    #[test]
+    fn clean_on_item_file_refuses_dead_attempt_without_stopping_it() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        item_file_guided_done(
+            &prog,
+            &repo,
+            "state\tepoch\tpid\treason\nRUNNING\t1\t999999\tstart\n",
+        );
+        assert!(cycle(&prog, &[], &clock()).unwrap().starts_with("DONE — "));
+        let err = cycle(&prog, &["clean", "--dry-run"], &clock())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "attempt requires managed lifecycle behavior");
+        let events =
+            fs::read_to_string(prog.join("attempts").join("A1.2.3").join("events.tsv")).unwrap();
+        assert!(!events.contains("STOPPED"), "{events}");
+    }
+
+    #[test]
+    fn empty_abandon_uses_the_short_usage() {
+        let tmp = Tmp::new();
+        let prog = tmp.root.join("prog");
+        fs::create_dir_all(&prog).unwrap();
+        let err = cycle(&prog, &["problem", "--abandon"], &clock())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "usage: crucible cycle problem --abandon REASON");
+        let err = cycle(&prog, &["problem", "--abandon", ""], &clock())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "usage: crucible cycle problem --abandon REASON");
+        let err = cycle(&prog, &["problem", "--next", "--abandon"], &clock())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "usage: crucible cycle problem FILE [--next] | --abandon REASON"
+        );
+    }
+
+    #[test]
+    fn dot_attempt_directory_is_ignored() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        item_file_guided_done(
+            &prog,
+            &repo,
+            "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+        );
+        fs::create_dir_all(prog.join("attempts").join(".hidden")).unwrap();
+        let out = cycle(&prog, &["clean", "--dry-run"], &clock()).unwrap();
+        assert!(out.contains("PRESERVE "), "{out}");
+    }
+
+    #[test]
+    fn remove_empty_dirs_does_not_follow_symlink() {
+        let tmp = Tmp::new();
+        let outside = tmp.root.join("outside");
+        fs::create_dir_all(outside.join("child")).unwrap();
+        let worktrees = tmp.root.join("worktrees");
+        fs::create_dir_all(&worktrees).unwrap();
+        std::os::unix::fs::symlink(&outside, worktrees.join("link")).unwrap();
+        remove_empty_dirs(&worktrees);
+        assert!(outside.join("child").is_dir());
+        assert!(worktrees
+            .join("link")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn husk_report_skips_dot_directories() {
+        let tmp = Tmp::new();
+        let parent = tmp.root.join(".crucible");
+        let prog = parent.join("work");
+        fs::create_dir_all(&prog).unwrap();
+        fs::create_dir_all(parent.join(".secret")).unwrap();
+        fs::create_dir_all(parent.join("husk")).unwrap();
+        assert_eq!(cycle_husk_programs(&prog), vec!["husk/".to_string()]);
+    }
+
+    #[test]
+    fn locked_worktree_refusal_is_one_line() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "test@example.invalid"]);
+        git(&["config", "user.name", "test"]);
+        fs::write(repo.join("tracked.txt"), "baseline\n").unwrap();
+        git(&["add", "tracked.txt"]);
+        git(&["commit", "-qm", "baseline"]);
+
+        let prog = repo.join(".crucible").join("work");
+        item_file_guided_done(
+            &prog,
+            &repo,
+            "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+        );
+        fs::create_dir_all(prog.join("worktrees")).unwrap();
+        let wt = fs::canonicalize(prog.join("worktrees")).unwrap().join("wt");
+        let wt_arg = wt.to_string_lossy().into_owned();
+        git(&["worktree", "add", "-q", "-b", "wt-branch", &wt_arg]);
+        // A broken gitfile makes `worktree remove` print one fatal line and no blocker.
+        fs::write(wt.join(".git"), "gitdir: /no/such/gitdir\n").unwrap();
+
+        let err = cycle(&prog, &["clean", "--apply"], &clock())
+            .unwrap_err()
+            .to_string();
+        assert!(!err.contains('\n'), "{err:?}");
+        assert!(err.contains("could not safely remove worktree:"), "{err}");
+        assert!(err.contains("git refused:"), "{err}");
+        assert!(err.contains("fatal:"), "{err}");
+        assert!(wt.is_dir());
+    }
+
+    #[test]
+    fn auditor_override_keeps_raw_text_and_refuses_overflow() {
+        let tmp = Tmp::new();
+        let prog = tmp.root.join("prog");
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(prog.join("PROGRAM"), "program: work\n").unwrap();
+        fs::write(prog.join("PROBLEM.md"), "# Real\n\nSomething is wrong.\n").unwrap();
+        fs::write(prog.join("CLAIMS.md"), "### C1 gap\n    polarity: DEFECT\n").unwrap();
+        with_override("CRUCIBLE_MIN_AUDITORS", "03", || {
+            let out = cycle(&prog, &[], &clock()).unwrap();
+            assert!(out.contains("admit needs 03 sealed TRUE"), "{out}");
+            assert_eq!(crate::panel::guided_min_auditors(&prog).unwrap(), 3);
+        });
+        with_override("CRUCIBLE_MIN_AUDITORS", &"9".repeat(40), || {
+            let err = cycle(&prog, &[], &clock()).unwrap_err().to_string();
+            assert_eq!(err, "CRUCIBLE_MIN_AUDITORS must be a positive integer");
+        });
+        with_override("CRUCIBLE_MIN_KINDS", &"9".repeat(40), || {
+            let err = crate::panel::min_kinds().unwrap_err().to_string();
+            assert_eq!(err, "CRUCIBLE_MIN_KINDS must be a positive integer");
+        });
+    }
+
+    fn with_override(key: &str, value: &str, body: impl FnOnce()) {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let old = std::env::var(key).ok();
+        // SAFETY: this test holds ENV_LOCK and restores the previous value before unlock.
+        // No other test reads CRUCIBLE_MIN_AUDITORS or CRUCIBLE_MIN_KINDS.
+        unsafe { std::env::set_var(key, value) };
+        struct Restore(String, Option<String>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                // SAFETY: same lock as the setter; restores the process environment.
+                unsafe {
+                    match self.1.take() {
+                        Some(prev) => std::env::set_var(&self.0, prev),
+                        None => std::env::remove_var(&self.0),
+                    }
+                }
+            }
+        }
+        let _restore = Restore(key.to_string(), old);
+        body();
+    }
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
