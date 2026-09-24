@@ -8,3 +8,4 @@ description = "Guided cycle library: root resolution and managed STATE parsers"
 
 [dependencies]
 crucible-contract = { path = "../contract" }
+crucible-kernel = { path = "../kernel" }

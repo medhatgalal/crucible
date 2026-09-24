@@ -470,6 +470,45 @@ mod tests {
         assert_eq!(floor_station("NEXT RED"), "BUILD");
         assert_eq!(floor_station("NEXT SLICE s1"), "BUILD");
         assert_eq!(floor_station("MAP-HUMAN"), "ANDON");
+        assert_eq!(floor_station("DONE"), "DONE");
+        assert_eq!(floor_station("DONE — no admittable claim remains"), "DONE");
+        assert_eq!(floor_station("NEXT CONFIGURE"), "SHAPE");
+        assert_eq!(floor_station("NEXT CONFIGURE — cast personas"), "SHAPE");
+        assert_eq!(floor_station("NEXT INVESTIGATE"), "SHAPE");
+        assert_eq!(
+            floor_station("NEXT INVESTIGATE — split PROBLEM.md into atomic claims"),
+            "SHAPE"
+        );
+        assert_eq!(floor_station("NEXT PROPOSE"), "SHAPE");
+        assert_eq!(
+            floor_station("NEXT PROPOSE — write a refined, evidence-grounded PROPOSAL.md"),
+            "SHAPE"
+        );
+        assert_eq!(floor_station("NEXT PLAN"), "SHAPE");
+        assert_eq!(
+            floor_station("NEXT PLAN alpha — validate the bounded breakdown before execution"),
+            "SHAPE"
+        );
+        assert_eq!(
+            floor_station("NEXT EXECUTE alpha — dispatch dependency-ready tasks"),
+            "BUILD"
+        );
+        assert_eq!(
+            floor_station("NEXT REVIEW alpha — independently falsify current work"),
+            "INSPECT"
+        );
+        assert_eq!(
+            floor_station("WAIT alpha — agent work or review is in flight (A1)"),
+            "WAIT"
+        );
+        assert_eq!(
+            floor_station("STOP-ASK WAIT PANEL — show agent inventory"),
+            "ANDON"
+        );
+        assert_eq!(
+            floor_station("STOP-ASK WAIT APPROVAL — show proposal"),
+            "ANDON"
+        );
     }
 
     #[test]
