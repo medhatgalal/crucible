@@ -38,9 +38,13 @@ All notable changes to this project are documented here. This project follows
 ### Keep-current
 - `testdata/loop-router.md` is the D8 Grok router fixture (`/crucible` live →
   Crucible; else Grok-native + `NEXT:`; must not force `/execute-plan` inside
-  `/crucible`). Engine tests hash it against ADR 0001 (never `$HOME`).
-- `crucible doctor` warns when `~/.grok/rules/loop-router.md` is missing or
-  stale versus that ADR-HASH (unit tests inject HOME; not a walk CHECK).
+  `/crucible`). The tracked copy is `.grok/rules/loop-router.md` (identical
+  bytes, a regular file). Engine tests hash the fixture against ADR 0001
+  (never `$HOME`).
+- `crucible doctor` warns when `<cwd>/.grok/rules/loop-router.md` is missing
+  or stale versus that ADR-HASH and does not write. `crucible doctor --home`
+  is the only writer of `$HOME/.grok/rules/loop-router.md`. Tests inject paths
+  and do not read process `HOME` (not a walk CHECK).
 
 ### Room
 - `crucible room` probes `GET /health` on `127.0.0.1:1734` before any listen.

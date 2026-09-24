@@ -66,6 +66,8 @@ printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/crucible\$" \
   || { echo "package-release: missing $PREFIX/crucible" >&2; exit 2; }
 printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/wm.sh\$" \
   || { echo "package-release: missing $PREFIX/wm.sh" >&2; exit 2; }
+printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/.grok/rules/loop-router.md\$" \
+  || { echo "package-release: missing $PREFIX/.grok/rules/loop-router.md" >&2; exit 2; }
 
 # Reproducible gzip of the staged tree (binary is host-built).
 ( CDPATH=; cd -- "$STAGE" && tar -cf - "$PREFIX" ) | gzip -n -9 > "$TMP"

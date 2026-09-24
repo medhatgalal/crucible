@@ -125,6 +125,8 @@ the installed binary:
 batteries with a `.keep` file or a name in `.crucible/skills/KEEP` survive refresh
 unless you pass `--overwrite-batteries`.
 
+`crucible doctor` reads `<cwd>/.grok/rules/loop-router.md`. Run it from the repository root: `<cwd>` is the process directory, not the git root, so a run from a subdirectory does not see the root file. The default command warns and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`.
+
 ## Commit the program directory
 
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
