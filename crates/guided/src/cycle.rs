@@ -595,19 +595,21 @@ fn cycle_cleanup(root: &Path, clock: &dyn Clock, flag: &str) -> Result<String, G
         if rec.path.is_empty() || !worktree.is_dir() {
             continue;
         }
-        let removed = match git_combined(&["-C", &rec.repo, "worktree", "remove", &rec.path]) {
+        let (success, text) = match git_combined(&[
+            "-C", &rec.repo, "worktree", "remove", &rec.path,
+        ]) {
             Ok(output) => output,
             Err(err) => {
                 return Err(message(format!(
-                    "could not safely remove worktree: {} — git refused: {err}, then retry: {} cycle clean --apply",
-                    rec.path,
-                    self_path(root)
-                )));
+                        "could not safely remove worktree: {} — git refused: {err}, then retry: {} cycle clean --apply",
+                        rec.path,
+                        self_path(root)
+                    )));
             }
         };
-        if !removed.success {
-            let blocker = cycle_worktree_blocker(worktree)?
-                .unwrap_or_else(|| format!("git refused: {}", removed.text));
+        if !success {
+            let blocker =
+                cycle_worktree_blocker(worktree)?.unwrap_or_else(|| format!("git refused: {text}"));
             return Err(message(format!(
                 "could not safely remove worktree: {} — {blocker}, then retry: {} cycle clean --apply",
                 rec.path,
@@ -2163,13 +2165,8 @@ fn attempt_child_dirs(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
-struct GitCombined {
-    success: bool,
-    /// Stdout and stderr merged, trailing newlines removed (`$(...)` strips them).
-    text: String,
-}
-
-fn git_combined(args: &[&str]) -> Result<GitCombined, String> {
+/// `(success, merged stdout and stderr)`. Trailing newlines are stripped, as in `$(...)`.
+fn git_combined(args: &[&str]) -> Result<(bool, String), String> {
     let mut child = Command::new("git")
         .args(args)
         .stdout(Stdio::piped())
@@ -2201,10 +2198,7 @@ fn git_combined(args: &[&str]) -> Result<GitCombined, String> {
     while text.ends_with('\n') || text.ends_with('\r') {
         text.pop();
     }
-    Ok(GitCombined {
-        success: status.success(),
-        text,
-    })
+    Ok((status.success(), text))
 }
 
 fn attempt_dirs_a(root: &Path) -> Vec<PathBuf> {
