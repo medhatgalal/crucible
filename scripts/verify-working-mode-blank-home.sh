@@ -271,7 +271,8 @@ if [ -f "$TAR" ]; then
     skills/loop-design/SKILL.md \
     ROUTING.tsv \
     docs/whats-new.md \
-    docs/working-mode.md
+    docs/working-mode.md \
+    .grok/rules/loop-router.md
   do
     printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/$rel\$" \
       && ok || bad "tarball missing $rel"
@@ -306,6 +307,10 @@ if [ -n "$EXTRACT" ]; then
   [ ! -e "$G/.agents/skills" ] && ok || bad 'default adopt copied .agents/skills'
   [ ! -e "$G/.kiro/skills" ] && ok || bad 'default adopt copied .kiro/skills'
   [ ! -d "$G/.crucible/work/adapters" ] && ok || bad 'default adopt copied adapters'
+  [ -f "$G/.grok/rules/loop-router.md" ] && ok || bad 'default adopt missing .grok/rules/loop-router.md'
+  [ ! -L "$G/.grok/rules/loop-router.md" ] && ok || bad 'default adopt loop-router is a symlink'
+  cmp -s "$EXTRACT/.grok/rules/loop-router.md" "$G/.grok/rules/loop-router.md" \
+    && ok || bad 'default adopt loop-router drifted from package'
   assert_home_empty
   assert_no_home_skills
 fi
@@ -348,6 +353,10 @@ if [ -n "$EXTRACT" ]; then
   [ -f "$AD/.crucible/.claude/skills/architecture/SKILL.md" ] && ok || bad 'nested claude view missing'
   [ -f "$AD/.crucible/.agents/skills/architecture/SKILL.md" ] && ok || bad 'nested agents view missing'
   [ -f "$AD/.crucible/.kiro/skills/architecture/SKILL.md" ] && ok || bad 'nested kiro view missing'
+  [ -f "$AD/.grok/rules/loop-router.md" ] && ok || bad 'working-mode adopt missing .grok/rules/loop-router.md'
+  [ ! -L "$AD/.grok/rules/loop-router.md" ] && ok || bad 'working-mode adopt loop-router is a symlink'
+  cmp -s "$EXTRACT/.grok/rules/loop-router.md" "$AD/.grok/rules/loop-router.md" \
+    && ok || bad 'working-mode adopt loop-router drifted from package'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
     grep -q '^version: 1.18.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
       && ok || bad 'ENGINE-SOURCE version is not 1.18.0'

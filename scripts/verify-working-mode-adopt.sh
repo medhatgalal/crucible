@@ -304,6 +304,10 @@ fi
 [ ! -e "$BASE/guided/.agents/skills" ] && ok || bad 'default adopt copied .agents/skills'
 [ ! -e "$BASE/guided/.kiro/skills" ] && ok || bad 'default adopt copied .kiro/skills'
 [ ! -f "$BASE/guided/.crucible/work/ENGINE-SOURCE" ] && ok || bad 'default adopt wrote ENGINE-SOURCE'
+[ -f "$BASE/guided/.grok/rules/loop-router.md" ] && ok || bad 'default adopt missing .grok/rules/loop-router.md'
+[ ! -L "$BASE/guided/.grok/rules/loop-router.md" ] && ok || bad 'default adopt loop-router is a symlink'
+cmp -s "$HERE/.grok/rules/loop-router.md" "$BASE/guided/.grok/rules/loop-router.md" \
+  && ok || bad 'default adopt loop-router drifted from engine'
 assert_home_empty
 
 # adopt --working-mode into a temp git repo.
@@ -395,11 +399,20 @@ printf 'PATCHED-CRITIQUE\n' > "$AD/.crucible/skills/critique/SKILL.md"
 printf 'PATCHED-REVIEW\n' > "$AD/.crucible/skills/review/SKILL.md"
 printf 'review\n' > "$AD/.crucible/skills/KEEP"
 printf 'PATCHED-LOOP\n' > "$AD/.crucible/skills/loop-design/SKILL.md"
+ROUTER_SENTINEL="$BASE/router-sentinel"
+printf 'SENTINEL-ROUTER\n' > "$ROUTER_SENTINEL"
+rm -f "$AD/.grok/rules/loop-router.md"
+ln -s "$ROUTER_SENTINEL" "$AD/.grok/rules/loop-router.md"
 if run_adopt "$AD" "$CRUCIBLE" adopt work --refresh; then
   ok
 else
   bad "refresh from source refused: $(cat "$OUT") $(cat "$ERR")"
 fi
+[ -f "$AD/.grok/rules/loop-router.md" ] && [ ! -L "$AD/.grok/rules/loop-router.md" ] \
+  && ok || bad 'refresh did not replace loop-router symlink with a regular file'
+cmp -s "$HERE/.grok/rules/loop-router.md" "$AD/.grok/rules/loop-router.md" \
+  && ok || bad 'refresh loop-router drifted from engine'
+grep -qx 'SENTINEL-ROUTER' "$ROUTER_SENTINEL" && ok || bad 'refresh wrote the loop-router symlink target'
 grep -q 'PATCHED-ARCH' "$AD/.crucible/skills/architecture/SKILL.md" \
   && ok || bad 'KEEP .keep did not preserve architecture'
 grep -q 'PATCHED-REVIEW' "$AD/.crucible/skills/review/SKILL.md" \
@@ -558,6 +571,8 @@ rm -rf "$FAKE_OPT/skills/research"
   printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n'
   printf 'RESEARCH\tsurvey\tresearch\tspecifier\tspec\tno\n'
 } > "$FAKE_OPT/ROUTING.tsv"
+mkdir -p "$FAKE_OPT/.grok/rules"
+cp "$HERE/.grok/rules/loop-router.md" "$FAKE_OPT/.grok/rules/loop-router.md"
 chmod +x "$FAKE_OPT/crucible" "$FAKE_OPT/wm.sh" "$FAKE_OPT/scripts/project-skills.sh"
 init_git_repo "$BASE/missing-opt"
 if run_adopt "$BASE/missing-opt" "$FAKE_OPT/crucible" adopt work --managed --working-mode; then

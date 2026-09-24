@@ -471,6 +471,155 @@ pub fn adopt_copy_panel_from(srcprog: &str, dstdir: &Path, repo: &Path) -> Resul
     Ok(())
 }
 
+fn install_loop_router(src: &Path, repo: &Path) -> Result<(), GuidedError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let source = src.join(".grok/rules/loop-router.md");
+    let src_meta = match fs::symlink_metadata(&source) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(message(
+                "refused: loop-router missing in engine source (.grok/rules/loop-router.md)",
+            ));
+        }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: loop-router source unreadable ({}): {e}",
+                source.display()
+            )));
+        }
+    };
+    // symlink_metadata: a symlink is not a regular file, and must not be followed.
+    if !src_meta.file_type().is_file() {
+        return Err(message(format!(
+            "refused: loop-router source is not a regular file ({})",
+            source.display()
+        )));
+    }
+    let bytes = match fs::read(&source) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(message(format!(
+                "refused: loop-router source unreadable ({}): {e}",
+                source.display()
+            )));
+        }
+    };
+    let src_dev = src_meta.dev();
+    let src_ino = src_meta.ino();
+
+    let dest = repo.join(".grok/rules/loop-router.md");
+    if !shell_child_of(&dest, repo) {
+        return Err(message(format!(
+            "refused: loop-router path outside repo: {}",
+            dest.display()
+        )));
+    }
+
+    let not_written = |path: &Path, detail: String| {
+        message(format!(
+            "refused: loop-router not written ({}): {detail}",
+            path.display()
+        ))
+    };
+
+    // create_dir_all follows a symlink, which would write outside the repo.
+    for parent in [repo.join(".grok"), repo.join(".grok").join("rules")] {
+        match fs::symlink_metadata(&parent) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(message(format!(
+                    "refused: loop-router parent is a symlink: {}",
+                    parent.display()
+                )));
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(message(format!(
+                    "refused: loop-router parent is not a directory: {}",
+                    parent.display()
+                )));
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(not_written(&parent, e.to_string())),
+        }
+    }
+
+    // Mode bits on OpenOptions are masked by umask. set_permissions is not.
+    let write_new = |path: &Path| -> Result<(), GuidedError> {
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(file) => file,
+            Err(e) => return Err(not_written(&dest, e.to_string())),
+        };
+        if let Err(e) = file.write_all(&bytes) {
+            drop(file);
+            let _ = fs::remove_file(path);
+            return Err(not_written(&dest, e.to_string()));
+        }
+        drop(file);
+        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o644)) {
+            let _ = fs::remove_file(path);
+            return Err(not_written(&dest, e.to_string()));
+        }
+        match fs::symlink_metadata(path) {
+            Ok(meta)
+                if meta.file_type().is_file() && meta.permissions().mode() & 0o777 == 0o644 =>
+            {
+                Ok(())
+            }
+            _ => {
+                let _ = fs::remove_file(path);
+                Err(not_written(&dest, "mode".to_string()))
+            }
+        }
+    };
+
+    match fs::symlink_metadata(&dest) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let Some(parent) = dest.parent() else {
+                return Err(not_written(&dest, "no parent".to_string()));
+            };
+            if let Err(e) = fs::create_dir_all(parent) {
+                return Err(not_written(&dest, e.to_string()));
+            }
+            write_new(&dest)
+        }
+        Err(e) => Err(not_written(&dest, e.to_string())),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            // Unlink the directory entry only. The sentinel inode stays.
+            if let Err(e) = fs::remove_file(&dest) {
+                return Err(not_written(&dest, e.to_string()));
+            }
+            write_new(&dest)
+        }
+        Ok(meta) if meta.is_dir() => Err(message(format!(
+            "refused: loop-router path is a directory: {}",
+            dest.display()
+        ))),
+        // Same inode as the engine file (self-adopt). Do not canonicalize:
+        // a symlink to the source has a different inode and must be replaced.
+        // Unlink here would drop the only link, then create_new fails.
+        Ok(meta) if meta.is_file() && meta.dev() == src_dev && meta.ino() == src_ino => Ok(()),
+        Ok(meta) if meta.is_file() => {
+            let tmp = repo
+                .join(".grok/rules")
+                .join(format!(".loop-router.md.tmp.{}", std::process::id()));
+            if let Err(err) = write_new(&tmp) {
+                let _ = fs::remove_file(&tmp);
+                return Err(err);
+            }
+            if let Err(e) = fs::rename(&tmp, &dest) {
+                let _ = fs::remove_file(&tmp);
+                return Err(not_written(&dest, e.to_string()));
+            }
+            Ok(())
+        }
+        Ok(_) => Err(message(format!(
+            "refused: loop-router path is not a regular file: {}",
+            dest.display()
+        ))),
+    }
+}
+
 fn refresh(
     src: &Path,
     repo: &Path,
@@ -505,6 +654,7 @@ fn refresh(
         append_working_mode_line(dst)?;
     }
     adopt_sync_gitignore(repo, stdout)?;
+    install_loop_router(src, repo)?;
     writeln!(stdout, "refreshed engine {old} -> {new}")?;
     writeln!(stdout, "{}", dst.display())?;
     if is_file(&dst.join("scripts/acp-brief.py")) {
@@ -576,6 +726,7 @@ fn install_new(
         adopt_install_working_mode(src, dst, repo, true)?;
     }
     adopt_sync_gitignore(repo, stdout)?;
+    install_loop_router(src, repo)?;
     writeln!(stdout, "installed cycle \"{prog}\" into {}", dst.display())?;
     writeln!(stdout)?;
     writeln!(stdout, "Fresh-agent entrypoint:")?;
@@ -1090,7 +1241,7 @@ fn git_stdout_line(dir: &Path, args: &[&str]) -> Option<String> {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, MutexGuard};
 
@@ -1227,6 +1378,12 @@ mod tests {
         fs::write(src.join("roles/skip.txt"), "no\n").unwrap();
         fs::write(src.join("docs/install.md"), "install\n").unwrap();
         fs::write(src.join("docs/skip.txt"), "no\n").unwrap();
+        fs::create_dir_all(src.join(".grok/rules")).unwrap();
+        fs::write(
+            src.join(".grok/rules/loop-router.md"),
+            b"planted-loop-router\n",
+        )
+        .unwrap();
     }
 
     fn real_projector() -> String {
@@ -1411,7 +1568,16 @@ Generated from `STATE.tsv`; do not edit this file by hand.
         assert!(!dst.join("wm.sh").exists());
         assert!(!dst.join("ENGINE-SOURCE").exists());
         assert!(!repo.join(".crucible/skills").exists());
-        assert!(!repo.join(".grok").exists());
+        let router = repo.join(".grok/rules/loop-router.md");
+        let router_meta = fs::symlink_metadata(&router).unwrap();
+        assert!(router_meta.is_file());
+        assert!(!router_meta.file_type().is_symlink());
+        assert_eq!(
+            fs::read(&router).unwrap(),
+            fs::read(src.join(".grok/rules/loop-router.md")).unwrap()
+        );
+        assert_eq!(router_meta.permissions().mode() & 0o777, 0o644);
+        assert!(!repo.join(".grok/skills").exists());
         assert!(!repo.join(".wm").exists());
         let ignore = fs::read_to_string(repo.join(".crucible/.gitignore")).unwrap();
         assert!(ignore.starts_with("# custom\n*/agents.tsv\n"));
@@ -1876,6 +2042,15 @@ Generated from `STATE.tsv`; do not edit this file by hand.
         for rel in VIEWS {
             assert_real_view(&repo.join(rel), "ARCH-BODY\n");
         }
+        let router = repo.join(".grok/rules/loop-router.md");
+        let router_meta = fs::symlink_metadata(&router).unwrap();
+        assert!(router_meta.is_file());
+        assert!(!router_meta.file_type().is_symlink());
+        assert_eq!(
+            fs::read(&router).unwrap(),
+            fs::read(src.join(".grok/rules/loop-router.md")).unwrap()
+        );
+        assert_eq!(router_meta.permissions().mode() & 0o777, 0o644);
         assert!(!repo.join(".codex").exists());
         assert!(!repo.join(".wm").exists());
         let ignore = fs::read_to_string(repo.join(".crucible/.gitignore")).unwrap();
@@ -2033,5 +2208,187 @@ Generated from `STATE.tsv`; do not edit this file by hand.
                 .to_string(),
             "refused: bad repository root"
         );
+    }
+
+    #[test]
+    fn refresh_overwrites_edited_router_and_replaces_symlinks() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let source = src.join(".grok/rules/loop-router.md");
+        let dest = repo.join(".grok/rules/loop-router.md");
+        let planted = fs::read(&source).unwrap();
+        let src_id = fs::symlink_metadata(&source).unwrap();
+
+        fs::remove_file(&dest).unwrap();
+        fs::write(&dest, b"local-edit\n").unwrap();
+        let mut perm = fs::symlink_metadata(&dest).unwrap().permissions();
+        perm.set_mode(0o600);
+        fs::set_permissions(&dest, perm).unwrap();
+        let edited = fs::symlink_metadata(&dest).unwrap();
+        assert_ne!((edited.dev(), edited.ino()), (src_id.dev(), src_id.ino()));
+        let out = run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert!(out.starts_with("refreshed engine "), "{out}");
+        let replaced = fs::symlink_metadata(&dest).unwrap();
+        assert!(replaced.is_file());
+        assert!(!replaced.file_type().is_symlink());
+        assert_ne!(
+            (replaced.dev(), replaced.ino()),
+            (edited.dev(), edited.ino())
+        );
+        assert_eq!(replaced.permissions().mode() & 0o777, 0o644);
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+        assert!(!repo
+            .join(".grok/rules")
+            .join(format!(".loop-router.md.tmp.{}", std::process::id()))
+            .exists());
+
+        let sentinel = tmp.path().join("sentinel");
+        fs::write(&sentinel, b"SENTINEL\n").unwrap();
+        fs::remove_file(&dest).unwrap();
+        std::os::unix::fs::symlink(&sentinel, &dest).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let meta = fs::symlink_metadata(&dest).unwrap();
+        assert!(meta.is_file());
+        assert!(!meta.file_type().is_symlink());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o644);
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+        assert_eq!(fs::read(&sentinel).unwrap(), b"SENTINEL\n");
+
+        fs::remove_file(&dest).unwrap();
+        std::os::unix::fs::symlink(&source, &dest).unwrap();
+        let src_before = fs::symlink_metadata(&source).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let src_after = fs::symlink_metadata(&source).unwrap();
+        assert_eq!(src_after.dev(), src_before.dev());
+        assert_eq!(src_after.ino(), src_before.ino());
+        assert_eq!(fs::read(&source).unwrap(), planted);
+        let copied = fs::symlink_metadata(&dest).unwrap();
+        assert!(copied.is_file());
+        assert!(!copied.file_type().is_symlink());
+        assert_ne!(
+            (copied.dev(), copied.ino()),
+            (src_before.dev(), src_before.ino())
+        );
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+    }
+
+    #[test]
+    fn refresh_refuses_missing_router_and_symlinked_parent() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let source = src.join(".grok/rules/loop-router.md");
+        let dest = repo.join(".grok/rules/loop-router.md");
+        let planted = fs::read(&dest).unwrap();
+
+        fs::remove_file(&source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        match err {
+            GuidedError::Message(msg) => assert_eq!(
+                msg,
+                "refused: loop-router missing in engine source (.grok/rules/loop-router.md)"
+            ),
+            GuidedError::Io(e) => panic!("expected Message (exit 2), got Io: {e}"),
+        }
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("refreshed engine"), "{text}");
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+
+        let linked = tmp.path().join("linked-source");
+        fs::write(&linked, b"NOT-ENGINE\n").unwrap();
+        std::os::unix::fs::symlink(&linked, &source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        match err {
+            GuidedError::Message(msg) => assert_eq!(
+                msg,
+                format!(
+                    "refused: loop-router source is not a regular file ({})",
+                    source.display()
+                )
+            ),
+            GuidedError::Io(e) => panic!("expected Message (exit 2), got Io: {e}"),
+        }
+        assert!(!String::from_utf8(out).unwrap().contains("refreshed engine"));
+        assert_eq!(fs::read(&linked).unwrap(), b"NOT-ENGINE\n");
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+        fs::remove_file(&source).unwrap();
+        fs::write(&source, &planted).unwrap();
+
+        fs::remove_file(&dest).unwrap();
+        fs::create_dir(&dest).unwrap();
+        fs::write(dest.join("keep.txt"), b"keep\n").unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        match err {
+            GuidedError::Message(msg) => assert_eq!(
+                msg,
+                format!(
+                    "refused: loop-router path is a directory: {}",
+                    dest.display()
+                )
+            ),
+            GuidedError::Io(e) => panic!("expected Message (exit 2), got Io: {e}"),
+        }
+        assert!(!String::from_utf8(out).unwrap().contains("refreshed engine"));
+        assert_eq!(fs::read(dest.join("keep.txt")).unwrap(), b"keep\n");
+        fs::remove_dir_all(&dest).unwrap();
+
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::remove_dir_all(repo.join(".grok")).unwrap();
+        std::os::unix::fs::symlink(&outside, repo.join(".grok")).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        match err {
+            GuidedError::Message(msg) => assert_eq!(
+                msg,
+                format!(
+                    "refused: loop-router parent is a symlink: {}",
+                    repo.join(".grok").display()
+                )
+            ),
+            GuidedError::Io(e) => panic!("expected Message (exit 2), got Io: {e}"),
+        }
+        assert!(!String::from_utf8(out).unwrap().contains("refreshed engine"));
+        assert!(fs::symlink_metadata(repo.join(".grok"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+        assert!(!outside.join("rules").exists());
+        assert!(!outside.join("loop-router.md").exists());
+    }
+
+    #[test]
+    fn adopt_into_its_own_tree_does_not_unlink_the_router() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let repo = init_git(&tmp.path().join("tree"));
+        write_guided_src(&repo);
+        let router = repo.join(".grok/rules/loop-router.md");
+        let mut perm = fs::symlink_metadata(&router).unwrap().permissions();
+        perm.set_mode(0o600);
+        fs::set_permissions(&router, perm).unwrap();
+        let before = fs::symlink_metadata(&router).unwrap();
+        assert_eq!(before.permissions().mode() & 0o777, 0o600);
+        let bytes = fs::read(&router).unwrap();
+        let out = run(&repo, &repo, &["work"]).unwrap();
+        assert!(out.starts_with("installed cycle "), "{out}");
+        let after = fs::symlink_metadata(&router).unwrap();
+        assert!(after.file_type().is_file());
+        assert!(!after.file_type().is_symlink());
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(after.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(&router).unwrap(), bytes);
     }
 }
