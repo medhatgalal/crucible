@@ -889,7 +889,7 @@ if ./scripts/verify-quickstart.sh >"$qlog" 2>&1; then
   ok "cold fresh-agent cycle binds approval before planning"
 else
   bad "cold fresh-agent cycle (scripts/verify-quickstart.sh) failed"
-  sed -n '1,60p' "$qlog" | sed 's/^/    /'
+  grep -n 'FAIL \|passed,' "$qlog" | sed 's/^/    /'
 fi
 rm -f "$qlog"
 ./scripts/verify-drive.sh >/dev/null 2>&1 \
