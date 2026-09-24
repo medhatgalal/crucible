@@ -26,7 +26,7 @@ use crate::state::{
 };
 use crate::{message, records, GuidedError};
 
-const MARK: &str = "crucible-run/1";
+pub(crate) const MARK: &str = "crucible-run/1";
 
 const USAGE_CYCLE: &str = "usage: crucible cycle [status]|problem FILE [--next]|problem --abandon REASON|approve-panel|approve|clean --dry-run|--apply";
 const USAGE_PROBLEM: &str = "usage: crucible cycle problem FILE [--next] | --abandon REASON";
@@ -968,7 +968,7 @@ fn claims_absent_only(root: &Path) -> Result<bool, GuidedError> {
     Ok(absent == total)
 }
 
-fn claim_true_bar_met(root: &Path, cn: &str) -> Result<bool, GuidedError> {
+pub(crate) fn claim_true_bar_met(root: &Path, cn: &str) -> Result<bool, GuidedError> {
     if !root.join("claims").join(cn).join("verdicts").is_dir() {
         return Ok(false);
     }
@@ -1002,7 +1002,7 @@ fn claim_true_independence_ok(root: &Path, cn: &str) -> Result<bool, GuidedError
     Ok(true)
 }
 
-fn claim_true_counts(root: &Path, cn: &str) -> Result<(u64, u64), GuidedError> {
+pub(crate) fn claim_true_counts(root: &Path, cn: &str) -> Result<(u64, u64), GuidedError> {
     let mut auditors = 0u64;
     let mut kinds = Vec::new();
     let dir = root.join("claims").join(cn).join("verdicts");
@@ -1065,7 +1065,11 @@ fn claim_true_superseded(root: &Path, cn: &str) -> Result<bool, GuidedError> {
     Ok(false)
 }
 
-fn claim_agent_independence_ok(root: &Path, cn: &str, agent: &str) -> Result<bool, GuidedError> {
+pub(crate) fn claim_agent_independence_ok(
+    root: &Path,
+    cn: &str,
+    agent: &str,
+) -> Result<bool, GuidedError> {
     if !panel_approval_current(root)? {
         return Ok(false);
     }
@@ -1082,7 +1086,11 @@ fn claim_agent_independence_ok(root: &Path, cn: &str, agent: &str) -> Result<boo
     attempt_contract_audit_pass(root, &id)
 }
 
-fn claim_agent_attempt(root: &Path, cn: &str, agent: &str) -> Result<String, GuidedError> {
+pub(crate) fn claim_agent_attempt(
+    root: &Path,
+    cn: &str,
+    agent: &str,
+) -> Result<String, GuidedError> {
     let dir = root.join("claims").join(cn).join("dispatches");
     if dir.is_dir() {
         for role in ["claim-auditor", "scout"] {
@@ -1130,7 +1138,7 @@ fn claim_agent_attempt(root: &Path, cn: &str, agent: &str) -> Result<String, Gui
     Ok(last)
 }
 
-fn claim_attempt_matches(
+pub(crate) fn claim_attempt_matches(
     root: &Path,
     id: &str,
     cn: &str,
@@ -1150,7 +1158,9 @@ fn claim_attempt_matches(
     })
 }
 
-fn claim_agent_evidence_ok(root: &Path, cn: &str, agent: &str) -> bool {
+/// Lexically last non-empty `AGENT.*.txt` whose first line is [`MARK`].
+/// The shell keeps that file; an earlier marked file still counts as usable.
+pub(crate) fn claim_agent_evidence_file(root: &Path, cn: &str, agent: &str) -> Option<PathBuf> {
     let dir = root.join("claims").join(cn).join("evidence");
     let mut paths = read_dir_paths(&dir);
     paths.retain(|path| {
@@ -1159,7 +1169,7 @@ fn claim_agent_evidence_ok(root: &Path, cn: &str, agent: &str) -> bool {
             .is_some_and(|name| evidence_name_matches(name, agent))
     });
     paths.sort();
-    let mut found = false;
+    let mut last = None;
     for path in paths {
         let Ok(meta) = fs::metadata(&path) else {
             continue;
@@ -1171,10 +1181,14 @@ fn claim_agent_evidence_ok(root: &Path, cn: &str, agent: &str) -> bool {
             continue;
         };
         if records(&text).into_iter().next().unwrap_or("") == MARK {
-            found = true;
+            last = Some(path);
         }
     }
-    found
+    last
+}
+
+pub(crate) fn claim_agent_evidence_ok(root: &Path, cn: &str, agent: &str) -> bool {
+    claim_agent_evidence_file(root, cn, agent).is_some()
 }
 
 fn evidence_name_matches(name: &str, agent: &str) -> bool {
@@ -1184,7 +1198,7 @@ fn evidence_name_matches(name: &str, agent: &str) -> bool {
     rest.strip_suffix(".txt").is_some_and(|mid| !mid.is_empty())
 }
 
-fn claim_verdict_word(path: &Path) -> Option<&'static str> {
+pub(crate) fn claim_verdict_word(path: &Path) -> Option<&'static str> {
     let text = fs::read_to_string(path).ok()?;
     match records(&text).into_iter().next()? {
         "CLAIM-VERDICT: TRUE" => Some("TRUE"),
@@ -1195,7 +1209,7 @@ fn claim_verdict_word(path: &Path) -> Option<&'static str> {
     }
 }
 
-fn claim_field(text: &str, n: usize, field: &str) -> Option<String> {
+pub(crate) fn claim_field(text: &str, n: usize, field: &str) -> Option<String> {
     let start = format!("### C{n} ");
     let prefix = format!("    {field}: ");
     let mut inside = false;
@@ -1216,7 +1230,7 @@ fn claim_field(text: &str, n: usize, field: &str) -> Option<String> {
     None
 }
 
-fn count_claim_headings(text: &str) -> usize {
+pub(crate) fn count_claim_headings(text: &str) -> usize {
     records(text)
         .iter()
         .filter(|line| line.starts_with("### C"))
@@ -1274,7 +1288,7 @@ fn contract_audit_word(path: &Path) -> String {
         .to_string()
 }
 
-fn attempt_contract_audit_pass(root: &Path, id: &str) -> Result<bool, GuidedError> {
+pub(crate) fn attempt_contract_audit_pass(root: &Path, id: &str) -> Result<bool, GuidedError> {
     let path = attempt_dir(root, id)?.join("contract-audit.md");
     if !is_regular(&path) {
         return Ok(false);
@@ -1286,7 +1300,7 @@ fn attempt_contract_audit_pass(root: &Path, id: &str) -> Result<bool, GuidedErro
         == Some("PASS"))
 }
 
-fn attempt_transport(root: &Path, id: &str) -> Result<Option<String>, GuidedError> {
+pub(crate) fn attempt_transport(root: &Path, id: &str) -> Result<Option<String>, GuidedError> {
     let path = attempt_dir(root, id)?.join("transport");
     if !is_regular(&path) {
         return Ok(None);
@@ -1356,7 +1370,7 @@ fn attempt_meta(root: &Path, id: &str, column: usize) -> Result<String, GuidedEr
         .to_string())
 }
 
-fn attempt_state(root: &Path, id: &str) -> Result<String, GuidedError> {
+pub(crate) fn attempt_state(root: &Path, id: &str) -> Result<String, GuidedError> {
     let text = fs::read_to_string(attempt_dir(root, id)?.join("events.tsv"))?;
     let mut state = String::new();
     for (idx, rec) in records(&text).into_iter().enumerate() {
@@ -1408,7 +1422,7 @@ fn attempt_terminal(state: &str) -> bool {
     )
 }
 
-fn attempt_event(
+pub(crate) fn attempt_event(
     root: &Path,
     clock: &dyn Clock,
     id: &str,
@@ -1787,7 +1801,7 @@ fn contains_must_letter(text: &str) -> bool {
     false
 }
 
-fn program_field(root: &Path, key: &str) -> Option<String> {
+pub(crate) fn program_field(root: &Path, key: &str) -> Option<String> {
     let value = program_value(root, key);
     if value.is_empty() {
         None
@@ -1808,7 +1822,7 @@ fn program_value(root: &Path, key: &str) -> String {
         .to_string()
 }
 
-fn self_path(root: &Path) -> String {
+pub(crate) fn self_path(root: &Path) -> String {
     if let Ok(value) = std::env::var("CRUCIBLE_SELF") {
         if !value.is_empty() {
             return value;
@@ -1868,7 +1882,7 @@ fn civil_from_days(z: i64) -> (i64, u64, u64) {
     (y, m, d)
 }
 
-fn workid(root: &Path, slug: &str) -> Result<String, GuidedError> {
+pub(crate) fn workid(root: &Path, slug: &str) -> Result<String, GuidedError> {
     let item = root.join("items").join(slug);
     let target = item.join("TARGET");
     if target.is_file() {
@@ -2201,7 +2215,7 @@ fn git_combined(args: &[&str]) -> Result<(bool, String), String> {
     Ok((status.success(), text))
 }
 
-fn attempt_dirs_a(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn attempt_dirs_a(root: &Path) -> Vec<PathBuf> {
     attempt_child_dirs(root)
         .into_iter()
         .filter(|path| file_name(path).starts_with('A'))
@@ -2215,14 +2229,14 @@ fn md_files(dir: &Path) -> Vec<PathBuf> {
     paths
 }
 
-fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
+pub(crate) fn read_dir_paths(dir: &Path) -> Vec<PathBuf> {
     let Ok(rd) = fs::read_dir(dir) else {
         return Vec::new();
     };
     rd.flatten().map(|ent| ent.path()).collect()
 }
 
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("")
@@ -2964,10 +2978,12 @@ A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
     }
 
     fn with_override(key: &str, value: &str, body: impl FnOnce()) {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let _guard = crate::claims::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
         let old = std::env::var(key).ok();
         // SAFETY: this test holds ENV_LOCK and restores the previous value before unlock.
-        // No other test reads CRUCIBLE_MIN_AUDITORS or CRUCIBLE_MIN_KINDS.
+        // Claim and triage tests take the same lock before reading these variables.
         unsafe { std::env::set_var(key, value) };
         struct Restore(String, Option<String>);
         impl Drop for Restore {
@@ -2984,6 +3000,4 @@ A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
         let _restore = Restore(key.to_string(), old);
         body();
     }
-
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 }
