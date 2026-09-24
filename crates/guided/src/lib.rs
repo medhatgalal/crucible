@@ -4,8 +4,10 @@ mod adopt;
 pub mod attempt;
 pub mod audit;
 pub mod claims;
+pub mod close;
 mod cycle;
 pub mod dispatch;
+pub mod inspect;
 mod panel;
 pub mod phase;
 mod program;
@@ -14,6 +16,7 @@ pub mod result;
 mod root;
 pub mod run;
 mod state;
+pub mod task;
 pub mod triage;
 
 use std::fmt;

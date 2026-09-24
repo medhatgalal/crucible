@@ -1930,7 +1930,7 @@ pub(crate) fn workid(root: &Path, slug: &str) -> Result<String, GuidedError> {
     Ok(crate::panel::h12(manifest.as_bytes()))
 }
 
-fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
+pub(crate) fn stale_evidence(root: &Path, slug: &str, wid: &str) -> Vec<String> {
     let dir = root.join("items").join(slug).join("evidence");
     let mut paths = read_dir_paths(&dir);
     paths.sort();
