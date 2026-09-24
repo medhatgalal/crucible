@@ -1,6 +1,4 @@
 //! Root resolution and managed STATE / PROGRAM parsers for the guided cycle.
-//!
-//! Library only: no CLI dispatch and no board writes.
 
 mod program;
 mod root;

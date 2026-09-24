@@ -63,7 +63,7 @@ pub fn state_validate_file(path: &Path) -> Result<(), GuidedError> {
                 "invalid STATE.tsv: invalid item at row {nr}"
             )));
         }
-        if !seen.insert(item.to_string()) {
+        if !seen.insert(item) {
             return Err(message(format!("invalid STATE.tsv: duplicate item {item}")));
         }
         if !matches!(fields[1], "ACTIVE" | "BLOCKED" | "CLOSED" | "DROPPED") {
