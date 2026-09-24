@@ -1,0 +1,339 @@
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crucible_contract::Clock;
+
+use crate::{message, records, GuidedError};
+
+pub const STATE_HEADER: &str =
+    "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch";
+
+/// Directory lock at `$root/.state.lock`. Drop removes leftover temps and the lock.
+#[derive(Debug)]
+#[must_use = "releases the state lock on drop"]
+pub struct StateLock {
+    pub root: PathBuf,
+    pub tsv_tmp: PathBuf,
+    pub md_tmp: PathBuf,
+    pub program_tmp: PathBuf,
+    lock_dir: PathBuf,
+    held: bool,
+}
+
+impl Drop for StateLock {
+    fn drop(&mut self) {
+        if !self.held {
+            return;
+        }
+        let _ = fs::remove_file(&self.tsv_tmp);
+        let _ = fs::remove_file(&self.md_tmp);
+        let _ = fs::remove_file(&self.program_tmp);
+        let _ = fs::remove_dir(&self.lock_dir);
+        self.held = false;
+    }
+}
+
+pub fn state_validate_file(path: &Path) -> Result<(), GuidedError> {
+    if !is_regular_file(path) {
+        return Err(message("invalid STATE.tsv: missing regular file"));
+    }
+    let text = fs::read_to_string(path).map_err(|e| message(format!("invalid STATE.tsv: {e}")))?;
+    let rows = records(&text);
+    if rows.is_empty() {
+        return Err(message("invalid STATE.tsv: empty file"));
+    }
+    if rows[0] != STATE_HEADER {
+        return Err(message("invalid STATE.tsv: header mismatch"));
+    }
+    let mut seen = HashSet::new();
+    let mut current = 0usize;
+    for (idx, rec) in rows.iter().enumerate().skip(1) {
+        let nr = idx + 1;
+        let fields = fields_of(rec);
+        if fields.len() != 8 {
+            return Err(message(format!(
+                "invalid STATE.tsv: row {nr} has {} fields, need 8",
+                fields.len()
+            )));
+        }
+        let item = fields[0];
+        if !is_token(item) {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid item at row {nr}"
+            )));
+        }
+        if !seen.insert(item) {
+            return Err(message(format!("invalid STATE.tsv: duplicate item {item}")));
+        }
+        if !matches!(fields[1], "ACTIVE" | "BLOCKED" | "CLOSED" | "DROPPED") {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid status for {item}"
+            )));
+        }
+        if !matches!(fields[2], "DRAFT" | "READY" | "BUILD" | "REVIEW") {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid stage for {item}"
+            )));
+        }
+        if !is_token(fields[3]) {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid work_id for {item}"
+            )));
+        }
+        if !matches!(fields[4], "-" | "LOW" | "MEDIUM" | "HIGH") {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid risk for {item}"
+            )));
+        }
+        if !is_token(fields[5]) {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid inflight_attempt for {item}"
+            )));
+        }
+        if !is_token(fields[6]) {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid block_code for {item}"
+            )));
+        }
+        if !is_epoch(fields[7]) {
+            return Err(message(format!(
+                "invalid STATE.tsv: invalid updated_epoch for {item}"
+            )));
+        }
+        if fields[1] == "ACTIVE" || fields[1] == "BLOCKED" {
+            current += 1;
+        }
+    }
+    if current > 1 {
+        return Err(message("invalid STATE.tsv: more than one current item"));
+    }
+    Ok(())
+}
+
+/// Column is 1-based, matching awk `$c`. `None` when the slug is absent.
+pub fn state_value(root: &Path, slug: &str, column: usize) -> Result<Option<String>, GuidedError> {
+    let text = fs::read_to_string(root.join("STATE.tsv"))?;
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let fields = fields_of(rec);
+        if fields.first().copied() != Some(slug) {
+            continue;
+        }
+        if column == 0 {
+            return Ok(Some(rec.to_string()));
+        }
+        return Ok(Some(
+            fields.get(column - 1).copied().unwrap_or("").to_string(),
+        ));
+    }
+    Ok(None)
+}
+
+/// `source` defaults to `$root/STATE.tsv`. Program title defaults to `program`.
+pub fn state_render_file(
+    root: &Path,
+    out: &Path,
+    source: Option<&Path>,
+) -> Result<(), GuidedError> {
+    let owned;
+    let source = match source {
+        Some(path) => path,
+        None => {
+            owned = root.join("STATE.tsv");
+            &owned
+        }
+    };
+    let text = fs::read_to_string(source)?;
+    let mut rendered = format!(
+        "# STATE — {prog}\n\nGenerated from `STATE.tsv`; do not edit this file by hand.\n\n| Item | Status | Stage | Work ID | Risk | In-flight attempt | Block code | Updated epoch |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        prog = program_name(root),
+    );
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let fields = fields_of(rec);
+        rendered.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            field(&fields, 0),
+            field(&fields, 1),
+            field(&fields, 2),
+            field(&fields, 3),
+            field(&fields, 4),
+            field(&fields, 5),
+            field(&fields, 6),
+            field(&fields, 7),
+        ));
+    }
+    fs::write(out, rendered)?;
+    Ok(())
+}
+
+pub fn state_lock(root: &Path) -> Result<StateLock, GuidedError> {
+    let lock_dir = root.join(".state.lock");
+    // Any mkdir failure is the shell's one refusal, including a missing root.
+    if fs::create_dir(&lock_dir).is_err() {
+        return Err(message("state mutation already in progress"));
+    }
+    let pid = std::process::id();
+    Ok(StateLock {
+        root: root.to_path_buf(),
+        tsv_tmp: root.join(format!(".STATE.tsv.{pid}.tmp")),
+        md_tmp: root.join(format!(".STATE.md.{pid}.tmp")),
+        program_tmp: root.join(format!(".PROGRAM.{pid}.tmp")),
+        lock_dir,
+        held: true,
+    })
+}
+
+pub fn state_unlock(lock: &mut StateLock) -> Result<(), GuidedError> {
+    if !lock.held {
+        return Err(message("could not release state lock"));
+    }
+    if fs::remove_dir(&lock.lock_dir).is_err() {
+        return Err(message("could not release state lock"));
+    }
+    lock.held = false;
+    Ok(())
+}
+
+pub fn state_commit(lock: &mut StateLock) -> Result<(), GuidedError> {
+    state_validate_file(&lock.tsv_tmp)?;
+    state_render_file(&lock.root, &lock.md_tmp, Some(&lock.tsv_tmp))?;
+    fs::rename(&lock.tsv_tmp, lock.root.join("STATE.tsv"))?;
+    fs::rename(&lock.md_tmp, lock.root.join("STATE.md"))?;
+    state_unlock(lock)?;
+    Ok(())
+}
+
+pub fn state_add_item(
+    root: &Path,
+    clock: &dyn Clock,
+    slug: &str,
+    work_id: &str,
+    risk: &str,
+) -> Result<(), GuidedError> {
+    let mut lock = state_lock(root)?;
+    let tsv = root.join("STATE.tsv");
+    state_validate_file(&tsv)?;
+    if state_value(root, slug, 1)?.is_some() {
+        return Err(message(format!("item already exists in STATE.tsv: {slug}")));
+    }
+    if count_current(&tsv)? != 0 {
+        return Err(message("refused: another item is current"));
+    }
+    let mut body = fs::read(&tsv)?;
+    let epoch = clock.now_unix();
+    body.extend(format!("{slug}\tACTIVE\tDRAFT\t{work_id}\t{risk}\t-\t-\t{epoch}\n").into_bytes());
+    fs::write(&lock.tsv_tmp, body)?;
+    state_commit(&mut lock)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)] // same positional fields as the shell
+pub fn state_update_item(
+    root: &Path,
+    clock: &dyn Clock,
+    slug: &str,
+    status: &str,
+    stage: &str,
+    work_id: &str,
+    risk: &str,
+    inflight: &str,
+    block: &str,
+) -> Result<(), GuidedError> {
+    let mut lock = state_lock(root)?;
+    let tsv = root.join("STATE.tsv");
+    state_validate_file(&tsv)?;
+    let text = fs::read_to_string(&tsv)?;
+    let epoch = clock.now_unix();
+    let mut found = false;
+    let mut out = String::new();
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            out.push_str(rec);
+            out.push('\n');
+            continue;
+        }
+        let item = fields_of(rec).first().copied().unwrap_or("");
+        if item == slug {
+            found = true;
+            out.push_str(&format!(
+                "{slug}\t{status}\t{stage}\t{work_id}\t{risk}\t{inflight}\t{block}\t{epoch}\n"
+            ));
+        } else {
+            out.push_str(rec);
+            out.push('\n');
+        }
+    }
+    if !found {
+        return Err(message(format!("item missing from STATE.tsv: {slug}")));
+    }
+    fs::write(&lock.tsv_tmp, out)?;
+    state_commit(&mut lock)?;
+    Ok(())
+}
+
+fn is_regular_file(path: &Path) -> bool {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => meta.file_type().is_file(),
+        Err(_) => false,
+    }
+}
+
+fn is_token(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn is_epoch(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// An empty record has NF 0. A non-empty record splits on every tab, including empties.
+fn fields_of(rec: &str) -> Vec<&str> {
+    if rec.is_empty() {
+        Vec::new()
+    } else {
+        rec.split('\t').collect()
+    }
+}
+
+fn field<'a>(fields: &[&'a str], index: usize) -> &'a str {
+    fields.get(index).copied().unwrap_or("")
+}
+
+fn program_name(root: &Path) -> String {
+    let Ok(text) = fs::read_to_string(root.join("PROGRAM")) else {
+        return "program".to_string();
+    };
+    for line in records(&text) {
+        if let Some(name) = line.strip_prefix("program: ") {
+            if name.is_empty() {
+                return "program".to_string();
+            }
+            return name.to_string();
+        }
+    }
+    "program".to_string()
+}
+
+fn count_current(path: &Path) -> Result<usize, GuidedError> {
+    let text = fs::read_to_string(path)?;
+    let mut count = 0usize;
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let status = fields_of(rec).get(1).copied().unwrap_or("");
+        if status == "ACTIVE" || status == "BLOCKED" {
+            count += 1;
+        }
+    }
+    Ok(count)
+}

@@ -480,6 +480,7 @@ mod tests {
             include_str!("../../cli/Cargo.toml"),
             include_str!("../../http/Cargo.toml"),
             include_str!("../../room/Cargo.toml"),
+            include_str!("../../guided/Cargo.toml"),
         ] {
             let l = src.to_ascii_lowercase();
             assert!(!l.contains("herdr"), "forbidden dep token in {src}");
