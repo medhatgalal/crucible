@@ -13,6 +13,11 @@ set -eu
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 C="$HERE/crucible"
 [ -x "$C" ] || { echo "selftest: $C is not executable"; exit 2; }
+# The finder exports these before exec. root() prefers them over the fixture
+# binary's own directory, so every ./crucible in a fixture would hit the engine
+# tree. $C adopt is the finder, which sets CRUCIBLE_WRAPPER itself, or the
+# installed binary, whose directory is already the program root.
+unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
 VERBOSE=0; FAST=0
 for a in "$@"; do
   case $a in
@@ -71,6 +76,14 @@ fixture_bin() {
       return 0
     fi
   fi
+  # Adopted trees install the binary as $C. The engine finder is #! and stays rejected.
+  if [ -x "$C" ]; then
+    _sig=$(dd if="$C" bs=2 count=1 2>/dev/null || true)
+    if [ "$_sig" != '#!' ]; then
+      printf '%s\n' "$C"
+      return 0
+    fi
+  fi
   echo "selftest: no release binary (cargo build --release, or set CRUCIBLE_BIN)" >&2
   exit 1
 }
@@ -88,6 +101,7 @@ mkrun() {
     printf 'mk\tkiro\tm\thigh\techo {BRIEF}\n'  > agents.tsv
     printf 'j1\tkiro\tm\thigh\techo {BRIEF}\n' >> agents.tsv
     printf 'j2\tgrok\tm\thigh\techo {BRIEF}\n' >> agents.tsv
+    unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
     ./crucible add it "selftest item" >/dev/null
     [ "${1:-}" = nofalsifier ] || {
       sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' items/it/ITEM.md > i.tmp

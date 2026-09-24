@@ -212,32 +212,43 @@ expect 'closed program is done' '^DONE$' "$P/crucible" next
 
 item_file="$tmp/item-file"
 mkdir -p "$item_file"
-# The release binary, not the finder. A copied finder has no sibling binary here.
-item_bin=$HERE/target/release/crucible
+# Non-script CRUCIBLE_BIN, else target/release, else $C when adopt installed the
+# binary there. The engine finder is #! and stays rejected.
+item_bin=
 if [ -n "${CRUCIBLE_BIN:-}" ] && [ -x "$CRUCIBLE_BIN" ]; then
   _sig=$(dd if="$CRUCIBLE_BIN" bs=2 count=1 2>/dev/null || true)
   if [ "$_sig" != '#!' ]; then
     item_bin=$CRUCIBLE_BIN
   fi
 fi
-[ -x "$item_bin" ] || {
+if [ -z "$item_bin" ] && [ -x "$HERE/target/release/crucible" ]; then
+  _sig=$(dd if="$HERE/target/release/crucible" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" != '#!' ]; then
+    item_bin=$HERE/target/release/crucible
+  fi
+fi
+if [ -z "$item_bin" ] && [ -x "$C" ]; then
+  _sig=$(dd if="$C" bs=2 count=1 2>/dev/null || true)
+  if [ "$_sig" != '#!' ]; then
+    item_bin=$C
+  fi
+fi
+[ -n "$item_bin" ] || {
   echo "verify-managed-lifecycle: no release binary (cargo build --release, or set CRUCIBLE_BIN)" >&2
-  exit 1
-}
-_sig=$(dd if="$item_bin" bs=2 count=1 2>/dev/null || true)
-[ "$_sig" != '#!' ] || {
-  echo "verify-managed-lifecycle: $item_bin is a script, not the release binary" >&2
   exit 1
 }
 cp "$item_bin" "$item_file/crucible"
 chmod +x "$item_file/crucible"
 (
   cd "$item_file"
+  # Do not inherit the finder's root. $C adopt, earlier, still goes through the finder.
+  unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
   ./crucible add old 'item-file item' >/dev/null
 )
 grep -q '^PHASE: SPEC$' "$item_file/items/old/ITEM.md" && ok || bad 'item-file program lost phase behavior'
 grep -q '^STATUS: OPEN$' "$item_file/items/old/ITEM.md" && ok || bad 'item-file program lost status behavior'
-refuses 'cannot enable after first item' 'before the first item' "$item_file/crucible" lifecycle enable --apply
+refuses 'cannot enable after first item' 'before the first item' \
+  env -u CRUCIBLE_WRAPPER -u CRUCIBLE_ROOT "$item_file/crucible" lifecycle enable --apply
 
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
