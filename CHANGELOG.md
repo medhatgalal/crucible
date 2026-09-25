@@ -21,6 +21,12 @@ All notable changes to this project are documented here. This project follows
   `.agents/skills` (no second `.codex/skills` tree). No VERSION bump.
 
 ### Room
+- `crucible room` reads `<cwd>/.crucible/herdr/` before herdr and before listen.
+  A bad layout exits 2 and does not call herdr. It attaches to exactly one
+  existing workspace label (cwd is not identity). Zero or more than one match
+  exits 1 and does not create, close, or rename a workspace. A role tab is
+  added only when that label is absent, and `go`, `reap`, and `camera` pane-run
+  only on a tab this call created. No VERSION bump.
 - `crucible room` asks external `herdr` for a workspace and standing tabs
   (chat, orchestrator, watcher, reaper, dashboard). A second run does not
   create the same tab again. Watcher and dashboard run `camera` (GET only).

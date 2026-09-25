@@ -147,7 +147,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
 | D9 | Contracts: `crucible.walk/v1` + events WAL + **panel-as-files** (cast state `go` already requires; **not** a `WalkSnapshot` key in v1). CLI **read-only** JSON **equals** HTTP JSON. Files always written (human/`cat` without HTTP). |
 | D10 | Kernel HTTP: **GET** `/walk` `/stats?since=` `/health`. **No `POST /go`.** Room starts `go` as a **process**, not an HTTP walk. |
-| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
+| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Attach to exactly one existing workspace label from <cwd>/.crucible/herdr/workspace. Do not create, close, or rename a workspace. pane run only a tab this call created. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` + POSIX guided entry + files + cargo for contributors. CHANGELOG 1.17.0 records the break from “POSIX sh is the **working-mode** engine.” |
@@ -265,12 +265,12 @@ Second server: probe GET `/health` first. If `ok: true` and `version` matches, d
 
 Sequence:
 
-1. Resolve external `herdr` (`PATH`, else `CRUCIBLE_HERDR`). Missing or not executable: exit **nonzero**, print a refusal, no listen, no TRACE, and no health probe.
-2. Probe GET `/health` on `127.0.0.1:1734`. Matching VERSION: reuse (`serve reused`). Only connection refused spawns **`current_exe() serve --bind 127.0.0.1:1734`**. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
-3. Spawn Herdr with structured tabs: **chat**, **orchestrator**, **watcher** (GET only; must not write the go PTY), **reaper** (kill `go` process group), **dashboard**.
-4. Standing labels; second attach does not duplicate tabs.
-5. Spawn **`current_exe() go`** in orchestrator **only if** `IDEA.md` is non-empty **or** a READY `BACKLOG.tsv` row exists. Else wait for chat.
-6. Missing FLOOR → snapshot `available: false`. Cameras are GET clients.
+0. Read `<cwd>/.crucible/herdr/workspace` and `<cwd>/.crucible/herdr/roles`. Invalid layout (missing, empty, multi-line, symlink, or roles not the five names in order): exit 2, no herdr, no listen, no TRACE.
+1. Resolve external `herdr` (`PATH`, else `CRUCIBLE_HERDR`). Missing or not executable: exit nonzero, print a refusal, no listen, no TRACE, and no health probe.
+2. Probe GET `/health` on `127.0.0.1:1734`. Matching VERSION: reuse (`serve reused`). Only connection refused spawns `current_exe() serve --bind 127.0.0.1:1734`. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
+3. `workspace list`. Attach to the one object with string `label` equal to the workspace file and string `workspace_id`, and without `tab_id` or `pane_id`. Ignore cwd. Zero or more than one: exit 1. Do not create, close, or rename a workspace. Do not pass `--session`.
+4. Create a role tab only when that label is absent (`chat`, `orchestrator`, `watcher`, `reaper`, `dashboard`). A second attach does not duplicate. A failed `tab create`, or a success body with no `tab_id`, does not `pane run` any role. Do not `tab close`.
+5. `pane run` only a `tab_id` this call created. `go` in orchestrator only when that tab was created now and intake is ready (`go orchestrator`). Intake not ready: `go waiting`, whether or not the tab was created. Intake ready and orchestrator already open: `go not started (orchestrator tab already open)`. `reap` only when reaper was created now and go was started now and pid >= 2. Cameras only on watcher and dashboard tabs created now. Chat is never pane-run.
 
 Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on default musl; auto-go via `POST /go`; watcher writes to the go PTY; spawn PATH `crucible`; missing herdr still listens or writes TRACE.
 

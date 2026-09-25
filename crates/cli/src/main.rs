@@ -299,7 +299,7 @@ fn write_help(out: &mut dyn Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  room                              herdr tabs; cameras GET; go is a process in orchestrator"
+        "  room                              attach one herdr workspace; new role tabs only; go is a process"
     )?;
     writeln!(
         out,
