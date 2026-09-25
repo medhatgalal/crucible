@@ -583,6 +583,46 @@ n_dispatch=$(printf '%s\n' "$dispatch_verbs" | grep -c '[a-z]' || true)
 if [ "$n_dispatch" -lt 20 ]; then
   bad "cannot enumerate the engine's verb dispatch table (extracted $n_dispatch, expected at least 20): refusing to check doc verbs against a set this check failed to build"
 else
+# One page allowlist. The array literal is pub const WEB_READ_ONLY in
+# crates/web/src/lib.rs. Every name must be a dispatch_verb arm. A name that
+# writes is a defect even if it is also a real arm.
+web_allow=$(awk '
+  /pub const WEB_READ_ONLY:/ { in_const = 1; next }
+  in_const && /\];/ { exit }
+  in_const {
+    line = $0
+    while (match(line, /"[a-z][a-z0-9-]*"/)) {
+      tok = substr(line, RSTART + 1, RLENGTH - 2)
+      print tok
+      line = substr(line, RSTART + RLENGTH)
+    }
+  }
+' crates/web/src/lib.rs | sort -u)
+n_allow=$(printf '%s\n' "$web_allow" | grep -c '[a-z]' || true)
+if [ "$n_allow" -lt 1 ]; then
+  bad "cannot enumerate WEB_READ_ONLY (extracted $n_allow)"
+else
+  missing_arm=""
+  for v in $web_allow; do
+    printf '%s\n' "$dispatch_verbs" | grep -qx "$v" || missing_arm="$missing_arm $v"
+  done
+  [ -z "$missing_arm" ] && ok "WEB_READ_ONLY is $n_allow dispatch_verb arms" \
+    || bad "WEB_READ_ONLY names are not dispatch arms:$missing_arm"
+  denied=""
+  for v in status close drive adopt go brief target state lifecycle serve room web doctor selftest help cycle claim; do
+    printf '%s\n' "$web_allow" | grep -qx "$v" && denied="$denied $v"
+  done
+  [ -z "$denied" ] && ok "WEB_READ_ONLY has no writer or walk verb" \
+    || bad "WEB_READ_ONLY contains a verb this slice must not spawn:$denied"
+fi
+awk '
+  /fn dispatch_verb\(/ { in_fn = 1 }
+  in_fn && /^}/ { exit }
+  in_fn && /crucible_web::WEB_READ_ONLY/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' crates/cli/src/main.rs \
+  && ok "dispatch_verb binds crucible_web::WEB_READ_ONLY" \
+  || bad "dispatch_verb does not bind crucible_web::WEB_READ_ONLY"
 # Hyphens included, and this was a real hole: the old class `[a-z][a-z]*` read `crucible
 # run-claim` as the verb `run`, which is also real, so `run-claim` passed by accident and was
 # never once tested as itself. Same for `plan-audit`, `contract-audit`, `probe-acp`.

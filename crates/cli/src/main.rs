@@ -87,9 +87,13 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
     dispatch_verb(&args[0], &args[1..], cwd, clock)
 }
 
-/// One match so the verb set is readable as a table. `scripts/selftest.sh` enumerates these
-/// arms; a second table in the wrapper would be a second kernel.
+/// One match so the verb set is readable as a table. `scripts/selftest.sh`
+/// enumerates these arms. The page may spawn only `crucible_web::WEB_READ_ONLY`
+/// (defined in crates/web/src/lib.rs; this binary crate is not a library).
+/// That const is the only allowlist. This binding keeps the match and the
+/// page table in one function so the link cannot be deleted unnoticed.
 fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
+    let _ = crucible_web::WEB_READ_ONLY;
     let args: Vec<&str> = rest.iter().map(String::as_str).collect();
     match verb {
         "go" => cmd_go(rest, cwd, clock),

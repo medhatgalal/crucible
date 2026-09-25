@@ -10,6 +10,16 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.19.0 — page calls read-only verbs
+
+`crucible web` on `127.0.0.1:1735` can POST `/act/<verb>` for `agents`,
+`debrief`, `next`, `panes`, `stats`, `workid`, and `status --json` only.
+The page shows the child's stdout (empty when the child wrote none) and,
+when the exit code is not 0, that code. It does not show stderr. It does
+not choose the next step. Bare `status`,
+`close`, `drive`, `adopt`, `state`, `target`, `brief`, and `lifecycle` are
+not on the page. `POST /go` stays unavailable. `POST /act/go` is unchanged.
+
 ## 1.17.0 — Rust working-mode kernel
 
 `wm.sh` is an exec wrapper around the `crucible` binary. `go`, `status`,

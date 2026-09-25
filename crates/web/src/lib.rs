@@ -1,6 +1,7 @@
 //! Loopback web camera. It serves a page and proxies GET `/walk`, `/stats`, and
 //! `/health`. It appends `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` spawns
-//! `go` in a new process group and does not walk. `POST /go` is not a walk.
+//! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
+//! spawns that verb and waits. `POST /go` is not a walk.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
@@ -24,7 +25,25 @@ const NOT_A_WALK: &str = "POST is not a walk\n";
 const OK_JSON: &str = "{\"ok\":true}\n";
 const BACKLOG_HEADER: &str = "id\tsize\trisk\tidea_path\tstatus";
 
-const PAGE: &str = r#"<!DOCTYPE html>
+fn page_html() -> String {
+    let mut buttons = String::new();
+    for act in web_page_acts() {
+        let verb = act.verb;
+        let args_json = serde_json::to_string(act.args).unwrap_or_else(|_| "[]".to_string());
+        let data_args = args_json
+            .replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;");
+        let label = if act.args.is_empty() {
+            verb.to_string()
+        } else {
+            format!("{verb} {}", act.args.join(" "))
+        };
+        buttons.push_str(&format!(
+            "<button type=\"button\" data-verb=\"{verb}\" data-args=\"{data_args}\">{label}</button>\n"
+        ));
+    }
+    let doc = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -40,6 +59,10 @@ label { display: block; margin: 0.25rem 0; }
 <p>Backlog: <a href="/api/backlog">/api/backlog</a>. CHAT.md: <a href="/api/chat">/api/chat</a> (plain text).</p>
 <button id="reload" type="button">Reload</button>
 <button id="start" type="button">Start</button>
+<h2>Read</h2>
+<!--READ-->
+<label>args <input id="read-args" type="text" placeholder="A non-empty value replaces the button default and is split on whitespace, with no quotes"></label>
+<pre id="read"></pre>
 <h2>Health</h2><pre id="health"></pre>
 <h2>Walk</h2><pre id="walk"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -113,11 +136,32 @@ document.getElementById("start").addEventListener("click", async () => {
     el.textContent = String(e);
   }
 });
+document.querySelectorAll("button[data-verb]").forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    const raw = document.getElementById("read-args").value.trim();
+    const args = raw.length ? raw.split(/\s+/) : JSON.parse(btn.getAttribute("data-args"));
+    const el = document.getElementById("read");
+    try {
+      const res = await fetch("/act/" + btn.getAttribute("data-verb"), {
+        method: "POST",
+        headers: actHeaders,
+        body: JSON.stringify({ args })
+      });
+      const text = await res.text();
+      const exit = res.headers.get("X-Crucible-Exit");
+      el.textContent = (exit && exit !== "0") ? (text + "\nexit " + exit + "\n") : text;
+    } catch (e) {
+      el.textContent = String(e);
+    }
+  });
+});
 load();
 </script>
 </body>
 </html>
 "#;
+    doc.replace("<!--READ-->", &buttons)
+}
 
 pub fn bind_web(spec: &str) -> Result<TcpListener, ServeError> {
     crucible_http::bind_listener(spec)
@@ -208,11 +252,17 @@ fn route(
         }
         return act(stream, cwd, exe, req);
     }
+    if let Some(verb) = act_segment(&req.path) {
+        if req.method != "POST" {
+            return write_resp(stream, 404, "text/plain", "not found\n", false);
+        }
+        return post_read(stream, cwd, exe, verb, req);
+    }
     if req.method != "GET" && req.method != "HEAD" {
         return write_resp(stream, 405, "text/plain", NOT_A_WALK, false);
     }
     if req.path == "/" || req.path == "/index.html" {
-        return write_resp(stream, 200, "text/html; charset=utf-8", PAGE, head);
+        return write_resp(stream, 200, "text/html; charset=utf-8", &page_html(), head);
     }
     if req.path == "/api/backlog" {
         match backlog_json(cwd) {
@@ -251,8 +301,71 @@ fn route(
     }
 }
 
+/// Verbs the loopback page may spawn. One array literal. `scripts/selftest.sh`
+/// parses this const. Do not copy it into JavaScript or into a second slice.
+// One name per line: the selftest awk skips the declaration line, so a
+// collapsed `= &[...];` extracts nothing.
+#[rustfmt::skip]
+pub const WEB_READ_ONLY: &[&str] = &[
+    "agents",
+    "debrief",
+    "next",
+    "panes",
+    "stats",
+    "workid",
+];
+
+/// `status` is not in `WEB_READ_ONLY`: bare status writes `.wm/FLOOR.md`.
+pub fn web_act_allowed(verb: &str, args: &[String]) -> bool {
+    if WEB_READ_ONLY.contains(&verb) {
+        return true;
+    }
+    verb == "status" && args.len() == 1 && args[0] == "--json"
+}
+
+pub struct WebAct {
+    pub verb: &'static str,
+    pub args: &'static [&'static str],
+}
+
+pub fn web_page_acts() -> Vec<WebAct> {
+    let mut acts = Vec::with_capacity(WEB_READ_ONLY.len() + 1);
+    for verb in WEB_READ_ONLY {
+        let args: &'static [&'static str] = if *verb == "stats" {
+            &["--since", "24h", "--json"]
+        } else {
+            &[]
+        };
+        acts.push(WebAct { verb, args });
+    }
+    acts.push(WebAct {
+        verb: "status",
+        args: &["--json"],
+    });
+    acts
+}
+
 fn is_act(path: &str) -> bool {
     matches!(path, "/act/backlog" | "/act/chat" | "/act/go")
+}
+
+fn act_segment(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("/act/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    let ok = rest.bytes().enumerate().all(|(i, b)| {
+        if i == 0 {
+            b.is_ascii_lowercase()
+        } else {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
+        }
+    });
+    if ok {
+        Some(rest)
+    } else {
+        None
+    }
 }
 
 fn act(stream: &mut TcpStream, cwd: &Path, exe: &Path, req: &Incoming) -> Result<(), String> {
@@ -330,6 +443,71 @@ fn post_go(stream: &mut TcpStream, cwd: &Path, exe: &Path, body: &[u8]) -> Resul
     match spawn_go(exe, cwd) {
         Ok(pid) => write_resp(stream, 200, "application/json", &pid_json(pid), false),
         Err(()) => write_resp(stream, 500, "text/plain", "spawn failed\n", false),
+    }
+}
+
+fn post_read(
+    stream: &mut TcpStream,
+    cwd: &Path,
+    exe: &Path,
+    verb: &str,
+    req: &Incoming,
+) -> Result<(), String> {
+    if let Err(msg) = act_headers(&req.headers) {
+        return write_resp(stream, 400, "text/plain", msg, false);
+    }
+    let parsed: serde_json::Value = match serde_json::from_slice(&req.body) {
+        Ok(v) => v,
+        Err(_) => return write_resp(stream, 400, "text/plain", "bad args\n", false),
+    };
+    let Some(obj) = parsed.as_object() else {
+        return write_resp(stream, 400, "text/plain", "bad args\n", false);
+    };
+    if obj.keys().any(|k| k != "args") {
+        return write_resp(stream, 400, "text/plain", "bad args\n", false);
+    }
+    let args = match obj.get("args") {
+        None => Vec::new(),
+        Some(serde_json::Value::Array(items)) => {
+            if items.len() > 32 {
+                return write_resp(stream, 400, "text/plain", "bad args\n", false);
+            }
+            let mut args = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(s) = item.as_str() else {
+                    return write_resp(stream, 400, "text/plain", "bad args\n", false);
+                };
+                if s.len() > 256 {
+                    return write_resp(stream, 400, "text/plain", "bad args\n", false);
+                }
+                args.push(s.to_string());
+            }
+            args
+        }
+        Some(_) => return write_resp(stream, 400, "text/plain", "bad args\n", false),
+    };
+    if !web_act_allowed(verb, &args) {
+        return write_resp(stream, 404, "text/plain", "not found\n", false);
+    }
+    match spawn_read(exe, cwd, verb, &args) {
+        Ok(output) => {
+            let exit = match output.status.code() {
+                Some(code) => code.to_string(),
+                None => "signal".to_string(),
+            };
+            let mut log = io::stderr();
+            let _ = writeln!(log, "web act: verb={verb} exit={exit}");
+            let _ = log.write_all(&output.stderr);
+            write_act_out(stream, &output.stdout, Some(&exit))
+        }
+        Err(ReadSpawn::Spawn) => {
+            let _ = writeln!(io::stderr(), "web act: verb={verb} exit=spawn");
+            write_resp(stream, 500, "text/plain", "spawn failed\n", false)
+        }
+        Err(ReadSpawn::Timeout) => {
+            let _ = writeln!(io::stderr(), "web act: verb={verb} exit=timeout");
+            write_resp(stream, 504, "text/plain", "act timed out\n", false)
+        }
     }
 }
 
@@ -542,6 +720,73 @@ fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, ()> {
     Ok(pid)
 }
 
+enum ReadSpawn {
+    Spawn,
+    Timeout,
+}
+
+fn spawn_read(
+    exe: &Path,
+    cwd: &Path,
+    verb: &str,
+    args: &[String],
+) -> Result<std::process::Output, ReadSpawn> {
+    let mut cmd = Command::new(exe);
+    cmd.arg(verb)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // No process_group. This child is not `go`.
+    let mut child = cmd.spawn().map_err(|_| ReadSpawn::Spawn)?;
+    let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ReadSpawn::Spawn);
+    };
+    // Read pipes on threads: a full pipe deadlocks try_wait.
+    let out_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let err_thread = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+    let started = std::time::Instant::now();
+    let limit = Duration::from_secs(5);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() < limit => thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = out_thread.join();
+                let _ = err_thread.join();
+                return Err(ReadSpawn::Timeout);
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = out_thread.join();
+                let _ = err_thread.join();
+                return Err(ReadSpawn::Spawn);
+            }
+        }
+    };
+    let stdout = out_thread.join().unwrap_or_default();
+    let stderr = err_thread.join().unwrap_or_default();
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -627,7 +872,7 @@ fn read_request(stream: &mut TcpStream) -> Result<Incoming, ReadErr> {
                     if let Some(end) = header_end(&buf) {
                         let head = parse_head(&buf[..end])?;
                         header_at = Some(end);
-                        if is_act(&head.path) && head.method == "POST" {
+                        if act_segment(&head.path).is_some() && head.method == "POST" {
                             need = Some(framed_total(&head.headers, end)?);
                         }
                         continue;
@@ -763,6 +1008,7 @@ fn reason(code: u16) -> &'static str {
         413 => "Payload Too Large",
         500 => "Internal Server Error",
         502 => "Bad Gateway",
+        504 => "Gateway Timeout",
         _ => "Error",
     }
 }
@@ -782,6 +1028,28 @@ fn write_resp(
         body.len()
     )
     .map_err(|e| e.to_string())
+}
+
+fn write_act_out(
+    stream: &mut TcpStream,
+    body: &[u8],
+    exit_header: Option<&str>,
+) -> Result<(), String> {
+    let mut head = format!(
+        "HTTP/1.1 200 {}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\n",
+        reason(200),
+        body.len()
+    );
+    if let Some(code) = exit_header {
+        head.push_str("X-Crucible-Exit: ");
+        head.push_str(code);
+        head.push_str("\r\n");
+    }
+    head.push_str("Connection: close\r\n\r\n");
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|e| e.to_string())?;
+    stream.write_all(body).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -1079,7 +1347,21 @@ mod tests {
         assert!(body.contains("textContent"));
         assert!(body.contains(">Start<"));
         assert!(!body.contains("innerHTML"));
+        assert!(!body.contains("const verbs"));
         assert!(!body.contains("POST /go"));
+        assert!(body.contains(">Read<"));
+        assert!(body.contains("id=\"read-args\""));
+        assert!(body.contains("id=\"read\""));
+        for verb in [
+            "agents", "debrief", "next", "panes", "stats", "workid", "status",
+        ] {
+            assert!(
+                body.contains(&format!("data-verb=\"{verb}\"")),
+                "{verb} missing from {body}"
+            );
+        }
+        assert!(body.contains(">stats --since 24h --json<"));
+        assert!(body.contains(">status --json<"));
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
         assert_eq!(code, 200, "{body}");
         assert!(body.contains("NEXT RED"), "{body}");
@@ -1594,5 +1876,314 @@ mod tests {
         assert!(!prod.contains("Access-Control-Allow-Origin"));
         assert!(prod.contains("process_group(0)"));
         assert!(prod.contains("not a walk"));
+        let read_fn = prod
+            .split_once("fn spawn_read")
+            .expect("spawn_read")
+            .1
+            .split_once("\nfn ")
+            .expect("fn after spawn_read")
+            .0;
+        assert!(
+            !read_fn.contains("process_group("),
+            "spawn_read must not call process_group"
+        );
+    }
+
+    fn recorder(dir: &Path) -> PathBuf {
+        let path = dir.join("recorder.sh");
+        write_exec(
+            &path,
+            "#!/bin/sh\nprintf 'stdout:%s\\n' \"$1\"\nprintf '%s\\n' \"$*\" > ARGV_ALL\nexit 0\n",
+        );
+        path
+    }
+
+    fn argv_all(dir: &Path) -> Option<String> {
+        fs::read_to_string(dir.join("ARGV_ALL")).ok()
+    }
+
+    #[test]
+    fn web_read_only_is_exactly_the_non_writing_slice() {
+        assert_eq!(
+            WEB_READ_ONLY,
+            &["agents", "debrief", "next", "panes", "stats", "workid"][..]
+        );
+        assert!(web_act_allowed("debrief", &[]));
+        assert!(web_act_allowed(
+            "stats",
+            &["--since".into(), "24h".into(), "--json".into()]
+        ));
+        assert!(web_act_allowed("status", &["--json".into()]));
+        assert!(!web_act_allowed("status", &[]));
+        assert!(!web_act_allowed(
+            "status",
+            &["--json".into(), "extra".into()]
+        ));
+        for verb in [
+            "close",
+            "drive",
+            "adopt",
+            "go",
+            "state",
+            "target",
+            "brief",
+            "lifecycle",
+        ] {
+            assert!(!web_act_allowed(verb, &[]), "{verb}");
+            assert!(!web_act_allowed(verb, &["status".into()]), "{verb}");
+        }
+    }
+
+    #[test]
+    fn act_debrief_reaches_exe_and_returns_stdout() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/debrief",
+                r#"{"args":[]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:debrief\n");
+        assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("content-type: text/plain; charset=utf-8"),
+            "{headers}"
+        );
+        assert_no_cors(&headers);
+        assert_eq!(argv_all(&tmp.root).unwrap().trim(), "debrief");
+    }
+
+    #[test]
+    fn act_status_without_json_is_404() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 4);
+        for body in [r#"{}"#, r#"{"args":[]}"#, r#"{"args":["--json","extra"]}"#] {
+            let (code, _, resp) = exchange(
+                &addr,
+                &act_request("/act/status", body, "application/json", Some("1")),
+            );
+            assert_eq!(code, 404, "{body} -> {resp}");
+            assert_eq!(resp, "not found\n");
+            assert!(argv_all(&tmp.root).is_none(), "{body} spawned");
+        }
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/status",
+                r#"{"args":["--json"]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:status\n");
+        assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+        assert_eq!(argv_all(&tmp.root).unwrap().trim(), "status --json");
+    }
+
+    #[test]
+    fn act_close_is_404() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 2);
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/close",
+                r#"{"args":[]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 404, "{body}");
+        assert_eq!(body, "not found\n");
+        assert_no_cors(&headers);
+        assert!(argv_all(&tmp.root).is_none());
+        let (code, headers, body) = exchange(&addr, &simple("GET", "/act/close"));
+        assert_eq!(code, 404, "{body}");
+        assert_eq!(body, "not found\n");
+        assert_no_cors(&headers);
+        assert!(argv_all(&tmp.root).is_none());
+    }
+
+    #[test]
+    fn post_go_on_web_stays_405_in_the_read_only_test() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let (code, _, body) = exchange(&addr, &simple("POST", "/go"));
+        assert_eq!(code, 405, "{body}");
+        assert_eq!(body, "POST is not a walk\n");
+        assert!(argv_all(&tmp.root).is_none());
+    }
+
+    #[test]
+    fn act_debrief_bad_headers_do_not_spawn() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 4);
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/debrief", r#"{"args":[]}"#, "application/json", None),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not an act\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/debrief",
+                "a=b",
+                "application/x-www-form-urlencoded",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not json\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/close", r#"{"args":[]}"#, "application/json", None),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not an act\n");
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/act/status", "{}", "application/json", None),
+        );
+        assert_eq!(code, 400, "{body}");
+        assert_eq!(body, "not an act\n");
+        assert!(argv_all(&tmp.root).is_none());
+    }
+
+    #[test]
+    fn act_debrief_bad_args_do_not_spawn() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 6);
+        let long = format!(r#"{{"args":["{}"]}}"#, "a".repeat(257));
+        let mut many = String::from(r#"{"args":["#);
+        for i in 0..33 {
+            if i > 0 {
+                many.push(',');
+            }
+            many.push_str(&format!("\"a{i}\""));
+        }
+        many.push_str("]}");
+        for body in [
+            r#"{"x":1}"#.to_string(),
+            r#"{"args":[1]}"#.to_string(),
+            "[]".to_string(),
+            r#"{"args":["--json"],"x":1}"#.to_string(),
+            long,
+            many,
+        ] {
+            let (code, _, resp) = exchange(
+                &addr,
+                &act_request("/act/debrief", &body, "application/json", Some("1")),
+            );
+            assert_eq!(code, 400, "{body} -> {resp}");
+            assert_eq!(resp, "bad args\n");
+            assert!(argv_all(&tmp.root).is_none(), "{body} spawned");
+        }
+    }
+
+    #[test]
+    fn act_nonzero_exit_body_is_stdout_only() {
+        let tmp = Tmp::new();
+        let exe = tmp.root.join("out.sh");
+        write_exec(
+            &exe,
+            "#!/bin/sh\nprintf 'out\\n'\nprintf 'err\\n' >&2\nexit 2\n",
+        );
+        let addr = start_server(&tmp.root, &exe, 1);
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/debrief",
+                r#"{"args":[]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "out\n");
+        assert!(!body.contains("err"));
+        assert!(headers.contains("X-Crucible-Exit: 2"), "{headers}");
+        assert_no_cors(&headers);
+    }
+
+    #[test]
+    fn act_empty_stdout_is_empty_body() {
+        let tmp = Tmp::new();
+        let exe = tmp.root.join("err.sh");
+        write_exec(&exe, "#!/bin/sh\nprintf 'err\\n' >&2\nexit 2\n");
+        let addr = start_server(&tmp.root, &exe, 1);
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request("/act/next", "{}", "application/json", Some("1")),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert!(body.is_empty(), "{body}");
+        assert!(
+            headers.to_ascii_lowercase().contains("content-length: 0"),
+            "{headers}"
+        );
+        assert!(headers.contains("X-Crucible-Exit: 2"), "{headers}");
+        assert!(!body.contains("err"));
+    }
+
+    #[test]
+    fn act_stdout_bytes_are_not_lossy_decoded() {
+        let tmp = Tmp::new();
+        let exe = tmp.root.join("ff.sh");
+        write_exec(&exe, "#!/bin/sh\nprintf '\\377'\nexit 0\n");
+        let addr = start_server(&tmp.root, &exe, 1);
+        let raw = act_request(
+            "/act/debrief",
+            r#"{"args":[]}"#,
+            "application/json",
+            Some("1"),
+        );
+        let mut buf = Vec::new();
+        for _ in 0..200 {
+            let mut s = match TcpStream::connect(&addr) {
+                Ok(s) => s,
+                Err(_) => {
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+            };
+            let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
+            if s.write_all(&raw).is_err() {
+                continue;
+            }
+            let _ = s.shutdown(std::net::Shutdown::Write);
+            buf.clear();
+            match s.read_to_end(&mut buf) {
+                Ok(_) => {}
+                Err(_) if !buf.is_empty() => {}
+                Err(_) => continue,
+            }
+            break;
+        }
+        assert!(!buf.is_empty(), "no response");
+        let split = buf
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("headers");
+        let head = String::from_utf8_lossy(&buf[..split]);
+        let body = &buf[split + 4..];
+        assert!(head.starts_with("HTTP/1.1 200 "), "{head}");
+        assert!(head.contains("X-Crucible-Exit: 0"), "{head}");
+        assert_eq!(body, &[0xff]);
+        assert!(!body.windows(3).any(|w| w == [0xef, 0xbf, 0xbd]));
     }
 }

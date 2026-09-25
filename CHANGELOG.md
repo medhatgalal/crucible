@@ -99,6 +99,21 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.19.0] - 2026-09-25
+
+### Web
+- `crucible web` accepts `POST /act/<verb>` for `agents`, `debrief`, `next`,
+  `panes`, `stats`, and `workid`, and `POST /act/status` only when the JSON
+  args are exactly `["--json"]`. It spawns this binary, waits, and returns
+  the child's stdout bytes as the HTTP body, including when that is empty.
+  It does not substitute stderr and it does not walk. Bare `status` stays
+  off the page because it writes `.wm/FLOOR.md`. `state`, `target`, `brief`,
+  and `lifecycle` are omitted because those functions write. `POST /act/go`
+  is unchanged.
+  Kernel `POST /go` stays 405.
+- The loopback page renders one button per allowlist entry from that const.
+  The page script has no verb table and does not choose the next step.
+
 ## [1.18.0] - 2026-09-24
 
 ### Guided verbs on the one binary
