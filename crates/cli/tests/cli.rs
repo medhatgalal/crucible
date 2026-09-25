@@ -160,6 +160,104 @@ fn debrief_prints_floor_and_trace_deltas() {
     assert!(stdout.contains("station: ANDON"));
     assert!(stdout.contains("STOP-ASK INTAKE"));
     assert!(stdout.contains("delta_s"));
+    let want = "\
+debrief
+station: ANDON
+card: STOP-ASK INTAKE
+wip: -
+andon: STOP-ASK INTAKE
+independence: SUBAGENT-ISOLATED
+evidence:
+  .wm/FALSIFIER
+  reviews/review.md
+when  delta_s  total_s  card  station
+2026-09-20T12:00:00Z  0  0  STOP-ASK INTAKE  ANDON
+";
+    assert_eq!(stdout, want);
+    assert!(out.stderr.is_empty());
+}
+
+#[test]
+fn debrief_missing_floor_writes_stdout() {
+    let tmp = Tmp::new();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .arg("debrief")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, b"no FLOOR.md (run go or status)\n");
+    assert!(out.stderr.is_empty());
+    assert!(!tmp.root.join(".wm").exists());
+}
+
+#[test]
+fn debrief_missing_trace_writes_stdout() {
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let floor = b"station: ANDON\ncard: STOP-ASK INTAKE\nwip: -\nandon: STOP-ASK INTAKE\nindependence: SUBAGENT-ISOLATED\nevidence:\n  .wm/FALSIFIER\n  reviews/review.md\n";
+    fs::write(wm.join("FLOOR.md"), floor).unwrap();
+    let out = bin()
+        .current_dir(&tmp.root)
+        .arg("debrief")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, b"no TRACE.tsv\n");
+    assert!(out.stderr.is_empty());
+    assert_eq!(fs::read(wm.join("FLOOR.md")).unwrap(), floor);
+    assert!(!wm.join("TRACE.tsv").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn debrief_unreadable_floor_writes_stdout() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let floor = wm.join("FLOOR.md");
+    fs::write(&floor, b"x\n").unwrap();
+    fs::write(wm.join("TRACE.tsv"), b"when\tcard\toutcome\n").unwrap();
+    let mut perm = fs::metadata(&floor).unwrap().permissions();
+    perm.set_mode(0o000);
+    fs::set_permissions(&floor, perm).unwrap();
+    let err = fs::read_to_string(&floor).expect_err("floor must be unreadable");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .arg("debrief")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty());
+    assert_eq!(out.stdout, format!("{err}\n").as_bytes());
+    assert!(!out.stdout.starts_with(b"debrief\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn debrief_unreadable_trace_writes_stdout() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Tmp::new();
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    fs::write(wm.join("FLOOR.md"), b"station: ANDON\n").unwrap();
+    let trace = wm.join("TRACE.tsv");
+    fs::write(&trace, b"when\tcard\toutcome\n").unwrap();
+    let mut perm = fs::metadata(&trace).unwrap().permissions();
+    perm.set_mode(0o000);
+    fs::set_permissions(&trace, perm).unwrap();
+    let err = fs::read_to_string(&trace).expect_err("trace must be unreadable");
+    let out = bin()
+        .current_dir(&tmp.root)
+        .arg("debrief")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stderr.is_empty());
+    assert_eq!(out.stdout, format!("{err}\n").as_bytes());
+    assert!(!out.stdout.starts_with(b"debrief\n"));
 }
 
 fn write_wal_only(root: &Path) -> (String, Vec<u8>) {
@@ -447,7 +545,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.20.0");
+    assert_eq!(ver_before.trim(), "1.20.1");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -464,7 +562,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.20.0");
+    assert_eq!(want, "1.20.1");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -1691,6 +1789,134 @@ fn start_serve(dir: &Path, bind: &str) -> ServeProc {
     ServeProc { child, addr }
 }
 
+fn start_web(dir: &Path) -> ServeProc {
+    let mut child = bin()
+        .current_dir(dir)
+        .args(["web", "--bind", "127.0.0.1:0"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn web");
+    let mut stdout = child.stdout.take().expect("web stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut buf = [0u8; 256];
+        match stdout.read(&mut buf) {
+            Ok(n) => {
+                let _ = tx.send(String::from_utf8_lossy(&buf[..n]).into_owned());
+            }
+            Err(e) => {
+                let _ = tx.send(format!("read-err {e}"));
+            }
+        }
+    });
+    let line = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(s) => s,
+        Err(_) => {
+            let mut err = String::new();
+            if let Some(mut s) = child.stderr.take() {
+                let _ = s.read_to_string(&mut err);
+            }
+            let st = child.try_wait();
+            panic!("web did not print listening: stderr={err:?} status={st:?}");
+        }
+    };
+    let addr = line
+        .lines()
+        .find_map(|l| l.strip_prefix("listening "))
+        .unwrap_or(line.trim())
+        .trim()
+        .to_string();
+    assert!(
+        addr.starts_with("127.0.0.1:") || addr.starts_with("[::1]:"),
+        "bind must be loopback: {line:?}"
+    );
+    ServeProc { child, addr }
+}
+
+#[test]
+fn web_debrief_missing_floor_body_is_the_refusal() {
+    fn post(addr: &str) -> (u16, String, Vec<u8>) {
+        let sock: std::net::SocketAddr = addr.parse().expect("bind addr");
+        let body = br#"{"args":[]}"#;
+        let mut req = format!(
+            "POST /act/debrief HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Crucible-Act: 1\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .into_bytes();
+        req.extend_from_slice(body);
+        let mut raw = Vec::new();
+        let mut last_err = String::new();
+        for _ in 0..50 {
+            match TcpStream::connect_timeout(&sock, Duration::from_millis(100)) {
+                Ok(mut s) => {
+                    let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+                    if s.write_all(&req).is_err() {
+                        last_err = "write".to_string();
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    raw.clear();
+                    match s.read_to_end(&mut raw) {
+                        Ok(_) => {}
+                        Err(e) if !raw.is_empty() => last_err = e.to_string(),
+                        Err(e) => {
+                            last_err = e.to_string();
+                            thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                    }
+                    if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                        break;
+                    }
+                    last_err = "short response".to_string();
+                }
+                Err(e) => {
+                    last_err = e.to_string();
+                    thread::sleep(Duration::from_millis(20));
+                }
+            }
+        }
+        let sep = raw
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap_or_else(|| panic!("debrief act response: {last_err} raw={raw:?}"));
+        let head = String::from_utf8_lossy(&raw[..sep]).into_owned();
+        let status = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+        (status, head, raw[sep + 4..].to_vec())
+    }
+
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post(&srv.addr);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 1"),
+        "{headers}"
+    );
+    assert_eq!(body, b"no FLOOR.md (run go or status)\n");
+    assert!(!tmp.root.join(".wm").exists());
+
+    let wm = tmp.root.join(".wm");
+    fs::create_dir_all(&wm).unwrap();
+    let floor = b"any\n";
+    fs::write(wm.join("FLOOR.md"), floor).unwrap();
+    let (status, headers, body) = post(&srv.addr);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 1"),
+        "{headers}"
+    );
+    assert_eq!(body, b"no TRACE.tsv\n");
+    assert_eq!(fs::read(wm.join("FLOOR.md")).unwrap(), floor);
+    assert!(!wm.join("TRACE.tsv").exists());
+}
+
 fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -1897,7 +2123,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.20.0");
+    assert_eq!(health["version"], "1.20.1");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2201,7 +2427,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.20.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.20.1"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"
