@@ -652,12 +652,6 @@ fn install_loop_router(src: &Path, repo: &Path, program: &Path) -> Result<(), Gu
 fn install_herdr_templates(src: &Path, repo: &Path, program: &Path) -> Result<(), GuidedError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    struct Held {
-        bytes: Vec<u8>,
-        dev: u64,
-        ino: u64,
-    }
-
     struct Dest {
         path: PathBuf,
         bytes: Vec<u8>,
@@ -668,91 +662,102 @@ fn install_herdr_templates(src: &Path, repo: &Path, program: &Path) -> Result<()
 
     // Read both sources before creating a destination. A missing second file
     // must not leave a half-written product tree from this function.
-    let mut held = Vec::with_capacity(2);
-    for rel in ["templates/herdr/workspace", "templates/herdr/roles"] {
-        let source = src.join(rel);
-        let src_meta = match fs::symlink_metadata(&source) {
-            Ok(meta) => meta,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                return Err(message(format!(
-                    "refused: herdr template missing in engine source ({rel})"
-                )));
-            }
-            Err(e) => {
-                return Err(message(format!(
-                    "refused: herdr template source unreadable ({}): {e}",
-                    source.display()
-                )));
-            }
-        };
-        // symlink_metadata: a symlink is not a regular file, and must not be followed.
-        if !src_meta.file_type().is_file() {
-            return Err(message(format!(
-                "refused: herdr template source is not a regular file ({})",
-                source.display()
-            )));
-        }
-        let bytes = match fs::read(&source) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                return Err(message(format!(
-                    "refused: herdr template source unreadable ({}): {e}",
-                    source.display()
-                )));
-            }
-        };
-        held.push(Held {
-            bytes,
-            dev: src_meta.dev(),
-            ino: src_meta.ino(),
-        });
-    }
-    let roles = match held.pop() {
-        Some(held) => held,
-        None => {
-            return Err(message(
-                "refused: herdr template missing in engine source (templates/herdr/roles)",
-            ));
-        }
-    };
-    let workspace = match held.pop() {
-        Some(held) => held,
-        None => {
+    let workspace_path = src.join("templates/herdr/workspace");
+    let workspace_meta = match fs::symlink_metadata(&workspace_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
             return Err(message(
                 "refused: herdr template missing in engine source (templates/herdr/workspace)",
             ));
         }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                workspace_path.display()
+            )));
+        }
     };
+    // symlink_metadata: a symlink is not a regular file, and must not be followed.
+    if !workspace_meta.file_type().is_file() {
+        return Err(message(format!(
+            "refused: herdr template source is not a regular file ({})",
+            workspace_path.display()
+        )));
+    }
+    let workspace_bytes = match fs::read(&workspace_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                workspace_path.display()
+            )));
+        }
+    };
+    let workspace_dev = workspace_meta.dev();
+    let workspace_ino = workspace_meta.ino();
+
+    let roles_path = src.join("templates/herdr/roles");
+    let roles_meta = match fs::symlink_metadata(&roles_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(message(
+                "refused: herdr template missing in engine source (templates/herdr/roles)",
+            ));
+        }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                roles_path.display()
+            )));
+        }
+    };
+    if !roles_meta.file_type().is_file() {
+        return Err(message(format!(
+            "refused: herdr template source is not a regular file ({})",
+            roles_path.display()
+        )));
+    }
+    let roles_bytes = match fs::read(&roles_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                roles_path.display()
+            )));
+        }
+    };
+    let roles_dev = roles_meta.dev();
+    let roles_ino = roles_meta.ino();
 
     // Product workspace is seeded once. Roles and both program copies are the
     // next adopt's source. The seed arm must not return before those three.
     let dests = [
         Dest {
             path: repo.join(".crucible/herdr/workspace"),
-            bytes: workspace.bytes.clone(),
-            dev: workspace.dev,
-            ino: workspace.ino,
+            bytes: workspace_bytes.clone(),
+            dev: workspace_dev,
+            ino: workspace_ino,
             seed: true,
         },
         Dest {
             path: repo.join(".crucible/herdr/roles"),
-            bytes: roles.bytes.clone(),
-            dev: roles.dev,
-            ino: roles.ino,
+            bytes: roles_bytes.clone(),
+            dev: roles_dev,
+            ino: roles_ino,
             seed: false,
         },
         Dest {
             path: program.join("templates/herdr/workspace"),
-            bytes: workspace.bytes,
-            dev: workspace.dev,
-            ino: workspace.ino,
+            bytes: workspace_bytes,
+            dev: workspace_dev,
+            ino: workspace_ino,
             seed: false,
         },
         Dest {
             path: program.join("templates/herdr/roles"),
-            bytes: roles.bytes,
-            dev: roles.dev,
-            ino: roles.ino,
+            bytes: roles_bytes,
+            dev: roles_dev,
+            ino: roles_ino,
             seed: false,
         },
     ];
