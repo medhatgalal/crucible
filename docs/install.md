@@ -127,6 +127,8 @@ unless you pass `--overwrite-batteries`.
 
 `adopt` and `adopt --refresh` copy the engine file `.grok/rules/loop-router.md` into the product as a regular file, with or without `--working-mode`. A symlink at that path is replaced. They do not write `$HOME`. Default adopt still does not copy skills.
 
+`adopt` and `adopt --refresh` copy `templates/herdr/workspace` and `templates/herdr/roles` into `.crucible/herdr/` and into the installed program's `templates/herdr/`, with or without `--working-mode`. They do not run `herdr`. Refresh does not reset an existing regular `.crucible/herdr/workspace` label: those bytes and that mode stay. The product may commit `.crucible/herdr/`.
+
 `crucible doctor` reads `<cwd>/.grok/rules/loop-router.md`. Run it from the repository root: `<cwd>` is the process directory, not the git root, so a run from a subdirectory does not see the root file. The default command warns and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`.
 
 ## Commit the program directory
@@ -134,6 +136,7 @@ unless you pass `--overwrite-batteries`.
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
 produced it if it is in Git, so commit `.crucible/` in the target repository.
 Also commit `.grok/rules/loop-router.md`: a default adopt writes that file and has no `.grok/skills`.
+`.crucible/herdr/workspace` and `.crucible/herdr/roles` ride along with `git add .crucible` when the product wants that label in git. Adopt writes them and commits nothing.
 After `--working-mode`, also commit the repo-root harness views. Grok reads
 `./.grok/skills` before `$HOME` and does **not** scan `.crucible/.grok/skills`.
 Kiro CLI reads `./.kiro/skills` before `~/.kiro/skills` (same name: workspace wins).

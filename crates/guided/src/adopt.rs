@@ -649,6 +649,265 @@ fn install_loop_router(src: &Path, repo: &Path, program: &Path) -> Result<(), Gu
     Ok(())
 }
 
+fn install_herdr_templates(src: &Path, repo: &Path, program: &Path) -> Result<(), GuidedError> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    struct Dest {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        dev: u64,
+        ino: u64,
+        seed: bool,
+    }
+
+    // Read both sources before creating a destination. A missing second file
+    // must not leave a half-written product tree from this function.
+    let workspace_path = src.join("templates/herdr/workspace");
+    let workspace_meta = match fs::symlink_metadata(&workspace_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(message(
+                "refused: herdr template missing in engine source (templates/herdr/workspace)",
+            ));
+        }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                workspace_path.display()
+            )));
+        }
+    };
+    // symlink_metadata: a symlink is not a regular file, and must not be followed.
+    if !workspace_meta.file_type().is_file() {
+        return Err(message(format!(
+            "refused: herdr template source is not a regular file ({})",
+            workspace_path.display()
+        )));
+    }
+    let workspace_bytes = match fs::read(&workspace_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                workspace_path.display()
+            )));
+        }
+    };
+    let workspace_dev = workspace_meta.dev();
+    let workspace_ino = workspace_meta.ino();
+
+    let roles_path = src.join("templates/herdr/roles");
+    let roles_meta = match fs::symlink_metadata(&roles_path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(message(
+                "refused: herdr template missing in engine source (templates/herdr/roles)",
+            ));
+        }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                roles_path.display()
+            )));
+        }
+    };
+    if !roles_meta.file_type().is_file() {
+        return Err(message(format!(
+            "refused: herdr template source is not a regular file ({})",
+            roles_path.display()
+        )));
+    }
+    let roles_bytes = match fs::read(&roles_path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return Err(message(format!(
+                "refused: herdr template source unreadable ({}): {e}",
+                roles_path.display()
+            )));
+        }
+    };
+    let roles_dev = roles_meta.dev();
+    let roles_ino = roles_meta.ino();
+
+    // Product workspace is seeded once. Roles and both program copies are the
+    // next adopt's source. The seed arm must not return before those three.
+    let dests = [
+        Dest {
+            path: repo.join(".crucible/herdr/workspace"),
+            bytes: workspace_bytes.clone(),
+            dev: workspace_dev,
+            ino: workspace_ino,
+            seed: true,
+        },
+        Dest {
+            path: repo.join(".crucible/herdr/roles"),
+            bytes: roles_bytes.clone(),
+            dev: roles_dev,
+            ino: roles_ino,
+            seed: false,
+        },
+        Dest {
+            path: program.join("templates/herdr/workspace"),
+            bytes: workspace_bytes,
+            dev: workspace_dev,
+            ino: workspace_ino,
+            seed: false,
+        },
+        Dest {
+            path: program.join("templates/herdr/roles"),
+            bytes: roles_bytes,
+            dev: roles_dev,
+            ino: roles_ino,
+            seed: false,
+        },
+    ];
+    for dest in &dests {
+        if !shell_child_of(&dest.path, repo) {
+            return Err(message(format!(
+                "refused: herdr template path outside repo: {}",
+                dest.path.display()
+            )));
+        }
+    }
+
+    let not_written = |path: &Path, detail: String| {
+        message(format!(
+            "refused: herdr template not written ({}): {detail}",
+            path.display()
+        ))
+    };
+
+    // Mode bits on OpenOptions are masked by umask. set_permissions is not.
+    let write_new = |path: &Path, bytes: &[u8]| -> Result<(), GuidedError> {
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(file) => file,
+            Err(e) => return Err(not_written(path, e.to_string())),
+        };
+        if let Err(e) = file.write_all(bytes) {
+            drop(file);
+            let _ = fs::remove_file(path);
+            return Err(not_written(path, e.to_string()));
+        }
+        drop(file);
+        if let Err(e) = fs::set_permissions(path, fs::Permissions::from_mode(0o644)) {
+            let _ = fs::remove_file(path);
+            return Err(not_written(path, e.to_string()));
+        }
+        match fs::symlink_metadata(path) {
+            Ok(meta)
+                if meta.file_type().is_file() && meta.permissions().mode() & 0o777 == 0o644 =>
+            {
+                Ok(())
+            }
+            _ => {
+                let _ = fs::remove_file(path);
+                Err(not_written(path, "mode".to_string()))
+            }
+        }
+    };
+
+    for dest in &dests {
+        let path = dest.path.as_path();
+        let bytes = dest.bytes.as_slice();
+        let src_dev = dest.dev;
+        let src_ino = dest.ino;
+        let seed = dest.seed;
+
+        // create_dir_all follows a symlink, which would write outside the repo.
+        let mut parent_walk = Some(path);
+        let mut parents = Vec::new();
+        for _ in 0..2 {
+            let Some(parent) = parent_walk.and_then(|p| p.parent()) else {
+                return Err(not_written(path, "no parent".to_string()));
+            };
+            if !shell_child_of(parent, repo) && parent != repo {
+                return Err(message(format!(
+                    "refused: herdr template path outside repo: {}",
+                    parent.display()
+                )));
+            }
+            parents.push(parent.to_path_buf());
+            parent_walk = Some(parent);
+        }
+        for parent in parents.iter().rev() {
+            match fs::symlink_metadata(parent) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(message(format!(
+                        "refused: herdr template parent is a symlink: {}",
+                        parent.display()
+                    )));
+                }
+                Ok(meta) if meta.is_dir() => {}
+                Ok(_) => {
+                    return Err(message(format!(
+                        "refused: herdr template parent is not a directory: {}",
+                        parent.display()
+                    )));
+                }
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(not_written(parent, e.to_string())),
+            }
+        }
+
+        match fs::symlink_metadata(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                let Some(parent) = path.parent() else {
+                    return Err(not_written(path, "no parent".to_string()));
+                };
+                if let Err(e) = fs::create_dir_all(parent) {
+                    return Err(not_written(path, e.to_string()));
+                }
+                write_new(path, bytes)?;
+            }
+            Err(e) => return Err(not_written(path, e.to_string())),
+            Ok(meta) if meta.file_type().is_symlink() => {
+                // Unlink the directory entry only. The sentinel inode stays.
+                if let Err(e) = fs::remove_file(path) {
+                    return Err(not_written(path, e.to_string()));
+                }
+                write_new(path, bytes)?;
+            }
+            Ok(meta) if meta.is_dir() => {
+                return Err(message(format!(
+                    "refused: herdr template path is a directory: {}",
+                    path.display()
+                )));
+            }
+            // Operator label. Leave bytes and mode; the other dests still run.
+            Ok(meta) if meta.is_file() && seed => {}
+            // Same inode as the engine file. Unlink would drop the only link.
+            Ok(meta) if meta.is_file() && meta.dev() == src_dev && meta.ino() == src_ino => {}
+            Ok(meta) if meta.is_file() => {
+                let Some(parent) = path.parent() else {
+                    return Err(not_written(path, "no parent".to_string()));
+                };
+                let Some(name) = path.file_name() else {
+                    return Err(not_written(path, "no name".to_string()));
+                };
+                let mut tmp_name = OsString::from(".");
+                tmp_name.push(name);
+                tmp_name.push(format!(".tmp.{}", std::process::id()));
+                let tmp = parent.join(tmp_name);
+                if let Err(err) = write_new(&tmp, bytes) {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(err);
+                }
+                if let Err(e) = fs::rename(&tmp, path) {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(not_written(path, e.to_string()));
+                }
+            }
+            Ok(_) => {
+                return Err(message(format!(
+                    "refused: herdr template path is not a regular file: {}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn refresh(
     src: &Path,
     repo: &Path,
@@ -684,6 +943,7 @@ fn refresh(
     }
     adopt_sync_gitignore(repo, stdout)?;
     install_loop_router(src, repo, dst)?;
+    install_herdr_templates(src, repo, dst)?;
     writeln!(stdout, "refreshed engine {old} -> {new}")?;
     writeln!(stdout, "{}", dst.display())?;
     if is_file(&dst.join("scripts/acp-brief.py")) {
@@ -756,6 +1016,7 @@ fn install_new(
     }
     adopt_sync_gitignore(repo, stdout)?;
     install_loop_router(src, repo, dst)?;
+    install_herdr_templates(src, repo, dst)?;
     writeln!(stdout, "installed cycle \"{prog}\" into {}", dst.display())?;
     writeln!(stdout)?;
     writeln!(stdout, "Fresh-agent entrypoint:")?;
@@ -1413,6 +1674,61 @@ mod tests {
             b"planted-loop-router\n",
         )
         .unwrap();
+        fs::create_dir_all(src.join("templates/herdr")).unwrap();
+        fs::write(src.join("templates/herdr/workspace"), HERDR_WORKSPACE).unwrap();
+        fs::write(src.join("templates/herdr/roles"), HERDR_ROLES).unwrap();
+    }
+
+    const HERDR_WORKSPACE: &[u8] = b"crucible\n";
+    const HERDR_ROLES: &[u8] = b"chat\norchestrator\nwatcher\nreaper\ndashboard\n";
+
+    /// Executable named `herdr` ahead of PATH. It only touches `stamp`.
+    struct PathHerdr {
+        stamp: PathBuf,
+        prev: Option<OsString>,
+    }
+
+    impl PathHerdr {
+        fn install(dir: &Path) -> Self {
+            fs::create_dir_all(dir).unwrap();
+            let stamp = dir.join("stamp");
+            let bin = dir.join("herdr");
+            fs::write(&bin, format!("#!/bin/sh\ntouch '{}'\n", stamp.display())).unwrap();
+            let mut perm = fs::metadata(&bin).unwrap().permissions();
+            perm.set_mode(0o755);
+            fs::set_permissions(&bin, perm).unwrap();
+            let prev = std::env::var_os("PATH");
+            let mut parts = vec![dir.to_path_buf()];
+            if let Some(ref existing) = prev {
+                parts.extend(std::env::split_paths(existing));
+            }
+            let joined = std::env::join_paths(parts).unwrap();
+            // SAFETY: this test holds RUST_BIN_ENV for the whole adopt.
+            unsafe { std::env::set_var("PATH", joined) }
+            Self { stamp, prev }
+        }
+    }
+
+    impl Drop for PathHerdr {
+        fn drop(&mut self) {
+            // SAFETY: paired with install; restores the PATH from before the prepend.
+            unsafe {
+                match self.prev.take() {
+                    Some(v) => std::env::set_var("PATH", v),
+                    None => std::env::remove_var("PATH"),
+                }
+            }
+        }
+    }
+
+    fn assert_refused(err: GuidedError, expected: &str, out: &[u8]) {
+        match err {
+            GuidedError::Message(msg) => assert_eq!(msg, expected),
+            GuidedError::Io(e) => panic!("expected Message (exit 2), got Io: {e}"),
+        }
+        let text = String::from_utf8_lossy(out);
+        assert!(!text.contains("refreshed engine"), "{text}");
+        assert!(!text.contains("installed cycle"), "{text}");
     }
 
     fn real_projector() -> String {
@@ -1477,6 +1793,8 @@ mod tests {
 
     #[test]
     fn usage_name_and_repo_refusals() {
+        // Serializes with PathHerdr's PATH edit. git must still resolve.
+        let _env = lock_rust_bin(None);
         let tmp = Tmp::new();
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
@@ -1529,6 +1847,7 @@ mod tests {
             "# custom\n*/agents.tsv\n",
         )
         .unwrap();
+        let herdr = PathHerdr::install(&tmp.path().join("bin"));
         let out = run(&sub, &src, &["work", "--managed"]).unwrap();
         let dst = repo.join(".crucible/work");
         let installed = format!("installed cycle \"work\" into {}\n\nFresh-agent entrypoint:\n  read .crucible/work/START.md and execute it\n\nThe agent will configure its panel, investigate the problem, ask for proposal approval,\nand coordinate build/review iterations. The operator does not drive protocol commands.\n", dst.display());
@@ -1610,6 +1929,30 @@ Generated from `STATE.tsv`; do not edit this file by hand.
             fs::read(dst.join(".grok/rules/loop-router.md")).unwrap(),
             fs::read(&router).unwrap()
         );
+        let tracked = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../templates/herdr");
+        assert_eq!(
+            fs::read(tracked.join("workspace")).unwrap(),
+            HERDR_WORKSPACE
+        );
+        assert_eq!(fs::read(tracked.join("roles")).unwrap(), HERDR_ROLES);
+        for (path, body) in [
+            (repo.join(".crucible/herdr/workspace"), HERDR_WORKSPACE),
+            (repo.join(".crucible/herdr/roles"), HERDR_ROLES),
+            (dst.join("templates/herdr/workspace"), HERDR_WORKSPACE),
+            (dst.join("templates/herdr/roles"), HERDR_ROLES),
+        ] {
+            let meta = fs::symlink_metadata(&path).unwrap();
+            assert!(meta.is_file(), "{}", path.display());
+            assert!(!meta.file_type().is_symlink(), "{}", path.display());
+            assert_eq!(
+                meta.permissions().mode() & 0o777,
+                0o644,
+                "{}",
+                path.display()
+            );
+            assert_eq!(fs::read(&path).unwrap(), body, "{}", path.display());
+        }
+        assert!(!herdr.stamp.exists());
         assert!(!repo.join(".grok/skills").exists());
         assert!(!repo.join(".wm").exists());
         let ignore = fs::read_to_string(repo.join(".crucible/.gitignore")).unwrap();
@@ -1899,6 +2242,8 @@ Generated from `STATE.tsv`; do not edit this file by hand.
     #[test]
     fn skill_hash_matches_find_sort_and_skips_a_symlinked_tree() {
         use std::os::unix::ffi::OsStrExt;
+        // Serializes with PathHerdr's PATH edit. find and sort must still resolve.
+        let _env = lock_rust_bin(None);
         let tmp = Tmp::new();
         let src = tmp.path().join("src");
         fs::create_dir_all(src.join("skills/architecture/nested")).unwrap();
@@ -2427,5 +2772,217 @@ Generated from `STATE.tsv`; do not edit this file by hand.
         assert_eq!(before.ino(), after.ino());
         assert_eq!(after.permissions().mode() & 0o777, 0o600);
         assert_eq!(fs::read(&router).unwrap(), bytes);
+    }
+
+    #[test]
+    fn refresh_keeps_operator_workspace_label() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        let herdr = PathHerdr::install(&tmp.path().join("bin"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        assert!(!herdr.stamp.exists());
+        let dst = repo.join(".crucible/work");
+        let workspace = repo.join(".crucible/herdr/workspace");
+        let roles = repo.join(".crucible/herdr/roles");
+        fs::write(&workspace, b"fleet\n").unwrap();
+        let mut perm = fs::symlink_metadata(&workspace).unwrap().permissions();
+        perm.set_mode(0o600);
+        fs::set_permissions(&workspace, perm).unwrap();
+        let before = fs::symlink_metadata(&workspace).unwrap();
+        assert_eq!(before.permissions().mode() & 0o777, 0o600);
+        fs::write(
+            &roles,
+            b"chat\norchestrator\nwatcher\nreaper\ndashboard\nterminal\n",
+        )
+        .unwrap();
+        fs::write(dst.join("templates/herdr/workspace"), b"nope\n").unwrap();
+        fs::write(dst.join("templates/herdr/roles"), b"nope\n").unwrap();
+        let out = run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert!(out.starts_with("refreshed engine "), "{out}");
+        let after = fs::symlink_metadata(&workspace).unwrap();
+        assert!(after.is_file());
+        assert!(!after.file_type().is_symlink());
+        assert_eq!(after.dev(), before.dev());
+        assert_eq!(after.ino(), before.ino());
+        assert_eq!(after.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(&workspace).unwrap(), b"fleet\n");
+        assert_eq!(fs::read(&roles).unwrap(), HERDR_ROLES);
+        assert_eq!(
+            fs::read(dst.join("templates/herdr/workspace")).unwrap(),
+            HERDR_WORKSPACE
+        );
+        assert_eq!(
+            fs::read(dst.join("templates/herdr/roles")).unwrap(),
+            HERDR_ROLES
+        );
+        assert!(!herdr.stamp.exists());
+    }
+
+    #[test]
+    fn refresh_replaces_herdr_workspace_symlink() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let source = src.join("templates/herdr/workspace");
+        let workspace = repo.join(".crucible/herdr/workspace");
+        let roles = repo.join(".crucible/herdr/roles");
+        let dst = repo.join(".crucible/work");
+        fs::write(&roles, b"terminal\n").unwrap();
+        fs::write(dst.join("templates/herdr/workspace"), b"nope\n").unwrap();
+        fs::write(dst.join("templates/herdr/roles"), b"nope\n").unwrap();
+
+        let sentinel = tmp.path().join("sentinel");
+        fs::write(&sentinel, b"SENTINEL\n").unwrap();
+        fs::remove_file(&workspace).unwrap();
+        std::os::unix::fs::symlink(&sentinel, &workspace).unwrap();
+        let out = run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert!(out.starts_with("refreshed engine "), "{out}");
+        let meta = fs::symlink_metadata(&workspace).unwrap();
+        assert!(meta.is_file());
+        assert!(!meta.file_type().is_symlink());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o644);
+        assert_eq!(fs::read(&workspace).unwrap(), HERDR_WORKSPACE);
+        assert_eq!(fs::read(&sentinel).unwrap(), b"SENTINEL\n");
+        assert_eq!(fs::read(&roles).unwrap(), HERDR_ROLES);
+        assert_eq!(
+            fs::read(dst.join("templates/herdr/workspace")).unwrap(),
+            HERDR_WORKSPACE
+        );
+        assert_eq!(
+            fs::read(dst.join("templates/herdr/roles")).unwrap(),
+            HERDR_ROLES
+        );
+
+        fs::remove_file(&workspace).unwrap();
+        std::os::unix::fs::symlink(&source, &workspace).unwrap();
+        let src_before = fs::symlink_metadata(&source).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let src_after = fs::symlink_metadata(&source).unwrap();
+        assert_eq!(src_after.dev(), src_before.dev());
+        assert_eq!(src_after.ino(), src_before.ino());
+        assert_eq!(fs::read(&source).unwrap(), HERDR_WORKSPACE);
+        let copied = fs::symlink_metadata(&workspace).unwrap();
+        assert!(copied.is_file());
+        assert!(!copied.file_type().is_symlink());
+        assert_ne!(
+            (copied.dev(), copied.ino()),
+            (src_before.dev(), src_before.ino())
+        );
+        assert_eq!(fs::read(&workspace).unwrap(), HERDR_WORKSPACE);
+
+        let prog_roles = dst.join("templates/herdr/roles");
+        let source_roles = src.join("templates/herdr/roles");
+        fs::remove_file(&prog_roles).unwrap();
+        fs::hard_link(&source_roles, &prog_roles).unwrap();
+        let mut perm = fs::symlink_metadata(&prog_roles).unwrap().permissions();
+        perm.set_mode(0o600);
+        fs::set_permissions(&prog_roles, perm).unwrap();
+        let linked = fs::symlink_metadata(&source_roles).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let after_src = fs::symlink_metadata(&source_roles).unwrap();
+        let after_dst = fs::symlink_metadata(&prog_roles).unwrap();
+        assert_eq!(after_src.dev(), linked.dev());
+        assert_eq!(after_src.ino(), linked.ino());
+        assert_eq!(after_dst.dev(), linked.dev());
+        assert_eq!(after_dst.ino(), linked.ino());
+        assert_eq!(after_dst.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(&source_roles).unwrap(), HERDR_ROLES);
+    }
+
+    #[test]
+    fn refresh_refuses_symlinked_herdr_parent() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::remove_dir_all(repo.join(".crucible/herdr")).unwrap();
+        std::os::unix::fs::symlink(&outside, repo.join(".crucible/herdr")).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: herdr template parent is a symlink: {}",
+                repo.join(".crucible/herdr").display()
+            ),
+            &out,
+        );
+        assert!(fs::symlink_metadata(repo.join(".crucible/herdr"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn refresh_refuses_missing_herdr_template() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        let herdr = PathHerdr::install(&tmp.path().join("bin"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        assert!(!herdr.stamp.exists());
+        let source = src.join("templates/herdr/workspace");
+        let dest = repo.join(".crucible/herdr/workspace");
+        let planted = fs::read(&dest).unwrap();
+
+        fs::remove_file(&source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            "refused: herdr template missing in engine source (templates/herdr/workspace)",
+            &out,
+        );
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+        assert!(!herdr.stamp.exists());
+
+        let linked = tmp.path().join("linked-source");
+        fs::write(&linked, b"NOT-ENGINE\n").unwrap();
+        std::os::unix::fs::symlink(&linked, &source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: herdr template source is not a regular file ({})",
+                source.display()
+            ),
+            &out,
+        );
+        assert_eq!(fs::read(&linked).unwrap(), b"NOT-ENGINE\n");
+        assert_eq!(fs::read(&dest).unwrap(), planted);
+        assert!(!herdr.stamp.exists());
+        fs::remove_file(&source).unwrap();
+        fs::write(&source, HERDR_WORKSPACE).unwrap();
+
+        let roles = repo.join(".crucible/herdr/roles");
+        fs::remove_file(&roles).unwrap();
+        fs::create_dir(&roles).unwrap();
+        fs::write(roles.join("keep.txt"), b"keep\n").unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: herdr template path is a directory: {}",
+                roles.display()
+            ),
+            &out,
+        );
+        assert_eq!(fs::read(roles.join("keep.txt")).unwrap(), b"keep\n");
+        assert!(!herdr.stamp.exists());
     }
 }

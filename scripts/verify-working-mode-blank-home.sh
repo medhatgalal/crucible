@@ -272,7 +272,9 @@ if [ -f "$TAR" ]; then
     ROUTING.tsv \
     docs/whats-new.md \
     docs/working-mode.md \
-    .grok/rules/loop-router.md
+    .grok/rules/loop-router.md \
+    templates/herdr/workspace \
+    templates/herdr/roles
   do
     printf '%s\n' "$CONTENTS" | grep -q "^crucible-$VERSION/$rel\$" \
       && ok || bad "tarball missing $rel"
@@ -311,6 +313,15 @@ if [ -n "$EXTRACT" ]; then
   [ ! -L "$G/.grok/rules/loop-router.md" ] && ok || bad 'default adopt loop-router is a symlink'
   cmp -s "$EXTRACT/.grok/rules/loop-router.md" "$G/.grok/rules/loop-router.md" \
     && ok || bad 'default adopt loop-router drifted from package'
+  [ -f "$G/.crucible/herdr/workspace" ] && [ ! -L "$G/.crucible/herdr/workspace" ] \
+    && ok || bad 'default adopt herdr workspace is not a regular file'
+  printf 'crucible\n' > "$BASE/crucible-label"
+  cmp -s "$BASE/crucible-label" "$G/.crucible/herdr/workspace" \
+    && ok || bad 'default adopt herdr workspace is not crucible'
+  cmp -s "$EXTRACT/templates/herdr/workspace" "$G/.crucible/work/templates/herdr/workspace" \
+    && ok || bad 'default adopt program herdr workspace drifted from package'
+  cmp -s "$EXTRACT/templates/herdr/roles" "$G/.crucible/work/templates/herdr/roles" \
+    && ok || bad 'default adopt program herdr roles drifted from package'
   assert_home_empty
   assert_no_home_skills
 fi
@@ -357,6 +368,15 @@ if [ -n "$EXTRACT" ]; then
   [ ! -L "$AD/.grok/rules/loop-router.md" ] && ok || bad 'working-mode adopt loop-router is a symlink'
   cmp -s "$EXTRACT/.grok/rules/loop-router.md" "$AD/.grok/rules/loop-router.md" \
     && ok || bad 'working-mode adopt loop-router drifted from package'
+  [ -f "$AD/.crucible/herdr/workspace" ] && [ ! -L "$AD/.crucible/herdr/workspace" ] \
+    && ok || bad 'working-mode adopt herdr workspace is not a regular file'
+  printf 'crucible\n' > "$BASE/crucible-label"
+  cmp -s "$BASE/crucible-label" "$AD/.crucible/herdr/workspace" \
+    && ok || bad 'working-mode adopt herdr workspace is not crucible'
+  cmp -s "$EXTRACT/templates/herdr/workspace" "$AD/.crucible/work/templates/herdr/workspace" \
+    && ok || bad 'working-mode adopt program herdr workspace drifted from package'
+  cmp -s "$EXTRACT/templates/herdr/roles" "$AD/.crucible/work/templates/herdr/roles" \
+    && ok || bad 'working-mode adopt program herdr roles drifted from package'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
     grep -q '^version: 1.18.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
       && ok || bad 'ENGINE-SOURCE version is not 1.18.0'
