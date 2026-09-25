@@ -40,3 +40,7 @@ ids). Two kinds is `CROSS-FAMILY`. MAP-HUMAN still required for HIGH/live.
 Commit `.grok/skills/` in the target. Do not install batteries under `$HOME`.
 Swap Grok for Claude by editing `agents.tsv` `kind`/`command` and using
 `adapters/claude.md` — do not edit `wm.sh`.
+
+## Loop router
+
+The tracked repo file `.grok/rules/loop-router.md` is the contract path. It is not `$HOME/.grok/rules/loop-router.md`. `crucible doctor --home` is the only writer of the home file. The skill paragraphs above do not describe how this file is loaded.

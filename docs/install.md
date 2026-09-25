@@ -125,12 +125,15 @@ the installed binary:
 batteries with a `.keep` file or a name in `.crucible/skills/KEEP` survive refresh
 unless you pass `--overwrite-batteries`.
 
+`adopt` and `adopt --refresh` copy the engine file `.grok/rules/loop-router.md` into the product as a regular file, with or without `--working-mode`. A symlink at that path is replaced. They do not write `$HOME`. Default adopt still does not copy skills.
+
 `crucible doctor` reads `<cwd>/.grok/rules/loop-router.md`. Run it from the repository root: `<cwd>` is the process directory, not the git root, so a run from a subdirectory does not see the root file. The default command warns and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`.
 
 ## Commit the program directory
 
 `adopt` writes files and commits nothing. Evidence only outlives the chat that
 produced it if it is in Git, so commit `.crucible/` in the target repository.
+Also commit `.grok/rules/loop-router.md`: a default adopt writes that file and has no `.grok/skills`.
 After `--working-mode`, also commit the repo-root harness views. Grok reads
 `./.grok/skills` before `$HOME` and does **not** scan `.crucible/.grok/skills`.
 Kiro CLI reads `./.kiro/skills` before `~/.kiro/skills` (same name: workspace wins).
@@ -139,6 +142,7 @@ are not the installed skill:
 
 ```sh
 git add .crucible
+git add .grok/rules/loop-router.md
 [ -d .grok/skills ] && git add .grok/skills
 [ -d .claude/skills ] && git add .claude/skills
 [ -d .agents/skills ] && git add .agents/skills

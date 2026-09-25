@@ -45,6 +45,10 @@ All notable changes to this project are documented here. This project follows
   or stale versus that ADR-HASH and does not write. `crucible doctor --home`
   is the only writer of `$HOME/.grok/rules/loop-router.md`. Tests inject paths
   and do not read process `HOME` (not a walk CHECK).
+- `crucible adopt` and `crucible adopt --refresh` copy
+  `src/.grok/rules/loop-router.md` into the product as a regular file, with or
+  without `--working-mode`, and do not write `$HOME`. A destination symlink is
+  replaced. There is no KEEP.
 
 ### Room
 - `crucible room` probes `GET /health` on `127.0.0.1:1734` before any listen.
