@@ -99,6 +99,19 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.20.0] - 2026-09-25
+
+### Install
+- One module, `modules/shaping/`, default off. A missing `<program>/shaping`
+  file, `off`, or any other value leaves `crucible help` unchanged. `grok`
+  inserts one row after `crucible cycle problem FILE`, naming
+  `modules/shaping/SKILL.md`. The printer creates no file, does not load
+  EngOS, and does not write `$HOME`.
+- `adopt` and `adopt --refresh` copy that directory into the program as a
+  real directory, with or without `--working-mode`. A symlink is replaced.
+  `KEEP` or `.keep` inside the module directory leaves the local edit in
+  place. A missing engine source refuses.
+
 ## [1.19.0] - 2026-09-25
 
 ### Web

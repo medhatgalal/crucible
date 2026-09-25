@@ -41,6 +41,9 @@ architecture/wip/
 # Rust workspace build
 target/
 
+# Operator value at the checkout root. Not modules/shaping/.
+/shaping
+
 # .wm runtime churn
 .wm/TRACE.tsv
 .wm/EVENTS

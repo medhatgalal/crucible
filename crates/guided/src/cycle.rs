@@ -2982,6 +2982,61 @@ A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
         });
     }
 
+    #[test]
+    fn cycle_status_ignores_shaping_grok() {
+        fn snap(dir: &Path) -> Vec<(String, Vec<u8>)> {
+            fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+                let mut ents: Vec<_> = fs::read_dir(dir).unwrap().flatten().collect();
+                ents.sort_by_key(|ent| ent.file_name());
+                for ent in ents {
+                    let path = ent.path();
+                    let rel = path
+                        .strip_prefix(base)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned();
+                    let meta = fs::symlink_metadata(&path).unwrap();
+                    if meta.file_type().is_symlink() {
+                        let target = fs::read_link(&path).unwrap();
+                        out.push((format!("link:{rel}:{}", target.display()), Vec::new()));
+                    } else if meta.is_dir() {
+                        out.push((format!("dir:{rel}"), Vec::new()));
+                        walk(base, &path, out);
+                    } else {
+                        out.push((rel, fs::read(&path).unwrap()));
+                    }
+                }
+            }
+            let mut out = Vec::new();
+            walk(dir, dir, &mut out);
+            out
+        }
+
+        let tmp = Tmp::new();
+        let prog = tmp.root.join("prog");
+        fs::create_dir_all(&prog).unwrap();
+        let before = snap(&prog);
+        let line = cycle_status(&prog, &clock()).unwrap();
+        assert_eq!(
+            line,
+            "NEXT INTAKE — capture the operator's problem in PROBLEM.md"
+        );
+        assert_eq!(snap(&prog), before);
+
+        let tracked = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../modules/shaping");
+        let module = prog.join("modules/shaping");
+        fs::create_dir_all(&module).unwrap();
+        fs::copy(tracked.join("module.txt"), module.join("module.txt")).unwrap();
+        fs::copy(tracked.join("SKILL.md"), module.join("SKILL.md")).unwrap();
+        fs::write(prog.join("shaping"), "grok\n").unwrap();
+        let planted = snap(&prog);
+        let again = cycle_status(&prog, &clock()).unwrap();
+        assert_eq!(again, line);
+        assert_eq!(snap(&prog), planted);
+        assert!(!prog.join("STATUS.md").exists());
+        assert!(!prog.join("IDEA.md").exists());
+    }
+
     fn with_override(key: &str, value: &str, body: impl FnOnce()) {
         let _guard = crate::claims::ENV_LOCK
             .lock()

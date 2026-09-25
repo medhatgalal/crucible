@@ -72,6 +72,10 @@ printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/templates/herdr/workspace\$" \
   || { echo "package-release: missing $PREFIX/templates/herdr/workspace" >&2; exit 2; }
 printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/templates/herdr/roles\$" \
   || { echo "package-release: missing $PREFIX/templates/herdr/roles" >&2; exit 2; }
+printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/modules/shaping/module.txt\$" \
+  || { echo "package-release: missing $PREFIX/modules/shaping/module.txt" >&2; exit 2; }
+printf '%s\n' "$CONTENTS" | grep -q "^$PREFIX/modules/shaping/SKILL.md\$" \
+  || { echo "package-release: missing $PREFIX/modules/shaping/SKILL.md" >&2; exit 2; }
 
 # Reproducible gzip of the staged tree (binary is host-built).
 ( CDPATH=; cd -- "$STAGE" && tar -cf - "$PREFIX" ) | gzip -n -9 > "$TMP"
