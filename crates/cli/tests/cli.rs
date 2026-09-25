@@ -2013,6 +2013,17 @@ fn read_child_stdio(child: &mut Child) -> (String, String) {
     (stdout, stderr)
 }
 
+fn plant_room_layout(root: &Path) {
+    let dir = root.join(".crucible/herdr");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("workspace"), "crucible\n").unwrap();
+    fs::write(
+        dir.join("roles"),
+        "chat\norchestrator\nwatcher\nreaper\ndashboard\n",
+    )
+    .unwrap();
+}
+
 fn assert_not_listening_on_printed_addrs(stdout: &str, stderr: &str) {
     for line in stdout.lines().chain(stderr.lines()) {
         let line = line.trim();
@@ -2037,6 +2048,7 @@ fn assert_not_listening_on_printed_addrs(stdout: &str, stderr: &str) {
 #[test]
 fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
     let tmp = Tmp::new();
+    plant_room_layout(&tmp.root);
     let before = golden_board(&tmp.root);
     let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
     let path = path_without_herdr();
@@ -2073,8 +2085,8 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
         "must not start serve: stderr={stderr:?}"
     );
     assert!(
-        stderr.to_ascii_lowercase().contains("herdr"),
-        "stderr should name herdr: {stderr:?}"
+        stderr.contains("herdr not found"),
+        "stderr should name the missing binary, not a layout miss: {stderr:?}"
     );
     assert_eq!(
         fs::read_to_string(tmp.root.join(".wm/TRACE.tsv")).unwrap(),
@@ -2091,6 +2103,7 @@ fn room_missing_herdr_does_not_serve_listen_or_write_trace() {
 #[test]
 fn room_with_herdr_spawns_current_exe_serve_not_path_bin() {
     let tmp = Tmp::new();
+    plant_room_layout(&tmp.root);
     let before = golden_board(&tmp.root);
     let before_bytes = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
     fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
@@ -2106,9 +2119,9 @@ printf '%s\n' "$*" >> {log}
 state={state}
 cmd="$1 $2"
 if [ "$cmd" = "workspace list" ]; then
-  printf '%s\n' '{{"result":{{"workspaces":[]}}}}'
+  printf '%s\n' '{{"result":{{"workspaces":[{{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}}]}}}}'
 elif [ "$cmd" = "workspace create" ]; then
-  printf '%s\n' '{{"result":{{"workspace":{{"workspace_id":"ws1","label":"crucible"}}}}}}'
+  printf '%s\n' '{{"result":{{"workspace":{{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}}}}}}'
 elif [ "$cmd" = "tab list" ]; then
   printf '%s' '{{"result":{{"tabs":['
   sep=""
@@ -2128,7 +2141,7 @@ elif [ "$cmd" = "tab create" ]; then
     prev=$a
   done
   printf '%s\n' "$label" >> "$state"
-  printf '%s\n' '{{"result":{{"tab":{{"label":"'"$label"'","tab_id":"tab-'"$label"'"}}}}}}'
+  printf '%s\n' '{{"result":{{"tab":{{"label":"'"$label"'","tab_id":"tab-'"$label"'","workspace_id":"ws1"}},"root_pane":{{"pane_id":"pane-'"$label"'"}}}}}}'
 elif [ "$cmd" = "pane list" ]; then
   printf '%s\n' '{{"result":{{"panes":[{{"pane_id":"pane-chat","tab_id":"tab-chat"}},{{"pane_id":"pane-orchestrator","tab_id":"tab-orchestrator"}},{{"pane_id":"pane-watcher","tab_id":"tab-watcher"}},{{"pane_id":"pane-reaper","tab_id":"tab-reaper"}},{{"pane_id":"pane-dashboard","tab_id":"tab-dashboard"}}]}}}}'
 elif [ "$cmd" = "pane process-info" ]; then
@@ -2231,6 +2244,8 @@ exit 0
         "no herdr server:\n{log}"
     );
     assert!(!log.contains("config.toml"), "{log}");
+    assert!(!log.contains("workspace create"), "{log}");
+    assert!(!log.contains("--session"), "{log}");
     assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
     assert!(
         !log.split_whitespace().any(|w| w == "reap"),
