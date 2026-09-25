@@ -129,6 +129,8 @@ unless you pass `--overwrite-batteries`.
 
 `adopt` and `adopt --refresh` copy `templates/herdr/workspace` and `templates/herdr/roles` into `.crucible/herdr/` and into the installed program's `templates/herdr/`, with or without `--working-mode`. They do not run `herdr`. Refresh does not reset an existing regular `.crucible/herdr/workspace` label: those bytes and that mode stay. The product may commit `.crucible/herdr/`.
 
+`adopt` and `adopt --refresh` copy `modules/shaping/` into the installed program as a real directory, with or without `--working-mode`. A symlink at that path is replaced. `KEEP` or `.keep` inside that module directory keeps the local edit in place. They do not write `$HOME`. `.crucible/KEEP` and `.crucible/skills/KEEP` select a battery under `.crucible/skills/<name>`, and this module is `<program>/modules/shaping`, so a listed name is not the module. `--overwrite-batteries` does not apply.
+
 `crucible room` reads `<cwd>/.crucible/herdr/`. A bad file exits 2 and does not call herdr. It attaches to the one workspace whose label equals that file. Zero or more than one label exits 1 and does not create, close, or rename a workspace.
 
 `crucible doctor` reads `<cwd>/.grok/rules/loop-router.md`. Run it from the repository root: `<cwd>` is the process directory, not the git root, so a run from a subdirectory does not see the root file. The default command warns and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`.
@@ -207,7 +209,10 @@ wrote until the next `cycle` rewrites it. What proves the refresh landed is `ado
 `LOOP.md`, `CONFIGURE.md`, `roles/*.md`, `scripts/*.sh` (except release packagers),
 top-level `docs/*.md`. On a working-mode install (already installed, or
 `--refresh --working-mode`): `wm.sh`, `ROUTING.tsv`, `adapters/`, and skill
-views (KEEP batteries already documented below).
+views (KEEP batteries already documented below). `modules/shaping/` is replaced
+unless that directory contains `KEEP` or `.keep`. `--overwrite-batteries` does
+not apply to that directory, and a name in `.crucible/KEEP` or
+`.crucible/skills/KEEP` is not this keep.
 
 **Keeps:** `PROGRAM`, `PANEL*`, `agents.tsv`, `PROBLEM.md`, `CLAIMS.md`,
 `PROPOSAL.md`, `APPROVAL`, `STATE*`, `items/`, `claims/`, `attempts/`,
@@ -217,7 +222,8 @@ views (KEEP batteries already documented below).
 where `--refresh` looks and what it reports as `kept local adapter: scripts/acp-brief.py`.
 An adapter at the repository's own `scripts/acp-brief.py` is outside the program directory
 and is not covered by that promise (see [CONFIGURE.md](../CONFIGURE.md) — Crucible does not
-ship one and `--refresh` never creates it).
+ship one and `--refresh` never creates it). `.crucible/<program>/shaping` is the
+value file, not the module, and refresh does not delete it.
 
 If a refreshed engine is bad, stop `drive` and run the same `adopt <program> --refresh` command from
 an older known-good tag or extracted release, then run the installed program's `cycle`. Refreshing

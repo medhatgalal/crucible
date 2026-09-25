@@ -1,0 +1,7 @@
+id: shaping
+applies: always
+flow: guided
+after: crucible cycle problem FILE
+item: crucible cycle problem FILE
+values: off, grok
+writes:

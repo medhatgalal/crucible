@@ -302,5 +302,4 @@ All rejected. Do not reopen without a new ADR.
 
 ## Remaining (not this ADR)
 
-- **1.18.0** is the D19 port. Guided `adopt`, `refresh`, `cycle`, and `drive` are Rust verbs on the `crucible` binary. D12 (shaping menu) did not ship.
-- No shaping menu (D12).
+- **1.20.0** ships the D12 optional menu in `crucible help`, default off, one module, read-only, not in the kernel, EngOS not loaded. D12's decision row stays.

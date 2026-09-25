@@ -514,6 +514,9 @@ printf 'project-skills: fixture fail after wipe\n' >&2
 exit 1
 EOF
 chmod +x "$KEEPFAIL_SRC/crucible" "$KEEPFAIL_SRC/wm.sh" "$KEEPFAIL_SRC/scripts/project-skills.sh"
+mkdir -p "$KEEPFAIL_SRC/modules/shaping"
+cp "$HERE/modules/shaping/module.txt" "$KEEPFAIL_SRC/modules/shaping/module.txt"
+cp "$HERE/modules/shaping/SKILL.md" "$KEEPFAIL_SRC/modules/shaping/SKILL.md"
 init_git_repo "$BASE/keep-fail"
 if run_adopt "$BASE/keep-fail" "$CRUCIBLE" adopt work --managed --working-mode; then
   ok
@@ -560,6 +563,9 @@ cp -R "$HERE/skills/." "$FAKE/skills/"
   printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n'
   printf 'X\tmissing\tno-such-battery\toperator\tspec\tyes\n'
 } > "$FAKE/ROUTING.tsv"
+mkdir -p "$FAKE/modules/shaping"
+cp "$HERE/modules/shaping/module.txt" "$FAKE/modules/shaping/module.txt"
+cp "$HERE/modules/shaping/SKILL.md" "$FAKE/modules/shaping/SKILL.md"
 chmod +x "$FAKE/crucible" "$FAKE/wm.sh" "$FAKE/scripts/project-skills.sh"
 init_git_repo "$BASE/missing-bat"
 if run_adopt "$BASE/missing-bat" "$FAKE/crucible" adopt work --managed --working-mode; then
@@ -603,6 +609,9 @@ mkdir -p "$FAKE_OPT/.grok/rules" "$FAKE_OPT/templates/herdr"
 cp "$HERE/.grok/rules/loop-router.md" "$FAKE_OPT/.grok/rules/loop-router.md"
 cp "$HERE/templates/herdr/workspace" "$FAKE_OPT/templates/herdr/workspace"
 cp "$HERE/templates/herdr/roles" "$FAKE_OPT/templates/herdr/roles"
+mkdir -p "$FAKE_OPT/modules/shaping"
+cp "$HERE/modules/shaping/module.txt" "$FAKE_OPT/modules/shaping/module.txt"
+cp "$HERE/modules/shaping/SKILL.md" "$FAKE_OPT/modules/shaping/SKILL.md"
 chmod +x "$FAKE_OPT/crucible" "$FAKE_OPT/wm.sh" "$FAKE_OPT/scripts/project-skills.sh"
 init_git_repo "$BASE/missing-opt"
 if run_adopt "$BASE/missing-opt" "$FAKE_OPT/crucible" adopt work --managed --working-mode; then

@@ -447,7 +447,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.19.0");
+    assert_eq!(ver_before.trim(), "1.20.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -464,7 +464,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.19.0");
+    assert_eq!(want, "1.20.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -1897,7 +1897,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.19.0");
+    assert_eq!(health["version"], "1.20.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2201,7 +2201,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.19.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.20.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"
@@ -2251,4 +2251,363 @@ exit 0
         !log.split_whitespace().any(|w| w == "reap"),
         "pid 0 must not reap:\n{log}"
     );
+}
+
+const SHAPING_ROW: &str = "  shaping                              read modules/shaping/SKILL.md\n";
+
+fn crucible_at(root: &Path, home: &Path, cwd: &Path, args: &[&str]) -> std::process::Output {
+    bin()
+        .current_dir(cwd)
+        .env("CRUCIBLE_ROOT", root)
+        .env("HOME", home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("CRUCIBLE_WRAPPER")
+        .args(args)
+        .output()
+        .expect("spawn crucible")
+}
+
+fn help_stdout(root: &Path, home: &Path, cwd: &Path) -> String {
+    let out = crucible_at(root, home, cwd, &["help"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap()
+}
+
+fn tree_snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+        let mut ents: Vec<_> = fs::read_dir(dir).unwrap().flatten().collect();
+        ents.sort_by_key(|ent| ent.file_name());
+        for ent in ents {
+            let path = ent.path();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let meta = fs::symlink_metadata(&path).unwrap();
+            if meta.file_type().is_symlink() {
+                let target = fs::read_link(&path).unwrap();
+                out.push((format!("link:{rel}:{}", target.display()), Vec::new()));
+            } else if meta.is_dir() {
+                out.push((format!("dir:{rel}"), Vec::new()));
+                walk(base, &path, out);
+            } else {
+                out.push((rel, fs::read(&path).unwrap()));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, root, &mut out);
+    out
+}
+
+fn plant_tracked_shaping(dir: &Path) {
+    let tracked = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../modules/shaping");
+    let dest = dir.join("modules/shaping");
+    fs::create_dir_all(&dest).unwrap();
+    fs::copy(tracked.join("module.txt"), dest.join("module.txt")).unwrap();
+    fs::copy(tracked.join("SKILL.md"), dest.join("SKILL.md")).unwrap();
+}
+
+fn problem_file_command(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    if bytes.len() <= 39 || !line.is_char_boundary(39) || bytes[39] == b' ' {
+        return false;
+    }
+    let field = &line[..39];
+    field.ends_with("  ")
+        && field.trim_end().strip_prefix("  ") == Some("crucible cycle problem FILE")
+}
+
+fn with_shaping_row(baseline: &str) -> String {
+    let mut out = String::new();
+    let mut inserted = false;
+    for line in baseline.split_inclusive('\n') {
+        out.push_str(line);
+        if !inserted && problem_file_command(line.trim_end_matches('\n')) {
+            out.push_str(SHAPING_ROW);
+            inserted = true;
+        }
+    }
+    assert!(inserted, "problem FILE row missing:\n{baseline}");
+    assert_eq!(out.matches(SHAPING_ROW).count(), 1);
+    out
+}
+
+fn home_names(home: &Path) -> Vec<String> {
+    let mut names: Vec<_> = fs::read_dir(home)
+        .unwrap()
+        .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn help_without_shaping_value_matches_off() {
+    assert_eq!(SHAPING_ROW.as_bytes()[39], b'r');
+    assert!(!SHAPING_ROW.starts_with("  crucible"));
+
+    let tmp = Tmp::new();
+    let bare = tmp.root.join("bare");
+    let root = tmp.root.join("root");
+    let cwd = tmp.root.join("cwd");
+    let home = tmp.root.join("home");
+    fs::create_dir_all(&bare).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("MARKER"), b"CANARY\n").unwrap();
+    plant_tracked_shaping(&root);
+    fs::create_dir_all(cwd.join("modules/shaping")).unwrap();
+    fs::write(cwd.join("shaping"), "grok\n").unwrap();
+    fs::write(cwd.join("modules/shaping/module.txt"), b"id: shaping\n").unwrap();
+    fs::write(cwd.join("modules/shaping/SKILL.md"), b"cwd\n").unwrap();
+    fs::create_dir_all(home.join("modules/shaping")).unwrap();
+    fs::write(home.join("shaping"), "grok\n").unwrap();
+    fs::write(home.join("modules/shaping/SKILL.md"), b"home\n").unwrap();
+    let home_before = tree_snapshot(&home);
+
+    let baseline = help_stdout(&bare, &home, &cwd);
+    assert!(!baseline.contains("shaping"), "{baseline}");
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    fs::write(root.join("shaping"), "off\n").unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    fs::write(root.join("shaping"), "banana\n").unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    fs::write(root.join("shaping"), "").unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    fs::write(root.join("shaping"), "grok extra\n").unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    let before = tree_snapshot(&root);
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    assert_eq!(tree_snapshot(&root), before);
+    assert_eq!(tree_snapshot(&home), home_before);
+
+    fs::remove_file(root.join("shaping")).unwrap();
+    let target = root.join("grok-target");
+    fs::write(&target, "grok\n").unwrap();
+    std::os::unix::fs::symlink(&target, root.join("shaping")).unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    assert_eq!(fs::read(&target).unwrap(), b"grok\n");
+
+    let unknown = crucible_at(&root, &home, &cwd, &["nope"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(unknown.stdout.is_empty());
+    let err = String::from_utf8(unknown.stderr).unwrap();
+    assert!(err.starts_with("crucible: unknown verb: nope\n\n"), "{err}");
+    assert_eq!(
+        err.trim_start_matches("crucible: unknown verb: nope\n\n"),
+        baseline
+    );
+    assert!(!err.contains(SHAPING_ROW));
+}
+
+#[test]
+fn help_grok_inserts_one_row_and_writes_nothing() {
+    let tmp = Tmp::new();
+    let bare = tmp.root.join("bare");
+    let root = tmp.root.join("root");
+    let cwd = tmp.root.join("cwd");
+    let home = tmp.root.join("home");
+    fs::create_dir_all(&bare).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("MARKER"), b"CANARY\n").unwrap();
+    plant_tracked_shaping(&root);
+    fs::write(root.join("shaping"), " \tgrok\n").unwrap();
+    let baseline = help_stdout(&bare, &home, &cwd);
+    let expected = with_shaping_row(&baseline);
+    let before = tree_snapshot(&root);
+    assert_eq!(help_stdout(&root, &home, &cwd), expected);
+    assert_eq!(tree_snapshot(&root), before);
+    assert_eq!(home_names(&home), vec!["MARKER".to_string()]);
+    assert_eq!(fs::read(home.join("MARKER")).unwrap(), b"CANARY\n");
+    assert!(!home.join("modules").exists());
+
+    for args in [&[][..], &["--help"], &["-h"], &["help"]] {
+        let out = crucible_at(&root, &home, &cwd, args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        assert!(out.stderr.is_empty(), "{args:?}");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), expected, "{args:?}");
+    }
+    let protocol = crucible_at(&root, &home, &cwd, &["help", "protocol"]);
+    assert_eq!(protocol.status.code(), Some(0));
+    let protocol_out = String::from_utf8(protocol.stdout).unwrap();
+    assert!(!protocol_out.contains("shaping"), "{protocol_out}");
+    let unknown = crucible_at(&root, &home, &cwd, &["nope"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(unknown.stdout.is_empty());
+    let err = String::from_utf8(unknown.stderr).unwrap();
+    assert_eq!(
+        err.trim_start_matches("crucible: unknown verb: nope\n\n"),
+        expected
+    );
+    assert_eq!(tree_snapshot(&root), before);
+    assert_eq!(fs::read(home.join("MARKER")).unwrap(), b"CANARY\n");
+    assert!(!home.join("modules").exists());
+    assert!(!root.join("IDEA.md").exists());
+}
+
+#[test]
+fn help_ignores_other_modules_symlink_and_bad_manifest() {
+    let tmp = Tmp::new();
+    let bare = tmp.root.join("bare");
+    let root = tmp.root.join("root");
+    let cwd = tmp.root.join("cwd");
+    let home = tmp.root.join("home");
+    fs::create_dir_all(&bare).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("MARKER"), b"CANARY\n").unwrap();
+    let tracked = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../modules/shaping");
+    let manifest = fs::read_to_string(tracked.join("module.txt")).unwrap();
+    let baseline = help_stdout(&bare, &home, &cwd);
+    let expected = with_shaping_row(&baseline);
+
+    fs::write(root.join("shaping"), "grok\n").unwrap();
+    let other = root.join("modules/other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("module.txt"), &manifest).unwrap();
+    fs::copy(tracked.join("SKILL.md"), other.join("SKILL.md")).unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+
+    let real = tmp.root.join("real");
+    fs::create_dir_all(&real).unwrap();
+    fs::copy(tracked.join("module.txt"), real.join("module.txt")).unwrap();
+    fs::copy(tracked.join("SKILL.md"), real.join("SKILL.md")).unwrap();
+    std::os::unix::fs::symlink(&real, root.join("modules/shaping")).unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    assert_eq!(
+        fs::read(real.join("SKILL.md")).unwrap(),
+        fs::read(tracked.join("SKILL.md")).unwrap()
+    );
+    fs::remove_file(root.join("modules/shaping")).unwrap();
+
+    plant_tracked_shaping(&root);
+    assert_eq!(
+        help_stdout(&root, &home, &cwd).matches(SHAPING_ROW).count(),
+        1
+    );
+    assert_eq!(help_stdout(&root, &home, &cwd), expected);
+
+    let cases = [
+        manifest.replacen("applies: always\n", "", 1),
+        manifest.replace("writes:\n", "writes:\nextra: no\n"),
+        manifest.replacen("applies: always\n", "applies: bug\n", 1),
+        manifest.replacen("writes:\n", "writes: IDEA.md\n", 1),
+        manifest.replacen(
+            "id: shaping\napplies: always\n",
+            "applies: always\nid: shaping\n",
+            1,
+        ),
+        manifest.replace('\n', "\r\n"),
+    ];
+    for body in cases {
+        fs::write(root.join("modules/shaping/module.txt"), body).unwrap();
+        let before = tree_snapshot(&root);
+        assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+        assert_eq!(tree_snapshot(&root), before);
+        assert!(!root.join("IDEA.md").exists());
+    }
+    fs::copy(
+        tracked.join("module.txt"),
+        root.join("modules/shaping/module.txt"),
+    )
+    .unwrap();
+    fs::write(root.join("modules/shaping/SKILL.md"), "").unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+    fs::remove_file(root.join("modules/shaping/module.txt")).unwrap();
+    fs::copy(
+        tracked.join("SKILL.md"),
+        root.join("modules/shaping/SKILL.md"),
+    )
+    .unwrap();
+    assert_eq!(help_stdout(&root, &home, &cwd), baseline);
+}
+
+#[test]
+fn adopt_home_canary_copies_shaping_module() {
+    let tmp = Tmp::new();
+    let repo = tmp.root.join("product");
+    let src = tmp.root.join("engine");
+    let home = tmp.root.join("home");
+    fs::create_dir_all(&repo).unwrap();
+    init_git_product(&repo);
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("MARKER"), b"CANARY\n").unwrap();
+    fs::create_dir_all(src.join(".grok/rules")).unwrap();
+    fs::write(src.join(".grok/rules/loop-router.md"), b"router\n").unwrap();
+    fs::create_dir_all(src.join("templates/herdr")).unwrap();
+    fs::write(src.join("templates/herdr/workspace"), b"crucible\n").unwrap();
+    fs::write(src.join("templates/herdr/roles"), b"chat\n").unwrap();
+    plant_tracked_shaping(&src);
+    fs::write(src.join("VERSION"), b"1.20.0\n").unwrap();
+    fs::write(src.join("START.md"), b"start\n").unwrap();
+
+    let out = bin()
+        .current_dir(&repo)
+        .env("CRUCIBLE_ROOT", &src)
+        .env("CRUCIBLE_RUST_BIN", env!("CARGO_BIN_EXE_crucible"))
+        .env("HOME", &home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("CRUCIBLE_WRAPPER")
+        .args(["adopt", "work", "--managed"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let dest = repo.join(".crucible/work/modules/shaping");
+    let meta = fs::symlink_metadata(&dest).unwrap();
+    assert!(meta.is_dir());
+    assert!(!meta.file_type().is_symlink());
+    assert_eq!(
+        fs::read(dest.join("module.txt")).unwrap(),
+        fs::read(src.join("modules/shaping/module.txt")).unwrap()
+    );
+    assert_eq!(
+        fs::read(dest.join("SKILL.md")).unwrap(),
+        fs::read(src.join("modules/shaping/SKILL.md")).unwrap()
+    );
+    assert!(!repo.join(".crucible/work/shaping").exists());
+    assert_eq!(home_names(&home), vec!["MARKER".to_string()]);
+    assert_eq!(fs::read(home.join("MARKER")).unwrap(), b"CANARY\n");
+    assert!(!home.join("modules").exists());
+
+    let refreshed = bin()
+        .current_dir(&repo)
+        .env("CRUCIBLE_ROOT", &src)
+        .env("CRUCIBLE_RUST_BIN", env!("CARGO_BIN_EXE_crucible"))
+        .env("HOME", &home)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("CRUCIBLE_WRAPPER")
+        .args(["adopt", "work", "--refresh"])
+        .output()
+        .unwrap();
+    assert!(
+        refreshed.status.success(),
+        "stdout={}\nstderr={}",
+        String::from_utf8_lossy(&refreshed.stdout),
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
+    assert_eq!(home_names(&home), vec!["MARKER".to_string()]);
+    assert_eq!(fs::read(home.join("MARKER")).unwrap(), b"CANARY\n");
+    assert!(!home.join("modules").exists());
 }

@@ -908,6 +908,192 @@ fn install_herdr_templates(src: &Path, repo: &Path, program: &Path) -> Result<()
     Ok(())
 }
 
+fn install_shaping_module(src: &Path, repo: &Path, dst: &Path) -> Result<(), GuidedError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let source = src.join("modules/shaping");
+    let src_meta = match fs::symlink_metadata(&source) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            return Err(message(
+                "refused: shaping module missing in engine source (modules/shaping)",
+            ));
+        }
+        Err(e) => {
+            return Err(message(format!(
+                "refused: shaping module source unreadable ({}): {e}",
+                source.display()
+            )));
+        }
+    };
+    // symlink_metadata: a symlink is not a real directory and is not followed.
+    if !src_meta.is_dir() {
+        return Err(message(format!(
+            "refused: shaping module source is not a real directory ({})",
+            source.display()
+        )));
+    }
+    for name in ["module.txt", "SKILL.md"] {
+        let path = source.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_file() => {}
+            Ok(_) => {
+                return Err(message(format!(
+                    "refused: shaping module source is not a regular file ({})",
+                    path.display()
+                )));
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Err(message(format!(
+                    "refused: shaping module missing in engine source (modules/shaping/{name})"
+                )));
+            }
+            Err(e) => {
+                return Err(message(format!(
+                    "refused: shaping module source unreadable ({}): {e}",
+                    path.display()
+                )));
+            }
+        }
+    }
+
+    // copy_children would recreate a symlink. Refuse before any dest write.
+    let mut stack = vec![source.clone()];
+    while let Some(dir) = stack.pop() {
+        let rd = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                return Err(message(format!(
+                    "refused: shaping module source unreadable ({}): {e}",
+                    dir.display()
+                )));
+            }
+        };
+        for ent in rd {
+            let ent = match ent {
+                Ok(ent) => ent,
+                Err(e) => {
+                    return Err(message(format!(
+                        "refused: shaping module source unreadable ({}): {e}",
+                        dir.display()
+                    )));
+                }
+            };
+            let ft = match ent.file_type() {
+                Ok(ft) => ft,
+                Err(e) => {
+                    return Err(message(format!(
+                        "refused: shaping module source unreadable ({}): {e}",
+                        ent.path().display()
+                    )));
+                }
+            };
+            if ft.is_symlink() {
+                return Err(message(format!(
+                    "refused: shaping module source contains a symlink ({})",
+                    ent.path().display()
+                )));
+            }
+            if ft.is_dir() {
+                stack.push(ent.path());
+            }
+        }
+    }
+
+    let src_dev = src_meta.dev();
+    let src_ino = src_meta.ino();
+    let dest = dst.join("modules/shaping");
+    if !shell_child_of(&dest, repo) {
+        return Err(message(format!(
+            "refused: shaping module path outside repo: {}",
+            dest.display()
+        )));
+    }
+
+    let not_written = |path: &Path, detail: String| {
+        message(format!(
+            "refused: shaping module not written ({}): {detail}",
+            path.display()
+        ))
+    };
+
+    // create_dir_all follows a symlink, which would write outside the repo.
+    let mut parent_walk = Some(dest.as_path());
+    let mut parents = Vec::new();
+    for _ in 0..2 {
+        let Some(parent) = parent_walk.and_then(|p| p.parent()) else {
+            return Err(not_written(&dest, "no parent".to_string()));
+        };
+        if !shell_child_of(parent, repo) && parent != repo {
+            return Err(message(format!(
+                "refused: shaping module path outside repo: {}",
+                parent.display()
+            )));
+        }
+        parents.push(parent.to_path_buf());
+        parent_walk = Some(parent);
+    }
+    for parent in parents.iter().rev() {
+        match fs::symlink_metadata(parent) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(message(format!(
+                    "refused: shaping module parent is a symlink: {}",
+                    parent.display()
+                )));
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(message(format!(
+                    "refused: shaping module parent is not a directory: {}",
+                    parent.display()
+                )));
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(not_written(parent, e.to_string())),
+        }
+    }
+
+    let place = |path: &Path| -> Result<(), GuidedError> {
+        if let Err(e) = fs::create_dir(path) {
+            return Err(not_written(path, e.to_string()));
+        }
+        copy_children(&source, path).map_err(|e| not_written(path, e.to_string()))
+    };
+
+    match fs::symlink_metadata(&dest) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let Some(parent) = dest.parent() else {
+                return Err(not_written(&dest, "no parent".to_string()));
+            };
+            if let Err(e) = fs::create_dir_all(parent) {
+                return Err(not_written(&dest, e.to_string()));
+            }
+            place(&dest)?;
+        }
+        Err(e) => return Err(not_written(&dest, e.to_string())),
+        Ok(meta) if meta.file_type().is_symlink() => {
+            // Unlink the directory entry only. The sentinel inode stays.
+            if let Err(e) = fs::remove_file(&dest) {
+                return Err(not_written(&dest, e.to_string()));
+            }
+            place(&dest)?;
+        }
+        // Same directory as the source. Unlink would destroy the only copy.
+        Ok(meta) if meta.is_dir() && meta.dev() == src_dev && meta.ino() == src_ino => {}
+        // In-directory marker only. `.crucible/KEEP` names a skill battery, not this module.
+        Ok(meta)
+            if meta.is_dir() && (exists(&dest.join("KEEP")) || exists(&dest.join(".keep"))) => {}
+        Ok(meta) if meta.is_dir() => {
+            if let Err(e) = rm_rf(&dest) {
+                return Err(not_written(&dest, e.to_string()));
+            }
+            place(&dest)?;
+        }
+        Ok(_) => return Err(not_written(&dest, "not a directory".to_string())),
+    }
+    Ok(())
+}
+
 fn refresh(
     src: &Path,
     repo: &Path,
@@ -944,6 +1130,7 @@ fn refresh(
     adopt_sync_gitignore(repo, stdout)?;
     install_loop_router(src, repo, dst)?;
     install_herdr_templates(src, repo, dst)?;
+    install_shaping_module(src, repo, dst)?;
     writeln!(stdout, "refreshed engine {old} -> {new}")?;
     writeln!(stdout, "{}", dst.display())?;
     if is_file(&dst.join("scripts/acp-brief.py")) {
@@ -1017,6 +1204,7 @@ fn install_new(
     adopt_sync_gitignore(repo, stdout)?;
     install_loop_router(src, repo, dst)?;
     install_herdr_templates(src, repo, dst)?;
+    install_shaping_module(src, repo, dst)?;
     writeln!(stdout, "installed cycle \"{prog}\" into {}", dst.display())?;
     writeln!(stdout)?;
     writeln!(stdout, "Fresh-agent entrypoint:")?;
@@ -1677,6 +1865,17 @@ mod tests {
         fs::create_dir_all(src.join("templates/herdr")).unwrap();
         fs::write(src.join("templates/herdr/workspace"), HERDR_WORKSPACE).unwrap();
         fs::write(src.join("templates/herdr/roles"), HERDR_ROLES).unwrap();
+        fs::create_dir_all(src.join("modules/shaping")).unwrap();
+        fs::write(
+            src.join("modules/shaping/module.txt"),
+            include_str!("../../../modules/shaping/module.txt"),
+        )
+        .unwrap();
+        fs::write(
+            src.join("modules/shaping/SKILL.md"),
+            include_str!("../../../modules/shaping/SKILL.md"),
+        )
+        .unwrap();
     }
 
     const HERDR_WORKSPACE: &[u8] = b"crucible\n";
@@ -2984,5 +3183,270 @@ Generated from `STATE.tsv`; do not edit this file by hand.
         );
         assert_eq!(fs::read(roles.join("keep.txt")).unwrap(), b"keep\n");
         assert!(!herdr.stamp.exists());
+    }
+
+    #[test]
+    fn adopt_and_refresh_copy_shaping_module() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        let out = run(&repo, &src, &["work", "--managed"]).unwrap();
+        assert!(out.starts_with("installed cycle \"work\""), "{out}");
+        assert!(!out.contains("shaping"), "{out}");
+        let dest = repo.join(".crucible/work/modules/shaping");
+        let meta = fs::symlink_metadata(&dest).unwrap();
+        assert!(meta.is_dir());
+        assert!(!meta.file_type().is_symlink());
+        assert_eq!(
+            fs::read(dest.join("module.txt")).unwrap(),
+            fs::read(src.join("modules/shaping/module.txt")).unwrap()
+        );
+        assert_eq!(
+            fs::read(dest.join("SKILL.md")).unwrap(),
+            fs::read(src.join("modules/shaping/SKILL.md")).unwrap()
+        );
+        assert!(!repo.join(".crucible/work/shaping").exists());
+        assert!(!repo.join("modules").exists());
+
+        fs::write(src.join("modules/shaping/SKILL.md"), b"updated-skill\n").unwrap();
+        let out = run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert!(out.starts_with("refreshed engine "), "{out}");
+        assert!(!out.contains("shaping"), "{out}");
+        let meta = fs::symlink_metadata(&dest).unwrap();
+        assert!(meta.is_dir());
+        assert!(!meta.file_type().is_symlink());
+        assert_eq!(fs::read(dest.join("SKILL.md")).unwrap(), b"updated-skill\n");
+    }
+
+    #[test]
+    fn refresh_replaces_shaping_symlink_and_honors_in_directory_keep() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let source = src.join("modules/shaping");
+        let dest = repo.join(".crucible/work/modules/shaping");
+        let skill = dest.join("SKILL.md");
+        let planted = fs::read(source.join("SKILL.md")).unwrap();
+
+        fs::create_dir_all(repo.join(".crucible/skills")).unwrap();
+        fs::write(repo.join(".crucible/skills/KEEP"), "shaping\n").unwrap();
+        fs::write(repo.join(".crucible/KEEP"), "shaping\n").unwrap();
+        fs::write(&skill, b"PATCHED\n").unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert_eq!(fs::read(&skill).unwrap(), planted);
+
+        fs::write(&skill, b"PATCHED\n").unwrap();
+        let mut perm = fs::symlink_metadata(&skill).unwrap().permissions();
+        perm.set_mode(0o600);
+        fs::set_permissions(&skill, perm).unwrap();
+        let mut dir_perm = fs::symlink_metadata(&dest).unwrap().permissions();
+        dir_perm.set_mode(0o700);
+        fs::set_permissions(&dest, dir_perm).unwrap();
+        fs::write(dest.join("KEEP"), b"local\n").unwrap();
+        let before = fs::symlink_metadata(&skill).unwrap();
+        let dir_before = fs::symlink_metadata(&dest).unwrap();
+        run(&repo, &src, &["work", "--refresh", "--overwrite-batteries"]).unwrap();
+        let after = fs::symlink_metadata(&skill).unwrap();
+        let dir_after = fs::symlink_metadata(&dest).unwrap();
+        assert_eq!(after.dev(), before.dev());
+        assert_eq!(after.ino(), before.ino());
+        assert_eq!(after.permissions().mode() & 0o777, 0o600);
+        assert_eq!(dir_after.dev(), dir_before.dev());
+        assert_eq!(dir_after.ino(), dir_before.ino());
+        assert_eq!(dir_after.permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::read(&skill).unwrap(), b"PATCHED\n");
+        fs::remove_file(dest.join("KEEP")).unwrap();
+
+        fs::write(&skill, b"DOTKEEP\n").unwrap();
+        fs::write(dest.join(".keep"), b"\n").unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert_eq!(fs::read(&skill).unwrap(), b"DOTKEEP\n");
+        fs::remove_file(dest.join(".keep")).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        assert_eq!(fs::read(&skill).unwrap(), planted);
+
+        let sentinel = tmp.path().join("sentinel");
+        fs::write(&sentinel, b"SENTINEL\n").unwrap();
+        fs::remove_dir_all(&dest).unwrap();
+        std::os::unix::fs::symlink(&sentinel, &dest).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let meta = fs::symlink_metadata(&dest).unwrap();
+        assert!(meta.is_dir());
+        assert!(!meta.file_type().is_symlink());
+        assert_eq!(fs::read(dest.join("SKILL.md")).unwrap(), planted);
+        assert_eq!(
+            fs::read(dest.join("module.txt")).unwrap(),
+            fs::read(source.join("module.txt")).unwrap()
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"SENTINEL\n");
+
+        fs::remove_dir_all(&dest).unwrap();
+        std::os::unix::fs::symlink(&source, &dest).unwrap();
+        let src_before = fs::symlink_metadata(&source).unwrap();
+        run(&repo, &src, &["work", "--refresh"]).unwrap();
+        let src_after = fs::symlink_metadata(&source).unwrap();
+        assert_eq!(src_after.dev(), src_before.dev());
+        assert_eq!(src_after.ino(), src_before.ino());
+        assert_eq!(fs::read(source.join("SKILL.md")).unwrap(), planted);
+        let copied = fs::symlink_metadata(&dest).unwrap();
+        assert!(copied.is_dir());
+        assert!(!copied.file_type().is_symlink());
+        assert_ne!(
+            (copied.dev(), copied.ino()),
+            (src_before.dev(), src_before.ino())
+        );
+        assert_eq!(fs::read(dest.join("SKILL.md")).unwrap(), planted);
+    }
+
+    #[test]
+    fn refresh_refuses_shaping_source_and_parent_symlink() {
+        let _env = lock_rust_bin(None);
+        let tmp = Tmp::new();
+        let src = tmp.path().join("src");
+        write_guided_src(&src);
+        let repo = init_git(&tmp.path().join("repo"));
+        run(&repo, &src, &["work", "--managed"]).unwrap();
+        let source = src.join("modules/shaping");
+        let dest = repo.join(".crucible/work/modules/shaping");
+        let planted_skill = fs::read(dest.join("SKILL.md")).unwrap();
+        let planted_manifest = fs::read(dest.join("module.txt")).unwrap();
+
+        fs::remove_dir_all(&dest).unwrap();
+        fs::remove_dir_all(&source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            "refused: shaping module missing in engine source (modules/shaping)",
+            &out,
+        );
+        assert!(!dest.exists());
+
+        write_guided_src(&src);
+        let elsewhere = tmp.path().join("elsewhere");
+        fs::create_dir_all(elsewhere.join("modules/shaping")).unwrap();
+        fs::write(elsewhere.join("modules/shaping/module.txt"), b"nope\n").unwrap();
+        fs::write(elsewhere.join("modules/shaping/SKILL.md"), b"nope\n").unwrap();
+        fs::remove_dir_all(&source).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &source).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: shaping module source is not a real directory ({})",
+                source.display()
+            ),
+            &out,
+        );
+        assert!(!dest.exists());
+        assert_eq!(
+            fs::read(elsewhere.join("modules/shaping/SKILL.md")).unwrap(),
+            b"nope\n"
+        );
+        fs::remove_file(&source).unwrap();
+        write_guided_src(&src);
+
+        let sentinel = tmp.path().join("skill-sentinel");
+        fs::write(&sentinel, b"SENTINEL\n").unwrap();
+        fs::remove_file(source.join("SKILL.md")).unwrap();
+        std::os::unix::fs::symlink(&sentinel, source.join("SKILL.md")).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: shaping module source is not a regular file ({})",
+                source.join("SKILL.md").display()
+            ),
+            &out,
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"SENTINEL\n");
+        assert!(!dest.exists());
+        fs::remove_file(source.join("SKILL.md")).unwrap();
+        fs::write(source.join("SKILL.md"), &planted_skill).unwrap();
+
+        let extra = source.join("nested").join("link");
+        fs::create_dir_all(extra.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&sentinel, &extra).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: shaping module source contains a symlink ({})",
+                extra.display()
+            ),
+            &out,
+        );
+        assert!(!dest.exists());
+        fs::remove_dir_all(source.join("nested")).unwrap();
+
+        fs::remove_file(source.join("module.txt")).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            "refused: shaping module missing in engine source (modules/shaping/module.txt)",
+            &out,
+        );
+        fs::write(source.join("module.txt"), &planted_manifest).unwrap();
+
+        let outside = tmp.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let modules = repo.join(".crucible/work/modules");
+        fs::remove_dir_all(&modules).unwrap();
+        std::os::unix::fs::symlink(&outside, &modules).unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: shaping module parent is a symlink: {}",
+                modules.display()
+            ),
+            &out,
+        );
+        assert!(fs::symlink_metadata(&modules)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(fs::read_dir(&outside).unwrap().next().is_none());
+        fs::remove_file(&modules).unwrap();
+
+        fs::write(&modules, b"not-a-dir\n").unwrap();
+        let mut out = Vec::new();
+        let err = cmd_adopt(&repo, &src, &["work", "--refresh"], &mut out).unwrap_err();
+        assert_refused(
+            err,
+            &format!(
+                "refused: shaping module parent is not a directory: {}",
+                modules.display()
+            ),
+            &out,
+        );
+        assert_eq!(fs::read(&modules).unwrap(), b"not-a-dir\n");
+        assert!(!outside.join("shaping").exists());
+    }
+
+    #[test]
+    fn shaping_same_directory_is_not_unlinked() {
+        let tmp = Tmp::new();
+        let repo = init_git(&tmp.path().join("tree"));
+        write_guided_src(&repo);
+        let module = repo.join("modules/shaping");
+        let before = fs::symlink_metadata(&module).unwrap();
+        let skill = fs::read(module.join("SKILL.md")).unwrap();
+        install_shaping_module(&repo, &repo, &repo).unwrap();
+        let after = fs::symlink_metadata(&module).unwrap();
+        assert!(after.is_dir());
+        assert_eq!(before.dev(), after.dev());
+        assert_eq!(before.ino(), after.ino());
+        assert_eq!(fs::read(module.join("SKILL.md")).unwrap(), skill);
     }
 }

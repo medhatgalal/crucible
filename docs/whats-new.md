@@ -10,6 +10,12 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.20.0 — shaping menu
+
+`crucible help` is unchanged unless `.crucible/<program>/shaping` is `grok`.
+That value inserts one row naming `modules/shaping/SKILL.md`. It creates no
+file. The page does not change. Default is off when the value file is absent.
+
 ## 1.19.0 — page calls read-only verbs
 
 `crucible web` on `127.0.0.1:1735` can POST `/act/<verb>` for `agents`,

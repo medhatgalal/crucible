@@ -39,6 +39,19 @@ const GUIDED_USAGE: &str = r#"Crucible runs one durable problem-to-done cycle fo
 Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
 "#;
 
+const SHAPING_ROW: &str = "  shaping                              read modules/shaping/SKILL.md\n";
+// indent 2, pad to column 39, then the description. Not a `crucible` verb.
+
+const SHAPING_MANIFEST: &str = "\
+id: shaping
+applies: always
+flow: guided
+after: crucible cycle problem FILE
+item: crucible cycle problem FILE
+values: off, grok
+writes:
+";
+
 const PROTOCOL_USAGE: &str = r#"Agent protocol primitives. These are implementation details used by START.md; the operator does
 not drive the cycle with them.
 
@@ -261,17 +274,23 @@ fn cmd_help(args: &[String]) -> i32 {
 }
 
 fn help() {
-    let _ = write_help(&mut io::stdout());
+    let root = crucible_guided::root().ok();
+    let _ = write_help(&mut io::stdout(), root.as_deref());
 }
 
 fn unknown_verb(verb: &str) -> i32 {
     let _ = writeln!(io::stderr(), "crucible: unknown verb: {verb}\n");
-    let _ = write_help(&mut io::stderr());
+    let root = crucible_guided::root().ok();
+    let _ = write_help(&mut io::stderr(), root.as_deref());
     2
 }
 
-fn write_help(out: &mut dyn Write) -> io::Result<()> {
-    write!(out, "{GUIDED_USAGE}")?;
+fn write_help(out: &mut dyn Write, root: Option<&Path>) -> io::Result<()> {
+    let usage = match root {
+        Some(root) => guided_usage(root),
+        None => GUIDED_USAGE.to_string(),
+    };
+    write!(out, "{usage}")?;
     writeln!(out)?;
     writeln!(
         out,
@@ -327,6 +346,81 @@ fn write_help(out: &mut dyn Write) -> io::Result<()> {
     )?;
     writeln!(out, "  --version, -V                     product VERSION")?;
     Ok(())
+}
+
+// Read-only. A missing file, a typo, or a bad manifest is the unchanged menu.
+fn guided_usage(root: &Path) -> String {
+    let value_path = root.join("shaping");
+    let Ok(value_meta) = fs::symlink_metadata(&value_path) else {
+        return GUIDED_USAGE.to_string();
+    };
+    // symlink_metadata: do not follow a symlink into another tree.
+    if !value_meta.file_type().is_file() {
+        return GUIDED_USAGE.to_string();
+    }
+    let Ok(value_bytes) = fs::read(&value_path) else {
+        return GUIDED_USAGE.to_string();
+    };
+    let Ok(value_text) = std::str::from_utf8(&value_bytes) else {
+        return GUIDED_USAGE.to_string();
+    };
+    if value_text.trim_matches(|c: char| c.is_ascii_whitespace()) != "grok" {
+        return GUIDED_USAGE.to_string();
+    }
+
+    let dir = root.join("modules/shaping");
+    let Ok(dir_meta) = fs::symlink_metadata(&dir) else {
+        return GUIDED_USAGE.to_string();
+    };
+    if !dir_meta.is_dir() {
+        return GUIDED_USAGE.to_string();
+    }
+    let skill = dir.join("SKILL.md");
+    let Ok(skill_meta) = fs::symlink_metadata(&skill) else {
+        return GUIDED_USAGE.to_string();
+    };
+    if !skill_meta.file_type().is_file() || skill_meta.len() == 0 {
+        return GUIDED_USAGE.to_string();
+    }
+    let manifest_path = dir.join("module.txt");
+    let Ok(manifest_meta) = fs::symlink_metadata(&manifest_path) else {
+        return GUIDED_USAGE.to_string();
+    };
+    if !manifest_meta.file_type().is_file() {
+        return GUIDED_USAGE.to_string();
+    }
+    let Ok(manifest) = fs::read(&manifest_path) else {
+        return GUIDED_USAGE.to_string();
+    };
+    if manifest != SHAPING_MANIFEST.as_bytes() {
+        return GUIDED_USAGE.to_string();
+    }
+
+    let mut out = String::with_capacity(GUIDED_USAGE.len() + SHAPING_ROW.len());
+    let mut inserted = false;
+    for line in GUIDED_USAGE.lines() {
+        out.push_str(line);
+        out.push('\n');
+        if inserted {
+            continue;
+        }
+        let bytes = line.as_bytes();
+        if bytes.len() <= 39 || !line.is_char_boundary(39) || bytes[39] == b' ' {
+            continue;
+        }
+        let field = &line[..39];
+        if !field.ends_with("  ") {
+            continue;
+        }
+        if field.trim_end().strip_prefix("  ") == Some("crucible cycle problem FILE") {
+            out.push_str(SHAPING_ROW);
+            inserted = true;
+        }
+    }
+    if !inserted {
+        return GUIDED_USAGE.to_string();
+    }
+    out
 }
 
 fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
