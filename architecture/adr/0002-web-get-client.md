@@ -11,3 +11,17 @@ Room cameras and this page are clients of the same JSON. Herdr stays an external
 ## Addendum (2026-09-23)
 
 The page may append `BACKLOG.tsv` and `.wm/CHAT.md` only, and may `POST /act/go`, which only spawns `go` as a process group. `crucible serve` still never writes. The page is still not a second kernel.
+
+## Addendum (2026-09-25)
+
+The page may also `POST /act/<verb>` for `crucible_web::WEB_READ_ONLY`
+(`agents`, `debrief`, `next`, `panes`, `stats`, `workid`) and `POST /act/status`
+only when the JSON args are exactly `["--json"]`. The web process spawns
+`current_exe` with that verb and those args, waits, and returns the child's
+stdout bytes as the HTTP body, including length 0. It does not substitute
+stderr, it does not lossy-decode, it does not interpret the stdout, and it does
+not choose the next step. Stderr stays on the camera log. Those spawns are
+not a process group. Verbs whose functions create, truncate, or append a file
+are not in the allowlist (`state`, `target`, `brief`, `lifecycle`, and bare
+`status`). `POST /act/go` is unchanged. `POST /go` on `crucible serve` stays
+405. `crucible serve` still never writes. The page is still not a second kernel.

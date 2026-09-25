@@ -247,7 +247,7 @@ WM="$STAGE/wm.sh"
 export WM_ENGINE="$WM"
 
 ver=$("$WM" --version 2>"$ERR") || ver=
-[ "$ver" = 1.18.0 ] && ok || bad "wrapper --version wanted 1.18.0 got $ver"
+[ "$ver" = 1.19.0 ] && ok || bad "wrapper --version wanted 1.19.0 got $ver"
 
 help_dir="$BASE/help"
 init_git_repo "$help_dir"
