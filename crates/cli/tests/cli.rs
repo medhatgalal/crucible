@@ -505,6 +505,14 @@ fn help_lists_go_query_serve_and_room() {
         stdout.to_ascii_lowercase().contains("doctor"),
         "help must list doctor: {stdout}"
     );
+    assert!(
+        stdout.contains(".grok/rules/loop-router.md"),
+        "help must name the repo router: {stdout}"
+    );
+    assert!(
+        !stdout.contains("home loop-router"),
+        "help must not describe a home loop-router check: {stdout}"
+    );
 
     let tmp = Tmp::new();
     golden_board(&tmp.root);
@@ -520,12 +528,25 @@ fn help_lists_go_query_serve_and_room() {
     );
 }
 
-fn doctor_out(home: &Path) -> (i32, String, String) {
-    let out = bin()
-        .env("HOME", home)
-        .arg("doctor")
-        .output()
-        .expect("run doctor");
+fn router_fixture() -> String {
+    fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/loop-router.md"),
+    )
+    .expect("testdata/loop-router.md")
+}
+
+fn fixture_adr_hash(text: &str) -> String {
+    text.lines()
+        .find_map(|line| {
+            let rest = line.trim().strip_prefix("ADR-HASH:")?;
+            let token = rest.split_whitespace().next()?;
+            (token.len() == 64 && token.chars().all(|c| c.is_ascii_hexdigit()))
+                .then(|| token.to_ascii_lowercase())
+        })
+        .expect("fixture ADR-HASH")
+}
+
+fn output_parts(out: &std::process::Output) -> (i32, String, String) {
     (
         out.status.code().unwrap_or(1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -534,53 +555,172 @@ fn doctor_out(home: &Path) -> (i32, String, String) {
 }
 
 #[test]
-fn doctor_warns_missing_on_injected_home_not_process_home() {
-    let tmp = Tmp::new();
-    let (code, stdout, stderr) = doctor_out(&tmp.root);
+fn doctor_warns_missing_on_cwd_and_leaves_canary_home() {
+    let repo = Tmp::new();
+    let canary = Tmp::new();
+    fs::write(canary.root.join("marker"), "canary").unwrap();
+    let out = bin()
+        .current_dir(&repo.root)
+        .env("HOME", &canary.root)
+        .arg("doctor")
+        .output()
+        .expect("run doctor");
+    let (code, stdout, stderr) = output_parts(&out);
     assert_eq!(code, 0, "doctor warn is not a walk CHECK: stderr={stderr}");
+    let router = repo.root.join(".grok/rules/loop-router.md");
     assert!(
         stdout.contains("warn:") && stdout.contains("missing"),
         "stdout={stdout:?} stderr={stderr:?}"
     );
     assert!(
-        stdout.contains(tmp.root.to_string_lossy().as_ref()),
-        "must report injected HOME path, not process HOME: {stdout}"
+        stdout.contains(router.to_string_lossy().as_ref()),
+        "must report cwd router path: {stdout}"
     );
+    assert!(!stdout.contains("~/.grok"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(canary.root.join("marker")).unwrap(),
+        "canary"
+    );
+    assert!(fs::symlink_metadata(canary.root.join(".grok")).is_err());
 }
 
 #[test]
-fn doctor_warns_stale_router_on_injected_home() {
-    let tmp = Tmp::new();
-    let path = tmp.root.join(".grok/rules/loop-router.md");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        &path,
-        "ADR-HASH: 0000000000000000000000000000000000000000000000000000000000000000\n",
-    )
-    .unwrap();
-    let (code, stdout, stderr) = doctor_out(&tmp.root);
+fn doctor_warns_when_cwd_grok_is_symlink_and_leaves_canary_home() {
+    let repo = Tmp::new();
+    let canary = Tmp::new();
+    fs::write(canary.root.join("marker"), "canary").unwrap();
+    let sentinel = repo.root.join("sentinel");
+    fs::write(&sentinel, "sentinel-bytes").unwrap();
+    std::os::unix::fs::symlink(&sentinel, repo.root.join(".grok")).unwrap();
+    let out = bin()
+        .current_dir(&repo.root)
+        .env("HOME", &canary.root)
+        .arg("doctor")
+        .output()
+        .expect("run doctor");
+    let (code, stdout, stderr) = output_parts(&out);
     assert_eq!(code, 0, "stderr={stderr}");
     assert!(
-        stdout.contains("warn:") && stdout.contains("stale"),
+        stdout.contains("parent is a symlink"),
         "stdout={stdout:?} stderr={stderr:?}"
     );
+    assert_eq!(fs::read_to_string(&sentinel).unwrap(), "sentinel-bytes");
+    assert_eq!(
+        fs::read_to_string(canary.root.join("marker")).unwrap(),
+        "canary"
+    );
+    assert!(fs::symlink_metadata(canary.root.join(".grok")).is_err());
 }
 
 #[test]
-fn doctor_ok_when_injected_home_matches_fixture() {
-    let tmp = Tmp::new();
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/loop-router.md");
-    let text = fs::read_to_string(&fixture).expect("testdata/loop-router.md");
-    let path = tmp.root.join(".grok/rules/loop-router.md");
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(&path, text).unwrap();
-    let (code, stdout, stderr) = doctor_out(&tmp.root);
-    assert_eq!(code, 0, "stderr={stderr}");
-    assert!(
-        stdout.contains("ok:") && stdout.contains("ADR-HASH"),
-        "stdout={stdout:?} stderr={stderr:?}"
+fn doctor_home_writes_fixture_under_its_own_home() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Tmp::new();
+    let cwd = Tmp::new();
+    let fixture = router_fixture();
+    let hash = fixture_adr_hash(&fixture);
+    let out = bin()
+        .current_dir(&cwd.root)
+        .env("HOME", &home.root)
+        .args(["doctor", "--home"])
+        .output()
+        .expect("run doctor --home");
+    let (code, stdout, stderr) = output_parts(&out);
+    assert_eq!(code, 0, "stdout={stdout:?} stderr={stderr:?}");
+    let path = home.root.join(".grok/rules/loop-router.md");
+    let line = format!(
+        "ok: home loop-router matches ADR-HASH {hash} ({})",
+        path.display()
     );
+    assert!(stdout.contains(&line), "stdout={stdout:?}");
     assert!(!stdout.contains("warn:"), "{stdout}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), fixture);
+    let meta = fs::symlink_metadata(&path).unwrap();
+    assert!(meta.file_type().is_file());
+    assert!(!meta.file_type().is_symlink());
+    assert_eq!(meta.permissions().mode() & 0o777, 0o644);
+    let names: Vec<_> = fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|ent| ent.unwrap().file_name())
+        .collect();
+    assert_eq!(names, vec![std::ffi::OsString::from("loop-router.md")]);
+    assert!(fs::symlink_metadata(cwd.root.join(".grok")).is_err());
+}
+
+#[test]
+fn doctor_home_unset_does_not_check_or_write() {
+    let cwd = Tmp::new();
+    let canary = Tmp::new();
+    fs::write(canary.root.join("marker"), "canary").unwrap();
+    let out = bin()
+        .current_dir(&cwd.root)
+        .env_remove("HOME")
+        .args(["doctor", "--home"])
+        .output()
+        .expect("run doctor --home");
+    let (code, stdout, stderr) = output_parts(&out);
+    assert_eq!(code, 1, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stdout, "warn: home loop-router not written (HOME unset)\n");
+    assert!(stderr.is_empty(), "{stderr}");
+    assert!(!stdout.contains("copy testdata"));
+    assert!(fs::symlink_metadata(cwd.root.join(".grok")).is_err());
+    assert_eq!(
+        fs::read_to_string(canary.root.join("marker")).unwrap(),
+        "canary"
+    );
+    assert!(fs::symlink_metadata(canary.root.join(".grok")).is_err());
+}
+
+#[test]
+fn doctor_home_refuses_parent_symlink() {
+    let home = Tmp::new();
+    let cwd = Tmp::new();
+    let sentinel = Tmp::new();
+    fs::write(sentinel.root.join("marker"), "sentinel").unwrap();
+    std::os::unix::fs::symlink(&sentinel.root, home.root.join(".grok")).unwrap();
+    let out = bin()
+        .current_dir(&cwd.root)
+        .env("HOME", &home.root)
+        .args(["doctor", "--home"])
+        .output()
+        .expect("run doctor --home");
+    let (code, stdout, stderr) = output_parts(&out);
+    assert_eq!(code, 1, "stdout={stdout:?} stderr={stderr:?}");
+    assert!(stdout.contains("not written"), "{stdout}");
+    assert!(stdout.contains("parent is a symlink"), "{stdout}");
+    assert!(!stdout.contains("ok:"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(sentinel.root.join("marker")).unwrap(),
+        "sentinel"
+    );
+    assert!(fs::symlink_metadata(sentinel.root.join("rules")).is_err());
+    assert!(fs::symlink_metadata(sentinel.root.join("loop-router.md")).is_err());
+}
+
+#[test]
+fn doctor_unknown_args_name_the_reported_token() {
+    let cwd = Tmp::new();
+    let nope = bin()
+        .current_dir(&cwd.root)
+        .env_remove("HOME")
+        .args(["doctor", "--nope"])
+        .output()
+        .expect("run doctor --nope");
+    let (code, stdout, stderr) = output_parts(&nope);
+    assert_eq!(code, 2, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stderr, "doctor: unknown arg --nope\n");
+    assert!(stdout.is_empty(), "{stdout}");
+
+    let extra = bin()
+        .current_dir(&cwd.root)
+        .env_remove("HOME")
+        .args(["doctor", "--home", "extra"])
+        .output()
+        .expect("run doctor --home extra");
+    let (code, stdout, stderr) = output_parts(&extra);
+    assert_eq!(code, 2, "stdout={stdout:?} stderr={stderr:?}");
+    assert_eq!(stderr, "doctor: unknown arg extra\n");
+    assert!(stdout.is_empty(), "{stdout}");
 }
 
 #[test]

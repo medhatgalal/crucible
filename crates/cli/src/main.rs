@@ -101,7 +101,7 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         "camera" => cmd_camera(rest),
         "reap" => cmd_reap(rest),
         "web" => cmd_web(rest),
-        "doctor" => cmd_doctor(rest),
+        "doctor" => cmd_doctor(rest, cwd),
         "adopt" => with_guided_root(|root| {
             let mut out = io::stdout();
             match crucible_guided::cmd_adopt(cwd, root, &args, &mut out) {
@@ -315,7 +315,11 @@ fn write_help(out: &mut dyn Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  doctor                            warn if home loop-router is missing or stale vs ADR-HASH"
+        "  doctor                            warn if <cwd>/.grok/rules/loop-router.md is missing or stale vs ADR-HASH"
+    )?;
+    writeln!(
+        out,
+        "  doctor --home                     copy the fixture to $HOME/.grok/rules/loop-router.md, then check it"
     )?;
     writeln!(out, "  --version, -V                     product VERSION")?;
     Ok(())
@@ -673,16 +677,48 @@ fn cmd_web(args: &[String]) -> i32 {
     }
 }
 
-fn cmd_doctor(args: &[String]) -> i32 {
-    if let Some(other) = args.first() {
-        let _ = writeln!(io::stderr(), "doctor: unknown arg {other}");
-        return 2;
+fn cmd_doctor(args: &[String], cwd: &Path) -> i32 {
+    match args {
+        [] => doctor_repo(cwd),
+        [flag] if flag == "--home" => doctor_home(),
+        [flag, extra, ..] if flag == "--home" => {
+            let _ = writeln!(io::stderr(), "doctor: unknown arg {extra}");
+            2
+        }
+        [first, ..] => {
+            let _ = writeln!(io::stderr(), "doctor: unknown arg {first}");
+            2
+        }
     }
-    let home = env::var_os("HOME").map(PathBuf::from);
-    let router = doctor::home_router_path(home.as_deref());
-    let report = doctor::check_router(router.as_deref(), &doctor::fixture_adr_hash());
+}
+
+fn doctor_repo(cwd: &Path) -> i32 {
+    let path = doctor::router_path(cwd);
+    let report = doctor::check_router(&path, &doctor::fixture_adr_hash(), doctor::RouterSite::Repo);
     let _ = report.write_lines(io::stdout());
     0
+}
+
+fn doctor_home() -> i32 {
+    let home = env::var_os("HOME").filter(|value| !value.is_empty());
+    let Some(home) = home else {
+        let _ = writeln!(io::stdout(), "warn: {}", doctor::HOME_UNSET_WARNING);
+        return 1;
+    };
+    let path = match doctor::install_home_router(Path::new(&home)) {
+        Ok(path) => path,
+        Err(err) => {
+            let _ = writeln!(io::stdout(), "warn: {err}");
+            return 1;
+        }
+    };
+    let report = doctor::check_router(&path, &doctor::fixture_adr_hash(), doctor::RouterSite::Home);
+    let _ = report.write_lines(io::stdout());
+    if report.warnings.is_empty() && !report.oks.is_empty() {
+        0
+    } else {
+        1
+    }
 }
 
 fn cmd_debrief(cwd: &Path) -> i32 {

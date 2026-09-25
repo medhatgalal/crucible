@@ -22,7 +22,7 @@ Honest snapshot of this repo after **1.17.0** (Rust working-mode cut-over). Room
 | Guided | Rust (`crates/guided`), dispatched by the `crucible` binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN` or `target/release/crucible`). `crucible-guided` only execs the sibling binary. Not a second kernel. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
 | Room | Landed (`crates/room`): `crucible room` probes `GET /health` on `127.0.0.1:1734` before listen. Matching VERSION is reused. Only connection refused spawns this binary's `serve`. External herdr; standing roles. Help lists `room` and `doctor`. |
-| Doctor | `crucible doctor` warns if home `~/.grok/rules/loop-router.md` is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15). Never `$HOME` in CI. |
+| Doctor | `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` when it is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15) and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Never `$HOME` in CI. |
 | Web | Landed (`crates/web`): `crucible web` proxies GET `/walk` `/stats` `/health`. It may append `BACKLOG.tsv` and `.wm/CHAT.md` only. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. Not a second kernel (ADR 0002). |
 | Skill copies | Canonical `skills/<name>`. Real copies, not symlinks: `.grok/skills`, `.claude/skills`, `.agents/skills`, `.kiro/skills`. Codex uses `.agents/skills` (no `.codex/skills` tree). |
 | WAL | Kernel writes `.wm/EVENTS` (JSONL, no `.jsonl` suffix). |
@@ -66,6 +66,7 @@ crates/
   web/        # loopback page; append BACKLOG.tsv and .wm/CHAT.md; POST /act/go spawns go
 skills/                 # canonical skill trees
 .grok/skills/           # real copy of skills/ (not a symlink)
+.grok/rules/loop-router.md  # real file, bytes of testdata/loop-router.md; not a symlink
 .claude/skills/         # real copy of skills/
 .agents/skills/         # real copy of skills/ (Codex; no .codex/skills)
 .kiro/skills/           # real copy of skills/
@@ -150,7 +151,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` + POSIX guided entry + files + cargo for contributors. CHANGELOG 1.17.0 records the break from “POSIX sh is the **working-mode** engine.” |
-| D15 | **Grok router is required** (home `~/.grok/rules/loop-router.md`). Keep-current: doctor warn + optional `/loop` + **engine CI on `testdata/loop-router.md` vs this ADR** (never `$HOME` in CI). Must **not** force `/execute-plan` inside `/crucible`. |
+| D15 | **Grok router is required** as a real file `<repo>/.grok/rules/loop-router.md` (bytes identical to `testdata/loop-router.md`; not a symlink; not under `.crucible/`). Keep-current: `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` and does not write; `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Engine CI hashes the fixture against this ADR (never `$HOME`). Must **not** force `/execute-plan` inside `/crucible`. |
 | D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Campaign WIP stays gitignored under `architecture/wip/`. Rotting `docs/superpowers/plans/` deleted. |
 | D17 | Web is a **client of GET JSON**, not a second kernel. Timing is ADR 0002 and the web drive: the page may append `BACKLOG.tsv` and `.wm/CHAT.md`, and `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. No walker logic in the UI. |
 | D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec wrapper (absolute sibling). Engine-tree POSIX `./crucible` is not overwritten by `cargo build`; the tarball installs Rust `crucible` beside `crucible-guided`. |
