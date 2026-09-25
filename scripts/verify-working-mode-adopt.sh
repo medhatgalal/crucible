@@ -392,6 +392,32 @@ else
     || bad "guided self-refresh wanted refused, got out=$(cat "$OUT") err=$(cat "$ERR")"
 fi
 
+# Operator label on $AD only. Both refreshes below must keep these bytes and mode.
+printf 'fleet\n' > "$AD/.crucible/herdr/workspace"
+chmod 600 "$AD/.crucible/herdr/workspace"
+printf 'chat\norchestrator\nwatcher\nreaper\ndashboard\nterminal\n' \
+  > "$AD/.crucible/herdr/roles"
+printf 'nope\n' > "$AD/.crucible/work/templates/herdr/workspace"
+printf 'nope\n' > "$AD/.crucible/work/templates/herdr/roles"
+
+assert_fleet_label() {
+  label=$AD/.crucible/herdr/workspace
+  [ -f "$label" ] && [ ! -L "$label" ] && ok || bad 'herdr workspace label is not a regular file'
+  printf 'fleet\n' > "$BASE/fleet-label"
+  cmp -s "$BASE/fleet-label" "$label" && ok || bad 'refresh reset herdr workspace label'
+  mode=$(stat -f '%OLp' "$label" 2>/dev/null || stat -c '%a' "$label")
+  case $mode in
+    600|0600) ok ;;
+    *) bad "herdr workspace label mode is $mode, want 0600" ;;
+  esac
+  cmp -s "$HERE/templates/herdr/roles" "$AD/.crucible/herdr/roles" \
+    && ok || bad 'herdr roles drifted from engine template'
+  cmp -s "$HERE/templates/herdr/workspace" "$AD/.crucible/work/templates/herdr/workspace" \
+    && ok || bad 'program herdr workspace drifted from engine template'
+  cmp -s "$HERE/templates/herdr/roles" "$AD/.crucible/work/templates/herdr/roles" \
+    && ok || bad 'program herdr roles drifted from engine template'
+}
+
 # Refresh from a different tree (this source) is allowed and KEEP honors .keep / KEEP list.
 printf 'PATCHED-ARCH\n' > "$AD/.crucible/skills/architecture/SKILL.md"
 touch "$AD/.crucible/skills/architecture/.keep"
@@ -413,6 +439,7 @@ fi
 cmp -s "$HERE/.grok/rules/loop-router.md" "$AD/.grok/rules/loop-router.md" \
   && ok || bad 'refresh loop-router drifted from engine'
 grep -qx 'SENTINEL-ROUTER' "$ROUTER_SENTINEL" && ok || bad 'refresh wrote the loop-router symlink target'
+assert_fleet_label
 grep -q 'PATCHED-ARCH' "$AD/.crucible/skills/architecture/SKILL.md" \
   && ok || bad 'KEEP .keep did not preserve architecture'
 grep -q 'PATCHED-REVIEW' "$AD/.crucible/skills/review/SKILL.md" \
@@ -436,6 +463,7 @@ grep -q 'PATCHED-ARCH' "$AD/.crucible/skills/architecture/SKILL.md" \
   || ok
 cmp -s "$HERE/skills/architecture/SKILL.md" "$AD/.crucible/skills/architecture/SKILL.md" \
   && ok || bad '--overwrite-batteries did not restore package architecture'
+assert_fleet_label
 
 # install.md commit recipe must name repo-root harness views (Grok does not scan
 # .crucible/.grok/skills). Nested views under .crucible/ are not enough.
@@ -571,8 +599,10 @@ rm -rf "$FAKE_OPT/skills/research"
   printf 'MAP\tdecompose\tarchitecture\tplanner\tspec\tyes\n'
   printf 'RESEARCH\tsurvey\tresearch\tspecifier\tspec\tno\n'
 } > "$FAKE_OPT/ROUTING.tsv"
-mkdir -p "$FAKE_OPT/.grok/rules"
+mkdir -p "$FAKE_OPT/.grok/rules" "$FAKE_OPT/templates/herdr"
 cp "$HERE/.grok/rules/loop-router.md" "$FAKE_OPT/.grok/rules/loop-router.md"
+cp "$HERE/templates/herdr/workspace" "$FAKE_OPT/templates/herdr/workspace"
+cp "$HERE/templates/herdr/roles" "$FAKE_OPT/templates/herdr/roles"
 chmod +x "$FAKE_OPT/crucible" "$FAKE_OPT/wm.sh" "$FAKE_OPT/scripts/project-skills.sh"
 init_git_repo "$BASE/missing-opt"
 if run_adopt "$BASE/missing-opt" "$FAKE_OPT/crucible" adopt work --managed --working-mode; then

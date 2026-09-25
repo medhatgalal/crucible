@@ -5,6 +5,13 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Install
+- `crucible adopt` and `crucible adopt --refresh` copy `templates/herdr/workspace`
+  (`crucible`) and `templates/herdr/roles` (chat, orchestrator, watcher, reaper,
+  dashboard) into `.crucible/herdr/` and the installed program's `templates/herdr/`.
+  They do not run `herdr`. Refresh leaves an existing regular workspace file
+  unchanged, including its mode, so the label is not reset. No VERSION bump.
+
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`
   `/skills/<name>`) are real copies of `skills/<name>`, not symlinks.
