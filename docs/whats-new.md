@@ -10,6 +10,12 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.20.1 — debrief refusal on the page
+
+`debrief` with no `.wm/FLOOR.md` prints `no FLOOR.md (run go or status)` on
+stdout and exits 1. No `.wm/TRACE.tsv` prints `no TRACE.tsv` the same way.
+The page shows that stdout. It still does not show stderr.
+
 ## 1.20.0 — shaping menu
 
 `crucible help` is unchanged unless `.crucible/<program>/shaping` is `grok`.

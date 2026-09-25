@@ -99,6 +99,16 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.20.1] - 2026-09-25
+
+### Web
+- `crucible debrief` writes its operator refusals to stdout and still exits 1:
+  `no FLOOR.md (run go or status)`, `no TRACE.tsv`, and a read error of either
+  file. The loopback page already shows that stdout, then `exit 1` when
+  `X-Crucible-Exit` is not 0. Stderr is not copied into the body. A debrief
+  that reads both files prints the same report as 1.20.0. No new verb.
+  Kernel `POST /go` stays 405.
+
 ## [1.20.0] - 2026-09-25
 
 ### Install

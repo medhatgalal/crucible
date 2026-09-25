@@ -828,24 +828,24 @@ fn cmd_debrief(cwd: &Path) -> i32 {
     let floor = wm.join("FLOOR.md");
     let trace = wm.join("TRACE.tsv");
     if !floor.is_file() {
-        let _ = writeln!(io::stderr(), "no FLOOR.md (run go or status)");
+        let _ = writeln!(io::stdout(), "no FLOOR.md (run go or status)");
         return 1;
     }
     if !trace.is_file() {
-        let _ = writeln!(io::stderr(), "no TRACE.tsv");
+        let _ = writeln!(io::stdout(), "no TRACE.tsv");
         return 1;
     }
     let floor_text = match fs::read_to_string(&floor) {
         Ok(s) => s,
         Err(e) => {
-            let _ = writeln!(io::stderr(), "{e}");
+            let _ = writeln!(io::stdout(), "{e}");
             return 1;
         }
     };
     let trace_text = match fs::read_to_string(&trace) {
         Ok(s) => s,
         Err(e) => {
-            let _ = writeln!(io::stderr(), "{e}");
+            let _ = writeln!(io::stdout(), "{e}");
             return 1;
         }
     };
