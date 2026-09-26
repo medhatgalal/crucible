@@ -143,8 +143,8 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D1 | Keep this repo. Do not retire it. Room is a **crate in this repo**, not a second kernel repo. |
 | D2 | **Rust is the only kernel.** No mixed “sh writes / rust reads” product mode. No long compat dual-walker. |
 | D3 | **`.sh` is wrappers only:** export `WM_WRAPPER=$0` then `exec` the versioned **`crucible`** binary by **absolute sibling path** (never `exec -a`). No card logic, no FLOOR writes, no TRACE in shell. |
-| D4 | Release: **versioned static `crucible`** in the GitHub release + tarball (`dist/crucible-$VERSION.tar.gz`, prefix `crucible-$VERSION/`). `scripts/package-release.sh` git-archives the tag, runs `cargo build --release --locked`, and installs that binary as `crucible`. `wm.sh` and `crucible-guided` stay the committed exec shims. `adopt --refresh` installs **that** binary. Product machines need **no rustc**. Contributors: cargo + rustfmt + clippy. The script does not emit a platform-qualified asset name. |
-| D5 | v1 walker = **working-mode** only. Guided `cycle`/`drive` later, **same** snapshot schema. |
+| D4 | Release: **versioned static `crucible`** in the GitHub release + tarball (`dist/crucible-$VERSION.tar.gz`, prefix `crucible-$VERSION/`). The file named `crucible` in the tarball is the host release binary. `wm.sh` and `crucible-guided` stay the committed exec shims. `crucible-guided` only execs the sibling binary. `adopt --refresh` installs **that** binary. Product machines need **no rustc**. Contributors: cargo + rustfmt + clippy. There is no platform-qualified asset name. |
+| D5 | v1 walker = **working-mode** only, and guided `cycle` / `drive` are on the Rust `crucible` binary now, **same** snapshot schema. |
 | D6 | Superpowers is **not** a dependency. EngOS is **not** in the walk. |
 | D7 | Grok slash is **not** inside a walk unless the user **interrupts**. Workers = harness CLIs Crucible starts. |
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
@@ -281,7 +281,7 @@ Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on defau
 
 ## Packaging
 
-Local filename stays **`crucible-$VERSION.tar.gz`** with prefix **`crucible-$VERSION/`**. `scripts/package-release.sh` `git archive`s the ref, builds `cargo build --release --locked` in that tree, copies `target/release/crucible` onto `crucible`, deletes `target/`, and writes gzip plus `crucible-$VERSION.tar.gz.sha256` beside it. `wm.sh` stays the exec shim. `crucible-guided` stays the committed `#!/bin/sh` that only execs the sibling `crucible`. The archive is the tracked tree, minus the `export-ignore` paths in `.gitattributes` (`.github`, `.gitignore`, `.gitattributes`, `CONTRIBUTING.md`, `RELEASE.md`, `reports`). A `git cat-file -e "$REF:$rel"` loop requires each of `wm.sh`, `skills/architecture/SKILL.md`, `ROUTING.tsv`, `adapters/grok.md`, `adapters/claude.md`, `adapters/codex.md`, and `adapters/kiro.md` only when the ref tracks that path. The four adapter files are required only when the ref tracks them. With no `cat-file` guard, the script always requires `crucible`, `wm.sh`, `.grok/rules/loop-router.md`, `templates/herdr/workspace`, `templates/herdr/roles`, `modules/shaping/module.txt`, and `modules/shaping/SKILL.md`. There is no platform-qualified asset name. Product machines need **no rustc**. Adopted `crucible` is that release binary.
+Local filename stays **`crucible-$VERSION.tar.gz`** with prefix **`crucible-$VERSION/`**. The file named `crucible` in the tarball is the host release binary. `wm.sh` and `crucible-guided` stay the committed exec shims. `crucible-guided` only execs the sibling binary. Product machines need **no rustc**. There is no platform-qualified asset name.
 
 This ADR does not change `package-release.sh`.
 
