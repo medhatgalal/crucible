@@ -99,6 +99,15 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.22.0] - 2026-09-26
+
+### Web
+- The page spawns `state`, `target`, `brief`, and `lifecycle` from
+  `WEB_WRITERS` on the 5-second wait. A `state` click (`[]`) rewrites
+  `STATE.md` when lifecycle is managed and writes nothing when it is not.
+  `target` `[]`, `brief` `[]`, and `lifecycle` `["status"]` write nothing.
+  `evidence`, `run`, and `run-claim` stay off. Kernel `POST /go` stays 405.
+
 ## [1.21.0] - 2026-09-26
 
 ### Web

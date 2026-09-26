@@ -1,6 +1,6 @@
 #!/bin/sh
 # 13b: harness adapters + blank-HOME tarball adopt + 3-slice fixture walk.
-# Falsifier-first: RED when adapters/docs/VERSION 1.21.0 pin are absent.
+# Falsifier-first: RED when adapters/docs/VERSION 1.22.0 pin are absent.
 # Fixture echo/python stubs only. Live grok/kiro-cli/codex are not invoked.
 # If none of those CLIs are on PATH: record INDEPENDENCE_UNAVAILABLE
 # (not a fixture fail). Claude Code is not required.
@@ -23,8 +23,8 @@ if [ ! -f "$HERE/adapters/grok.md" ] \
 fi
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
-if [ "$VERSION" != 1.21.0 ]; then
-  printf 'RED VERSION is %s, want 1.21.0\n' "$VERSION" >&2
+if [ "$VERSION" != 1.22.0 ]; then
+  printf 'RED VERSION is %s, want 1.22.0\n' "$VERSION" >&2
   exit 1
 fi
 
@@ -247,7 +247,7 @@ run_adopt() {
   ( CDPATH=; cd "$dir" && "$@" >"$OUT" 2>"$ERR" )
 }
 
-# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.21.0).
+# Tarball pin: package-release archives git REF (HEAD must record VERSION 1.22.0).
 PKG_OUT="$BASE/pkg"
 mkdir -p "$PKG_OUT"
 if "$HERE/scripts/package-release.sh" "$VERSION" HEAD "$PKG_OUT" >"$OUT" 2>"$ERR"; then
@@ -344,7 +344,7 @@ if [ -n "$EXTRACT" ]; then
   [ "$_ad_sig" != '#!' ] && ok || bad 'adopted .crucible/work/crucible must be the rust binary'
   sh -n "$AD/.crucible/work/wm.sh" && ok || bad 'adopted wm.sh is not valid POSIX sh'
   _ad_ver=$("$AD/.crucible/work/crucible" --version 2>/dev/null || true)
-  [ "$_ad_ver" = 1.21.0 ] && ok || bad "adopted crucible --version wanted 1.21.0 got $_ad_ver"
+  [ "$_ad_ver" = 1.22.0 ] && ok || bad "adopted crucible --version wanted 1.22.0 got $_ad_ver"
   [ -f "$AD/.crucible/work/adapters/grok.md" ] && ok || bad 'adopt missing adapters/grok.md'
   [ -f "$AD/.crucible/work/adapters/kiro.md" ] && ok || bad 'adopt missing adapters/kiro.md'
   [ -f "$AD/.crucible/work/adapters/claude.md" ] && ok || bad 'adopt missing adapters/claude.md'
@@ -380,8 +380,8 @@ if [ -n "$EXTRACT" ]; then
   cmp -s "$EXTRACT/templates/herdr/roles" "$AD/.crucible/work/templates/herdr/roles" \
     && ok || bad 'working-mode adopt program herdr roles drifted from package'
   if [ -f "$AD/.crucible/work/ENGINE-SOURCE" ]; then
-    grep -q '^version: 1.21.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
-      && ok || bad 'ENGINE-SOURCE version is not 1.21.0'
+    grep -q '^version: 1.22.0$' "$AD/.crucible/work/ENGINE-SOURCE" \
+      && ok || bad 'ENGINE-SOURCE version is not 1.22.0'
   else
     bad 'ENGINE-SOURCE missing after working-mode adopt'
   fi
@@ -402,7 +402,7 @@ if [ -n "$AD" ] && [ -f "$AD/.crucible/work/wm.sh" ]; then
   cd "$AD"
 
   wrap_ver=$("$WM" --version 2>"$ERR") || wrap_ver=
-  [ "$wrap_ver" = 1.21.0 ] && ok || bad "adopted wm.sh --version wanted 1.21.0 got $wrap_ver err=$(cat "$ERR")"
+  [ "$wrap_ver" = 1.22.0 ] && ok || bad "adopted wm.sh --version wanted 1.22.0 got $wrap_ver err=$(cat "$ERR")"
 
   set +e
   "$WM" go >"$OUT" 2>"$ERR"

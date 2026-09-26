@@ -563,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.21.0");
+    assert_eq!(ver_before.trim(), "1.22.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -580,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.21.0");
+    assert_eq!(want, "1.22.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -2070,6 +2070,228 @@ fn web_close_without_slug_body_is_the_refusal() {
     assert!(!tmp.root.join("items").exists());
 }
 
+fn entry_names(dir: &Path) -> Vec<String> {
+    let mut names = fs::read_dir(dir)
+        .unwrap()
+        .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+fn assert_exit(headers: &str, code: &str) {
+    assert!(
+        headers
+            .lines()
+            .any(|l| l == format!("X-Crucible-Exit: {code}")),
+        "{headers}"
+    );
+}
+
+const STATE_HEADER_LINE: &str =
+    "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n";
+
+#[test]
+fn web_lifecycle_status_writes_nothing() {
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/lifecycle", r#"{"args":["status"]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "0");
+    assert_eq!(body, b"lifecycle: item-file\n");
+    assert!(!tmp.root.join("STATE.tsv").exists());
+    assert!(entry_names(&tmp.root).is_empty());
+}
+
+#[test]
+fn web_lifecycle_dry_run_writes_nothing() {
+    let tmp = Tmp::new();
+    let program = b"program: work\n";
+    fs::write(tmp.root.join("PROGRAM"), program).unwrap();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(
+        &srv.addr,
+        "/act/lifecycle",
+        r#"{"args":["enable","--dry-run"]}"#,
+    );
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "0");
+    let text = String::from_utf8(body).unwrap();
+    let root = tmp.root.display().to_string();
+    assert!(
+        text.contains(&format!("CREATE {root}/STATE.tsv\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("REPLACE {root}/STATE.md\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("UPDATE {root}/PROGRAM lifecycle: managed\n")),
+        "{text}"
+    );
+    assert!(!text.contains("enabled managed lifecycle\n"), "{text}");
+    assert!(!tmp.root.join("STATE.tsv").exists());
+    assert!(!tmp.root.join("STATE.md").exists());
+    assert!(!tmp.root.join(".state.lock").exists());
+    assert_eq!(fs::read(tmp.root.join("PROGRAM")).unwrap(), program);
+    assert_eq!(entry_names(&tmp.root), vec!["PROGRAM".to_string()]);
+}
+
+#[test]
+fn web_target_and_brief_empty_args_write_nothing() {
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    for path in ["/act/target", "/act/brief"] {
+        let (status, headers, body) = post_act(&srv.addr, path, r#"{"args":[]}"#);
+        assert_eq!(status, 200, "{path} {headers} body={body:?}");
+        assert_exit(&headers, "2");
+        assert!(body.is_empty(), "{path} stdout must stay empty: {body:?}");
+    }
+    assert!(!tmp.root.join("TARGET").exists());
+    assert!(!tmp.root.join("MAKER").exists());
+    assert!(!tmp.root.join("briefs").exists());
+    assert!(entry_names(&tmp.root).is_empty());
+}
+
+#[test]
+fn web_state_unmanaged_writes_nothing() {
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/state", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "2");
+    assert!(body.is_empty(), "{body:?}");
+    assert!(!tmp.root.join(".state.lock").exists());
+    assert!(!tmp.root.join("STATE.md").exists());
+    assert!(entry_names(&tmp.root).is_empty());
+
+    let program = b"program: work\n";
+    fs::write(tmp.root.join("PROGRAM"), program).unwrap();
+    let (status, headers, body) = post_act(&srv.addr, "/act/state", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "2");
+    assert!(body.is_empty(), "{body:?}");
+    assert!(!tmp.root.join(".state.lock").exists());
+    assert!(!tmp.root.join("STATE.md").exists());
+    assert_eq!(fs::read(tmp.root.join("PROGRAM")).unwrap(), program);
+    assert_eq!(entry_names(&tmp.root), vec!["PROGRAM".to_string()]);
+}
+
+#[test]
+fn web_state_managed_rewrites_state_md() {
+    let tmp = Tmp::new();
+    let program = b"lifecycle: managed\n";
+    fs::write(tmp.root.join("PROGRAM"), program).unwrap();
+    fs::write(tmp.root.join("STATE.tsv"), STATE_HEADER_LINE).unwrap();
+    fs::write(tmp.root.join("STATE.md"), b"old\n").unwrap();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/state", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "0");
+    let root = tmp.root.display().to_string();
+    assert_eq!(body, format!("{root}/STATE.md\n").into_bytes());
+    let rendered = fs::read_to_string(tmp.root.join("STATE.md")).unwrap();
+    assert_ne!(rendered, "old\n");
+    assert!(
+        rendered.contains("Generated from `STATE.tsv`"),
+        "{rendered}"
+    );
+    assert_eq!(
+        fs::read(tmp.root.join("STATE.tsv")).unwrap(),
+        STATE_HEADER_LINE.as_bytes()
+    );
+    assert_eq!(fs::read(tmp.root.join("PROGRAM")).unwrap(), program);
+    assert!(!tmp.root.join(".state.lock").exists());
+    assert!(!tmp.root.join("items").exists());
+    assert!(!tmp.root.join("TARGET").exists());
+    assert!(!tmp.root.join("MAKER").exists());
+    assert!(!tmp.root.join("briefs").exists());
+    for name in entry_names(&tmp.root) {
+        assert!(
+            !(name.starts_with(".STATE.md.") && name.ends_with(".tmp")),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        entry_names(&tmp.root),
+        vec![
+            "PROGRAM".to_string(),
+            "STATE.md".to_string(),
+            "STATE.tsv".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn web_lifecycle_enable_apply_writes_managed_files() {
+    let tmp = Tmp::new();
+    fs::write(tmp.root.join("PROGRAM"), b"program: work\n").unwrap();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(
+        &srv.addr,
+        "/act/lifecycle",
+        r#"{"args":["enable","--apply"]}"#,
+    );
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "0");
+    let text = String::from_utf8(body).unwrap();
+    let root = tmp.root.display().to_string();
+    assert!(
+        text.contains(&format!("CREATE {root}/STATE.tsv\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("REPLACE {root}/STATE.md\n")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("UPDATE {root}/PROGRAM lifecycle: managed\n")),
+        "{text}"
+    );
+    assert!(text.ends_with("enabled managed lifecycle\n"), "{text}");
+    assert_eq!(
+        fs::read(tmp.root.join("PROGRAM")).unwrap(),
+        b"program: work\nlifecycle: managed\n"
+    );
+    assert_eq!(
+        fs::read(tmp.root.join("STATE.tsv")).unwrap(),
+        STATE_HEADER_LINE.as_bytes()
+    );
+    let rendered = fs::read_to_string(tmp.root.join("STATE.md")).unwrap();
+    assert!(
+        rendered.contains("Generated from `STATE.tsv`"),
+        "{rendered}"
+    );
+    assert!(!tmp.root.join(".state.lock").exists());
+    assert!(!tmp.root.join("items").exists());
+    assert!(!tmp.root.join("TARGET").exists());
+    assert!(!tmp.root.join("MAKER").exists());
+    assert!(!tmp.root.join("briefs").exists());
+    for name in entry_names(&tmp.root) {
+        assert!(
+            !(name.starts_with(".STATE.tsv.") && name.ends_with(".tmp")),
+            "{name}"
+        );
+        assert!(
+            !(name.starts_with(".STATE.md.") && name.ends_with(".tmp")),
+            "{name}"
+        );
+        assert!(
+            !(name.starts_with(".PROGRAM.") && name.ends_with(".tmp")),
+            "{name}"
+        );
+    }
+    assert_eq!(
+        entry_names(&tmp.root),
+        vec![
+            "PROGRAM".to_string(),
+            "STATE.md".to_string(),
+            "STATE.tsv".to_string(),
+        ]
+    );
+}
+
 fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -2276,7 +2498,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.21.0");
+    assert_eq!(health["version"], "1.22.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2580,7 +2802,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.21.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.22.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"
