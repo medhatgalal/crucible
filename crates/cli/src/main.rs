@@ -101,12 +101,14 @@ fn dispatch(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
 }
 
 /// One match so the verb set is readable as a table. `scripts/selftest.sh`
-/// enumerates these arms. The page may spawn only `crucible_web::WEB_READ_ONLY`
-/// (defined in crates/web/src/lib.rs; this binary crate is not a library).
-/// That const is the only allowlist. This binding keeps the match and the
-/// page table in one function so the link cannot be deleted unnoticed.
+/// enumerates these arms. The page may spawn `crucible_web::WEB_READ_ONLY`
+/// and `crucible_web::WEB_WRITERS` (defined in crates/web/src/lib.rs; this
+/// binary crate is not a library). Those consts are the allowlists. These
+/// bindings keep the match and the page table in one function so the link
+/// cannot be deleted unnoticed.
 fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
     let _ = crucible_web::WEB_READ_ONLY;
+    let _ = crucible_web::WEB_WRITERS;
     let args: Vec<&str> = rest.iter().map(String::as_str).collect();
     match verb {
         "go" => cmd_go(rest, cwd, clock),
@@ -172,7 +174,16 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
             Err(err) => guided_fail(err),
         }),
         "close" => {
-            with_guided_root(|root| guided_ok(crucible_guided::close::close(root, &args, clock)))
+            with_guided_root(
+                |root| match crucible_guided::close::close(root, &args, clock) {
+                    Ok(text) => guided_report(text, 0),
+                    Err(GuidedError::Message(msg)) if msg == "need a slug" => {
+                        let _ = writeln!(io::stdout(), "crucible: need a slug");
+                        2
+                    }
+                    Err(err) => guided_fail(err),
+                },
+            )
         }
         "evidence" => {
             with_guided_root(|root| guided_ok(crucible_guided::inspect::evidence(root, &args)))
@@ -326,7 +337,7 @@ fn write_help(out: &mut dyn Write, root: Option<&Path>) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  web [--bind 127.0.0.1:1735]       backlog and chat; POST /act/go spawns; POST /go is 405"
+        "  web [--bind 127.0.0.1:1735]       backlog and chat; /act spawns allowlisted verbs; POST /go is 405"
     )?;
     writeln!(
         out,
@@ -497,7 +508,7 @@ fn cmd_status(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
     // Read-only snapshot first. No card means write nothing, including t0.
     let snap = WalkSnapshot::from_wm_dir(cwd, clock);
     let Some(floor) = snap.floor else {
-        let _ = writeln!(io::stderr(), "no card on disk");
+        let _ = writeln!(io::stdout(), "no card on disk");
         return 1;
     };
     // A missing independence line parses as empty. Writing that blank erases the default.

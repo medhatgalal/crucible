@@ -99,6 +99,15 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.21.0] - 2026-09-26
+
+### Web
+- The page spawns `close`, `drive`, `adopt`, and bare `status` from
+  `WEB_WRITERS`. `drive` and `adopt` return a pid and do not wait 5 seconds.
+  `close` and bare `status` return stdout. `no card on disk` and
+  `crucible: need a slug` are stdout. `state`, `target`, `brief`, and
+  `lifecycle` stay 404. Kernel `POST /go` stays 405.
+
 ## [1.20.1] - 2026-09-25
 
 ### Web

@@ -623,6 +623,50 @@ awk '
 ' crates/cli/src/main.rs \
   && ok "dispatch_verb binds crucible_web::WEB_READ_ONLY" \
   || bad "dispatch_verb does not bind crucible_web::WEB_READ_ONLY"
+# Writer allowlist. Same awk shape as WEB_READ_ONLY. An empty extract fails closed.
+web_writers=$(awk '
+  /pub const WEB_WRITERS:/ { in_const = 1; next }
+  in_const && /\];/ { exit }
+  in_const {
+    line = $0
+    while (match(line, /"[a-z][a-z0-9-]*"/)) {
+      tok = substr(line, RSTART + 1, RLENGTH - 2)
+      print tok
+      line = substr(line, RSTART + RLENGTH)
+    }
+  }
+' crates/web/src/lib.rs | sort -u)
+n_writers=$(printf '%s\n' "$web_writers" | grep -c '[a-z]' || true)
+if [ "$n_writers" -lt 1 ]; then
+  bad "cannot enumerate WEB_WRITERS (extracted $n_writers)"
+else
+  missing_arm=""
+  for v in $web_writers; do
+    printf '%s\n' "$dispatch_verbs" | grep -qx "$v" || missing_arm="$missing_arm $v"
+  done
+  [ -z "$missing_arm" ] && ok "WEB_WRITERS is $n_writers dispatch_verb arms" \
+    || bad "WEB_WRITERS names are not dispatch arms:$missing_arm"
+  got=$(printf '%s\n' $web_writers | sort)
+  want=$(printf '%s\n' adopt close drive status | sort)
+  [ "$got" = "$want" ] && ok "WEB_WRITERS is exactly adopt close drive status" \
+    || bad "WEB_WRITERS set is '$got'"
+  if [ "$n_allow" -ge 1 ]; then
+    overlap=""
+    for v in $web_writers; do
+      printf '%s\n' "$web_allow" | grep -qx "$v" && overlap="$overlap $v"
+    done
+    [ -z "$overlap" ] && ok "no WEB_WRITERS name is in WEB_READ_ONLY" \
+      || bad "WEB_WRITERS name appears in WEB_READ_ONLY:$overlap"
+  fi
+fi
+awk '
+  /fn dispatch_verb\(/ { in_fn = 1 }
+  in_fn && /^}/ { exit }
+  in_fn && /crucible_web::WEB_WRITERS/ { found = 1 }
+  END { exit found ? 0 : 1 }
+' crates/cli/src/main.rs \
+  && ok "dispatch_verb binds crucible_web::WEB_WRITERS" \
+  || bad "dispatch_verb does not bind crucible_web::WEB_WRITERS"
 # Hyphens included, and this was a real hole: the old class `[a-z][a-z]*` read `crucible
 # run-claim` as the verb `run`, which is also real, so `run-claim` passed by accident and was
 # never once tested as itself. Same for `plan-audit`, `contract-audit`, `probe-acp`.
