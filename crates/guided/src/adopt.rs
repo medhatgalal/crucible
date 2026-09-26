@@ -1167,7 +1167,10 @@ fn install_new(
             dst.display()
         )));
     }
-    let self_engine = same_checkout(src, repo);
+    let self_engine = match (fs::canonicalize(src), fs::canonicalize(repo)) {
+        (Ok(src), Ok(repo)) => src == repo,
+        _ => false,
+    };
     if self_engine && opts.working_mode {
         return Err(message(
             "refused: working-mode is the other loop; do not adopt it into the engine checkout",
@@ -1699,13 +1702,6 @@ fn nonempty_var(key: &str) -> Option<OsString> {
 
 fn field<'a>(fields: &[&'a str], index: usize) -> &'a str {
     fields.get(index).copied().unwrap_or("")
-}
-
-fn same_checkout(src: &Path, repo: &Path) -> bool {
-    match (fs::canonicalize(src), fs::canonicalize(repo)) {
-        (Ok(src), Ok(repo)) => src == repo,
-        _ => false,
-    }
 }
 
 fn repo_toplevel(cwd: &Path) -> Result<PathBuf, GuidedError> {
