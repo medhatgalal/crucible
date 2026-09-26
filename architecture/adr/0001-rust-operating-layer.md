@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-21
 - **Status:** Accepted
-- **Product VERSION:** 1.24.0. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This room change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
+- **Product VERSION:** 1.25.0. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This page change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
 
 Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run `/crucible` intake and `go` until `CLOSED` / `STOP-ASK` / `ESCALATE`.
 
@@ -12,7 +12,7 @@ This ADR freezes D1–D22. Living spec is `crates/contract` tests, verify-workin
 
 ## Current tree (main)
 
-Honest snapshot of this repo at **1.24.0**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.24.0.
+Honest snapshot of this repo at **1.25.0**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.25.0.
 
 | Piece | On main now |
 | --- | --- |
@@ -29,7 +29,7 @@ Honest snapshot of this repo at **1.24.0**. Rust working-mode has already cut ov
 | Stats | `crucible.stats/v1` reads `.wm/EVENTS` when that WAL file exists (`source: "events"`), else `.wm/METRICS.tsv` (`source: "metrics"`). |
 | Human `status` | Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. `status --json` and GET `/walk` stay read-only. |
 
-Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`, do not add a verb. `VERSION` becomes 1.24.0 because this room change ships in the tarball.
+Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`, do not add a verb. `VERSION` becomes 1.25.0 because this page change ships in the tarball.
 
 ## PATH layout (D18)
 

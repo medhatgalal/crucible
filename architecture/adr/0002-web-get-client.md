@@ -37,3 +37,7 @@ The page may `POST /act/state`, `POST /act/target`, `POST /act/brief`, and `POST
 ## Addendum (2026-09-26)
 
 The page may archive evidence and must not spawn `run` or `run-claim`.
+
+## Addendum (2026-09-26)
+
+The page may spawn the read-only pair `check` and `triage`, and the waited writers `add`, `attempt`, `claim`, `contract-audit`, `cycle`, `phase`, `plan-audit`, `probe-acp`, and `ready`; it must not spawn `result`, `dispatch`, `task`, `run`, or `run-claim`.
