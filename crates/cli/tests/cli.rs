@@ -405,6 +405,12 @@ fn status_without_card_exits_1_and_writes_nothing() {
         "no card must exit 1: stderr={}",
         String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(out.stdout, b"no card on disk\n");
+    assert!(
+        out.stderr.is_empty(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(!tmp.root.join(".wm").exists(), "must not mkdir .wm");
 
     let wm = tmp.root.join(".wm");
@@ -414,6 +420,12 @@ fn status_without_card_exits_1_and_writes_nothing() {
     fs::write(wm.join("t0"), "1773964800\n").unwrap();
     let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, b"no card on disk\n");
+    assert!(
+        out.stderr.is_empty(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(fs::read_to_string(wm.join("TRACE.tsv")).unwrap(), trace);
     assert_eq!(fs::read_to_string(wm.join("t0")).unwrap(), "1773964800\n");
     assert!(!wm.join("FLOOR.md").exists());
@@ -423,6 +435,12 @@ fn status_without_card_exits_1_and_writes_nothing() {
     fs::write(wm.join("FLOOR.md"), floor).unwrap();
     let out = bin().current_dir(&tmp.root).arg("status").output().unwrap();
     assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.stdout, b"no card on disk\n");
+    assert!(
+        out.stderr.is_empty(),
+        "stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(fs::read_to_string(wm.join("FLOOR.md")).unwrap(), floor);
     assert_eq!(fs::read_to_string(wm.join("TRACE.tsv")).unwrap(), trace);
     assert!(!wm.join("EVENTS").exists());
@@ -545,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.20.1");
+    assert_eq!(ver_before.trim(), "1.21.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -562,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.20.1");
+    assert_eq!(want, "1.21.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -1792,6 +1810,7 @@ fn start_serve(dir: &Path, bind: &str) -> ServeProc {
 fn start_web(dir: &Path) -> ServeProc {
     let mut child = bin()
         .current_dir(dir)
+        .env("CRUCIBLE_ROOT", dir)
         .args(["web", "--bind", "127.0.0.1:0"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1915,6 +1934,140 @@ fn web_debrief_missing_floor_body_is_the_refusal() {
     assert_eq!(body, b"no TRACE.tsv\n");
     assert_eq!(fs::read(wm.join("FLOOR.md")).unwrap(), floor);
     assert!(!wm.join("TRACE.tsv").exists());
+}
+
+fn post_act(addr: &str, path: &str, json: &str) -> (u16, String, Vec<u8>) {
+    let sock: std::net::SocketAddr = addr.parse().expect("bind addr");
+    let body = json.as_bytes();
+    let mut req = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Crucible-Act: 1\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    req.extend_from_slice(body);
+    let mut raw = Vec::new();
+    let mut last_err = String::new();
+    for _ in 0..50 {
+        match TcpStream::connect_timeout(&sock, Duration::from_millis(100)) {
+            Ok(mut s) => {
+                let _ = s.set_read_timeout(Some(Duration::from_secs(5)));
+                if s.write_all(&req).is_err() {
+                    last_err = "write".to_string();
+                    thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                raw.clear();
+                match s.read_to_end(&mut raw) {
+                    Ok(_) => {}
+                    Err(e) if !raw.is_empty() => last_err = e.to_string(),
+                    Err(e) => {
+                        last_err = e.to_string();
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                }
+                if raw.windows(4).any(|w| w == b"\r\n\r\n") {
+                    break;
+                }
+                last_err = "short response".to_string();
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    let sep = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .unwrap_or_else(|| panic!("{path} response: {last_err} raw={raw:?}"));
+    let head = String::from_utf8_lossy(&raw[..sep]).into_owned();
+    let status = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    (status, head, raw[sep + 4..].to_vec())
+}
+
+#[test]
+fn web_bare_status_rewrites_floor_and_json_does_not() {
+    let tmp = Tmp::new();
+    golden_board(&tmp.root);
+    let trace = fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap();
+    let floor_before = fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/status", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 0"),
+        "{headers}"
+    );
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.starts_with("FLOOR t=+"), "{text:?}");
+    let floor_after = fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap();
+    assert_ne!(floor_after, floor_before, "bare status must rewrite FLOOR");
+    assert!(
+        String::from_utf8_lossy(&floor_after).contains("card: STOP-ASK INTAKE\n"),
+        "{floor_after:?}"
+    );
+    assert_eq!(fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(), trace);
+    let (status, headers, body) = post_act(&srv.addr, "/act/status", r#"{"args":["--json"]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 0"),
+        "{headers}"
+    );
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap(),
+        floor_after
+    );
+    assert_eq!(fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(), trace);
+    let (status, headers, body) = post_act(&srv.addr, "/act/status", r#"{"args":["--json","x"]}"#);
+    assert_eq!(status, 404, "{headers} body={body:?}");
+    assert_eq!(body, b"not found\n");
+    assert_eq!(
+        fs::read(tmp.root.join(".wm/FLOOR.md")).unwrap(),
+        floor_after
+    );
+    assert_eq!(fs::read(tmp.root.join(".wm/TRACE.tsv")).unwrap(), trace);
+}
+
+#[test]
+fn web_status_without_card_body_is_the_refusal() {
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/status", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 1"),
+        "{headers}"
+    );
+    assert_eq!(body, b"no card on disk\n");
+    assert!(!tmp.root.join(".wm").join("FLOOR.md").exists());
+    assert!(!tmp.root.join(".wm").exists());
+}
+
+#[test]
+fn web_close_without_slug_body_is_the_refusal() {
+    let tmp = Tmp::new();
+    let srv = start_web(&tmp.root);
+    let started = Instant::now();
+    let (status, headers, body) = post_act(&srv.addr, "/act/close", r#"{"args":[]}"#);
+    assert!(
+        started.elapsed() < Duration::from_secs(4),
+        "close waited {:?}",
+        started.elapsed()
+    );
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_ne!(status, 504);
+    assert!(
+        headers.lines().any(|l| l == "X-Crucible-Exit: 2"),
+        "{headers}"
+    );
+    assert_eq!(body, b"crucible: need a slug\n");
+    assert!(!tmp.root.join("items").exists());
 }
 
 fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
@@ -2123,7 +2276,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.20.1");
+    assert_eq!(health["version"], "1.21.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2427,7 +2580,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.20.1"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.21.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"

@@ -1,7 +1,8 @@
 //! Loopback web camera. It serves a page and proxies GET `/walk`, `/stats`, and
 //! `/health`. It appends `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` spawns
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
-//! spawns that verb and waits. `POST /go` is not a walk.
+//! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
+//! `POST /act/close` and bare `POST /act/status` wait. `POST /go` is not a walk.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
@@ -27,7 +28,12 @@ const BACKLOG_HEADER: &str = "id\tsize\trisk\tidea_path\tstatus";
 
 fn page_html() -> String {
     let mut buttons = String::new();
-    for act in web_page_acts() {
+    // Read buttons, then the status --json button, then WEB_WRITERS.
+    let run_at = WEB_READ_ONLY.len() + 1;
+    for (i, act) in web_page_acts().into_iter().enumerate() {
+        if i == run_at {
+            buttons.push_str("<h2>Run</h2>\n");
+        }
         let verb = act.verb;
         let args_json = serde_json::to_string(act.args).unwrap_or_else(|_| "[]".to_string());
         let data_args = args_json
@@ -315,12 +321,29 @@ pub const WEB_READ_ONLY: &[&str] = &[
     "workid",
 ];
 
-/// `status` is not in `WEB_READ_ONLY`: bare status writes `.wm/FLOOR.md`.
+/// Verbs the page may spawn that write. Not part of `WEB_READ_ONLY`.
+/// `scripts/selftest.sh` parses this const. One name per line.
+#[rustfmt::skip]
+pub const WEB_WRITERS: &[&str] = &[
+    "adopt",
+    "close",
+    "drive",
+    "status",
+];
+
+/// Read-only verbs allow any args. `adopt`, `close`, and `drive` allow any
+/// args the JSON parser accepted. `status` allows only `[]` or `["--json"]`.
 pub fn web_act_allowed(verb: &str, args: &[String]) -> bool {
     if WEB_READ_ONLY.contains(&verb) {
         return true;
     }
-    verb == "status" && args.len() == 1 && args[0] == "--json"
+    if !WEB_WRITERS.contains(&verb) {
+        return false;
+    }
+    if verb == "status" {
+        return args.is_empty() || (args.len() == 1 && args[0] == "--json");
+    }
+    true
 }
 
 pub struct WebAct {
@@ -329,7 +352,7 @@ pub struct WebAct {
 }
 
 pub fn web_page_acts() -> Vec<WebAct> {
-    let mut acts = Vec::with_capacity(WEB_READ_ONLY.len() + 1);
+    let mut acts = Vec::with_capacity(WEB_READ_ONLY.len() + 1 + WEB_WRITERS.len());
     for verb in WEB_READ_ONLY {
         let args: &'static [&'static str] = if *verb == "stats" {
             &["--since", "24h", "--json"]
@@ -342,6 +365,14 @@ pub fn web_page_acts() -> Vec<WebAct> {
         verb: "status",
         args: &["--json"],
     });
+    for verb in WEB_WRITERS {
+        let args: &'static [&'static str] = if *verb == "adopt" {
+            &["--managed"]
+        } else {
+            &[]
+        };
+        acts.push(WebAct { verb, args });
+    }
     acts
 }
 
@@ -488,6 +519,17 @@ fn post_read(
     };
     if !web_act_allowed(verb, &args) {
         return write_resp(stream, 404, "text/plain", "not found\n", false);
+    }
+    // drive and adopt can outlive the 5-second wait and would freeze the
+    // single accept thread. 200 means the process group exists.
+    if verb == "drive" || verb == "adopt" {
+        return match spawn_detached(exe, cwd, verb, &args) {
+            Ok(pid) => {
+                let _ = writeln!(io::stderr(), "web act: verb={verb} pid={pid}");
+                write_resp(stream, 200, "application/json", &pid_json(pid), false)
+            }
+            Err(()) => write_resp(stream, 500, "text/plain", "spawn failed\n", false),
+        };
     }
     match spawn_read(exe, cwd, verb, &args) {
         Ok(output) => {
@@ -697,8 +739,13 @@ fn pid_json(pid: u32) -> String {
 }
 
 fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, ()> {
+    spawn_detached(exe, cwd, "go", &[])
+}
+
+fn spawn_detached(exe: &Path, cwd: &Path, verb: &str, args: &[String]) -> Result<u32, ()> {
     let mut cmd = Command::new(exe);
-    cmd.arg("go")
+    cmd.arg(verb)
+        .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -711,7 +758,7 @@ fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, ()> {
     }
     let child = cmd.spawn().map_err(|_| ())?;
     let pid = child.id();
-    // Reap off the request thread. Waiting here would be the walk; dropping
+    // Reap off the request thread. Waiting here would hold the camera; dropping
     // the child would leave a zombie for the life of the camera.
     thread::spawn(move || {
         let mut child = child;
@@ -738,7 +785,7 @@ fn spawn_read(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // No process_group. This child is not `go`.
+    // No process_group. drive and adopt detach in spawn_detached.
     let mut child = cmd.spawn().map_err(|_| ReadSpawn::Spawn)?;
     let (Some(mut stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
@@ -1110,7 +1157,7 @@ mod tests {
         let path = dir.join("sleeper.sh");
         write_exec(
             &path,
-            "#!/bin/sh\nprintf '%s\\n' \"$1\" > ARGV\nprintf '%s\\n' \"$$\" > SPAWNED\nexec sleep 30\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" > ARGV\nprintf '%s\\n' \"$*\" > ARGV_ALL\nprintf '%s\\n' \"$$\" > SPAWNED\nexec sleep 30\n",
         );
         path
     }
@@ -1362,6 +1409,27 @@ mod tests {
         }
         assert!(body.contains(">stats --since 24h --json<"));
         assert!(body.contains(">status --json<"));
+        assert!(body.contains(">status<"));
+        assert!(body.contains("<h2>Run</h2>"));
+        assert!(body.contains("data-verb=\"close\""));
+        assert!(body.contains("data-verb=\"drive\""));
+        assert!(body.contains("data-verb=\"adopt\""));
+        assert!(body.contains("data-args=\"[&quot;--managed&quot;]\""));
+        assert!(body.contains(">adopt --managed<"));
+        let read_at = body.find(">Read<").unwrap();
+        let run_at = body.find("<h2>Run</h2>").unwrap();
+        let adopt_at = body.find("data-verb=\"adopt\"").unwrap();
+        let close_at = body.find("data-verb=\"close\"").unwrap();
+        let drive_at = body.find("data-verb=\"drive\"").unwrap();
+        let args_at = body.find("id=\"read-args\"").unwrap();
+        let first_status = body.find("data-verb=\"status\"").unwrap();
+        let bare_status = body[first_status + 1..]
+            .find("data-verb=\"status\"")
+            .map(|off| off + first_status + 1)
+            .unwrap();
+        assert!(read_at < run_at && run_at < adopt_at && adopt_at < args_at);
+        assert!(first_status < run_at);
+        assert!(adopt_at < close_at && close_at < drive_at && drive_at < bare_status);
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
         assert_eq!(code, 200, "{body}");
         assert!(body.contains("NEXT RED"), "{body}");
@@ -1887,6 +1955,17 @@ mod tests {
             !read_fn.contains("process_group("),
             "spawn_read must not call process_group"
         );
+        let detached = prod
+            .split_once("fn spawn_detached")
+            .expect("spawn_detached")
+            .1
+            .split_once("\nfn ")
+            .expect("fn after spawn_detached")
+            .0;
+        assert!(
+            detached.contains("process_group(0)"),
+            "process_group(0) stays inside spawn_detached"
+        );
     }
 
     fn recorder(dir: &Path) -> PathBuf {
@@ -1914,21 +1993,15 @@ mod tests {
             &["--since".into(), "24h".into(), "--json".into()]
         ));
         assert!(web_act_allowed("status", &["--json".into()]));
-        assert!(!web_act_allowed("status", &[]));
-        assert!(!web_act_allowed(
-            "status",
-            &["--json".into(), "extra".into()]
-        ));
-        for verb in [
-            "close",
-            "drive",
-            "adopt",
-            "go",
-            "state",
-            "target",
-            "brief",
-            "lifecycle",
-        ] {
+        assert!(web_act_allowed("status", &[]));
+        assert!(!web_act_allowed("status", &["--json".into(), "x".into()]));
+        assert!(!web_act_allowed("status", &["".into()]));
+        assert!(!web_act_allowed("status", &["--json".into(), "".into()]));
+        assert_eq!(WEB_WRITERS, &["adopt", "close", "drive", "status"][..]);
+        for verb in ["close", "drive", "adopt"] {
+            assert!(web_act_allowed(verb, &[]), "{verb}");
+        }
+        for verb in ["go", "state", "target", "brief", "lifecycle"] {
             assert!(!web_act_allowed(verb, &[]), "{verb}");
             assert!(!web_act_allowed(verb, &["status".into()]), "{verb}");
         }
@@ -1965,8 +2038,12 @@ mod tests {
     fn act_status_without_json_is_404() {
         let tmp = Tmp::new();
         let exe = recorder(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 4);
-        for body in [r#"{}"#, r#"{"args":[]}"#, r#"{"args":["--json","extra"]}"#] {
+        let addr = start_server(&tmp.root, &exe, 6);
+        for body in [
+            r#"{"args":["--json","x"]}"#,
+            r#"{"args":[""]}"#,
+            r#"{"args":["--json",""]}"#,
+        ] {
             let (code, _, resp) = exchange(
                 &addr,
                 &act_request("/act/status", body, "application/json", Some("1")),
@@ -1974,6 +2051,17 @@ mod tests {
             assert_eq!(code, 404, "{body} -> {resp}");
             assert_eq!(resp, "not found\n");
             assert!(argv_all(&tmp.root).is_none(), "{body} spawned");
+        }
+        for body in [r#"{}"#, r#"{"args":[]}"#] {
+            let (code, headers, resp) = exchange(
+                &addr,
+                &act_request("/act/status", body, "application/json", Some("1")),
+            );
+            assert_eq!(code, 200, "{body} -> {headers} {resp}");
+            assert_eq!(resp, "stdout:status\n");
+            assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+            assert_eq!(argv_all(&tmp.root).unwrap().trim(), "status");
+            fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
         }
         let (code, headers, body) = exchange(
             &addr,
@@ -1994,7 +2082,7 @@ mod tests {
     fn act_close_is_404() {
         let tmp = Tmp::new();
         let exe = recorder(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 2);
+        let addr = start_server(&tmp.root, &exe, 3);
         let (code, headers, body) = exchange(
             &addr,
             &act_request(
@@ -2004,15 +2092,144 @@ mod tests {
                 Some("1"),
             ),
         );
-        assert_eq!(code, 404, "{body}");
-        assert_eq!(body, "not found\n");
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:close\n");
+        assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("content-type: text/plain; charset=utf-8"),
+            "{headers}"
+        );
         assert_no_cors(&headers);
-        assert!(argv_all(&tmp.root).is_none());
+        assert_eq!(argv_all(&tmp.root).unwrap().trim(), "close");
+        fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
         let (code, headers, body) = exchange(&addr, &simple("GET", "/act/close"));
         assert_eq!(code, 404, "{body}");
         assert_eq!(body, "not found\n");
         assert_no_cors(&headers);
         assert!(argv_all(&tmp.root).is_none());
+        let (code, _, body) = exchange(&addr, &simple("HEAD", "/act/close"));
+        assert_eq!(code, 404, "{body}");
+        assert!(argv_all(&tmp.root).is_none());
+    }
+
+    #[test]
+    fn act_state_target_brief_lifecycle_do_not_spawn() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 8);
+        for verb in ["state", "target", "brief", "lifecycle"] {
+            for json in [r#"{"args":[]}"#, r#"{"args":["x"]}"#] {
+                let (code, _, body) = exchange(
+                    &addr,
+                    &act_request(&format!("/act/{verb}"), json, "application/json", Some("1")),
+                );
+                assert_eq!(code, 404, "{verb} {json} -> {body}");
+                assert_eq!(body, "not found\n");
+                assert!(argv_all(&tmp.root).is_none(), "{verb} {json} spawned");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn assert_detached_sleeper(path: &str, json: &str, argv: &str) {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let started = std::time::Instant::now();
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(path, json, "application/json", Some("1")),
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{path} waited {:?}",
+            started.elapsed()
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert!(!headers.contains("X-Crucible-Exit"), "{headers}");
+        assert!(
+            headers.to_ascii_lowercase().contains("application/json"),
+            "{headers}"
+        );
+        assert_no_cors(&headers);
+        let v: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
+        let pid = v["pid"].as_u64().expect("pid number") as u32;
+        assert_eq!(body, format!("{{\"pid\":{pid}}}\n"));
+        assert!(v["pid"].as_str().is_none());
+        let web_pid = std::process::id();
+        assert_ne!(pid, web_pid);
+        let mut recorded = None;
+        for _ in 0..50 {
+            if let Ok(text) = fs::read_to_string(tmp.root.join("ARGV_ALL")) {
+                if !text.trim().is_empty() {
+                    recorded = Some(text);
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(recorded.expect("argv").trim(), argv);
+        let mut spawned = None;
+        for _ in 0..50 {
+            if let Ok(text) = fs::read_to_string(tmp.root.join("SPAWNED")) {
+                if let Ok(n) = text.trim().parse::<u32>() {
+                    spawned = Some(n);
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(spawned, Some(pid), "spawned pid must be the returned pgid");
+        let child = ps_fields(pid).expect("child still alive after 200");
+        let me = ps_fields(web_pid).expect("web process");
+        assert_eq!(child.0, pid, "process_group(0) makes the child the leader");
+        assert_ne!(child.0, me.0, "group kill must not include the camera");
+        assert!(
+            matches!(child.1.as_bytes().first(), Some(b'S' | b'R' | b'I' | b'U')),
+            "200 must not mean the child finished: {}",
+            child.1
+        );
+        let st = Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .status()
+            .unwrap();
+        assert!(st.success(), "kill -TERM -{pid}");
+        let mut dead = false;
+        for _ in 0..50 {
+            match ps_fields(pid) {
+                None => {
+                    dead = true;
+                    break;
+                }
+                Some((_, state)) if state.starts_with('Z') => {
+                    dead = true;
+                    break;
+                }
+                _ => thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        assert!(dead, "child still running after kill -TERM -{pid}");
+        assert!(ps_fields(web_pid).is_some(), "web process gone");
+        let alive = Command::new("kill")
+            .args(["-0", &web_pid.to_string()])
+            .status()
+            .unwrap();
+        assert!(alive.success(), "web process died with the child group");
+        assert!(!tmp.root.join(".crucible").exists(), "must not copy a tree");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn act_drive_detaches_and_stays_alive() {
+        assert_detached_sleeper("/act/drive", r#"{"args":[]}"#, "drive");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn act_adopt_detaches_and_does_not_copy() {
+        assert_detached_sleeper("/act/adopt", r#"{"args":["--managed"]}"#, "adopt --managed");
     }
 
     #[test]

@@ -10,6 +10,12 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.21.0 — page writers
+
+The page on `127.0.0.1:1735` adds `adopt --managed`, `close`, `drive`, and
+bare `status`. It does not choose the next step. `drive` and `adopt` show a
+pid, not the CLI paragraph. `POST /go` stays unavailable.
+
 ## 1.20.1 — debrief refusal on the page
 
 `debrief` with no `.wm/FLOOR.md` prints `no FLOOR.md (run go or status)` on
