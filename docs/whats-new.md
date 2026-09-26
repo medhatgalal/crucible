@@ -10,6 +10,13 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.23.0 — evidence archive
+
+The page waits on `evidence`. A click (`[]`) writes nothing and shows exit 2
+with an empty body. Typed `archive SLUG` creates `history` and renames
+non-dot stale `*.txt`. A kill mid-loop can leave some of those files already
+renamed. `run` and `run-claim` stay off. Kernel `POST /go` stays 405.
+
 ## 1.22.0 — state, target, brief, lifecycle
 
 The page on `127.0.0.1:1735` spawns `state`, `target`, `brief`, and

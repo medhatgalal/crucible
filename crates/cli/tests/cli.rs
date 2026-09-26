@@ -563,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.22.0");
+    assert_eq!(ver_before.trim(), "1.23.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -580,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.22.0");
+    assert_eq!(want, "1.23.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -2292,6 +2292,110 @@ fn web_lifecycle_enable_apply_writes_managed_files() {
     );
 }
 
+#[test]
+fn web_evidence_click_writes_nothing_and_archive_moves_stale_txt() {
+    let tmp = Tmp::new();
+    let evidence = tmp.root.join("items/slug/evidence");
+    fs::create_dir_all(&evidence).unwrap();
+    let stale = b"stale-bytes\n";
+    fs::write(evidence.join("stale.tok.DEAD.txt"), stale).unwrap();
+    fs::write(evidence.join("kept.tok.EMPTY.txt"), b"kept\n").unwrap();
+    fs::write(evidence.join(".partial.hidden.txt"), b"hidden\n").unwrap();
+    fs::write(evidence.join("notes.md"), b"notes\n").unwrap();
+    fs::write(tmp.root.join("agents.tsv"), "a1\tkindA\tm\thigh\ttrue\n").unwrap();
+    fs::create_dir_all(tmp.root.join("claims/C1")).unwrap();
+    assert!(!tmp.root.join("PROGRAM").exists());
+    assert!(!tmp.root.join("items/slug/TARGET").exists());
+    assert!(!tmp.root.join("items/slug/work").exists());
+
+    let srv = start_web(&tmp.root);
+    let (status, headers, body) = post_act(&srv.addr, "/act/evidence", r#"{"args":[]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "2");
+    assert!(body.is_empty(), "{body:?}");
+    let text = String::from_utf8_lossy(&body);
+    assert!(!text.contains("crucible:"), "{text}");
+    assert!(!text.contains("archived"), "{text}");
+    assert!(!evidence.join("history").exists());
+    assert!(evidence.join("stale.tok.DEAD.txt").is_file());
+    assert_eq!(
+        entry_names(&evidence),
+        vec![
+            ".partial.hidden.txt".to_string(),
+            "kept.tok.EMPTY.txt".to_string(),
+            "notes.md".to_string(),
+            "stale.tok.DEAD.txt".to_string(),
+        ]
+    );
+
+    let (status, headers, body) =
+        post_act(&srv.addr, "/act/evidence", r#"{"args":["archive","slug"]}"#);
+    assert_eq!(status, 200, "{headers} body={body:?}");
+    assert_exit(&headers, "0");
+    let text = String::from_utf8(body).unwrap();
+    assert!(
+        text.contains("archived stale.tok.DEAD.txt (work-id DEAD, current EMPTY)"),
+        "{text}"
+    );
+    let archived = evidence.join("history/stale.tok.DEAD.txt");
+    assert_eq!(fs::read(&archived).unwrap(), stale);
+    assert!(!evidence.join("stale.tok.DEAD.txt").exists());
+    assert_eq!(
+        fs::read(evidence.join("kept.tok.EMPTY.txt")).unwrap(),
+        b"kept\n"
+    );
+    assert_eq!(
+        fs::read(evidence.join(".partial.hidden.txt")).unwrap(),
+        b"hidden\n"
+    );
+    assert_eq!(fs::read(evidence.join("notes.md")).unwrap(), b"notes\n");
+    assert!(!evidence.join("history/kept.tok.EMPTY.txt").exists());
+    assert!(!evidence.join("history/.partial.hidden.txt").exists());
+    assert!(!evidence.join("history/notes.md").exists());
+    let after_archive = vec![
+        ".partial.hidden.txt".to_string(),
+        "history".to_string(),
+        "kept.tok.EMPTY.txt".to_string(),
+        "notes.md".to_string(),
+    ];
+    assert_eq!(entry_names(&evidence), after_archive);
+    assert_eq!(
+        entry_names(&evidence.join("history")),
+        vec!["stale.tok.DEAD.txt".to_string()]
+    );
+
+    for (path, json) in [
+        (
+            "/act/run",
+            r#"{"args":["slug","a1","--","/bin/echo","hi"]}"#,
+        ),
+        (
+            "/act/run-claim",
+            r#"{"args":["C1","a1","--","/bin/echo","hi"]}"#,
+        ),
+    ] {
+        let (status, headers, body) = post_act(&srv.addr, path, json);
+        assert_eq!(status, 404, "{path} {headers} body={body:?}");
+        assert_eq!(body, b"not found\n");
+    }
+    assert_eq!(entry_names(&evidence), after_archive);
+    assert_eq!(
+        entry_names(&evidence.join("history")),
+        vec!["stale.tok.DEAD.txt".to_string()]
+    );
+    assert_eq!(fs::read(&archived).unwrap(), stale);
+    assert!(!tmp.root.join("claims/C1/evidence").exists());
+    assert!(entry_names(&tmp.root.join("claims/C1")).is_empty());
+    assert_eq!(
+        entry_names(&tmp.root),
+        vec![
+            "agents.tsv".to_string(),
+            "claims".to_string(),
+            "items".to_string(),
+        ]
+    );
+}
+
 fn wait_exit(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus> {
     let deadline = Instant::now() + timeout;
     loop {
@@ -2498,7 +2602,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.22.0");
+    assert_eq!(health["version"], "1.23.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2802,7 +2906,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.22.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.23.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"

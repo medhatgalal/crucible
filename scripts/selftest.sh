@@ -609,7 +609,7 @@ else
   [ -z "$missing_arm" ] && ok "WEB_READ_ONLY is $n_allow dispatch_verb arms" \
     || bad "WEB_READ_ONLY names are not dispatch arms:$missing_arm"
   denied=""
-  for v in status close drive adopt go brief target state lifecycle serve room web doctor selftest help cycle claim; do
+  for v in status close drive adopt go brief target state lifecycle evidence run run-claim serve room web doctor selftest help cycle claim; do
     printf '%s\n' "$web_allow" | grep -qx "$v" && denied="$denied $v"
   done
   [ -z "$denied" ] && ok "WEB_READ_ONLY has no writer or walk verb" \
@@ -647,8 +647,8 @@ else
   [ -z "$missing_arm" ] && ok "WEB_WRITERS is $n_writers dispatch_verb arms" \
     || bad "WEB_WRITERS names are not dispatch arms:$missing_arm"
   got=$(printf '%s\n' $web_writers | sort)
-  want=$(printf '%s\n' adopt brief close drive lifecycle state status target | sort)
-  [ "$got" = "$want" ] && ok "WEB_WRITERS is exactly adopt brief close drive lifecycle state status target" \
+  want=$(printf '%s\n' adopt brief close drive evidence lifecycle state status target | sort)
+  [ "$got" = "$want" ] && ok "WEB_WRITERS is exactly adopt brief close drive evidence lifecycle state status target" \
     || bad "WEB_WRITERS set is '$got'"
   if [ "$n_allow" -ge 1 ]; then
     overlap=""

@@ -3,7 +3,8 @@
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
 //! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
 //! `POST /act/close`, bare `POST /act/status`, `POST /act/state`,
-//! `POST /act/target`, `POST /act/brief`, and `POST /act/lifecycle` wait.
+//! `POST /act/target`, `POST /act/brief`, `POST /act/lifecycle`, and
+//! `POST /act/evidence` wait.
 //! `POST /go` is not a walk.
 
 use std::fs::{self, OpenOptions};
@@ -331,6 +332,7 @@ pub const WEB_WRITERS: &[&str] = &[
     "brief",
     "close",
     "drive",
+    "evidence",
     "lifecycle",
     "state",
     "status",
@@ -1433,12 +1435,16 @@ mod tests {
         assert!(body.contains("data-verb=\"state\" data-args=\"[]\""));
         assert!(body.contains("data-verb=\"target\" data-args=\"[]\""));
         assert!(body.contains("data-verb=\"brief\" data-args=\"[]\""));
+        assert!(body.contains("data-verb=\"evidence\" data-args=\"[]\""));
+        assert!(body.contains(">evidence<"));
+        assert!(!body.contains("data-verb=\"run\""));
         let read_at = body.find(">Read<").unwrap();
         let run_at = body.find("<h2>Run</h2>").unwrap();
         let adopt_at = body.find("data-verb=\"adopt\"").unwrap();
         let brief_at = body.find("data-verb=\"brief\"").unwrap();
         let close_at = body.find("data-verb=\"close\"").unwrap();
         let drive_at = body.find("data-verb=\"drive\"").unwrap();
+        let evidence_at = body.find("data-verb=\"evidence\"").unwrap();
         let lifecycle_at = body.find("data-verb=\"lifecycle\"").unwrap();
         let state_at = body.find("data-verb=\"state\"").unwrap();
         let target_at = body.find("data-verb=\"target\"").unwrap();
@@ -1451,7 +1457,7 @@ mod tests {
         assert!(read_at < run_at && run_at < adopt_at && adopt_at < args_at);
         assert!(first_status < run_at);
         assert!(adopt_at < brief_at && brief_at < close_at && close_at < drive_at);
-        assert!(drive_at < lifecycle_at && lifecycle_at < state_at);
+        assert!(drive_at < evidence_at && evidence_at < lifecycle_at && lifecycle_at < state_at);
         assert!(state_at < bare_status && bare_status < target_at);
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
         assert_eq!(code, 200, "{body}");
@@ -2027,16 +2033,21 @@ mod tests {
                 "brief",
                 "close",
                 "drive",
+                "evidence",
                 "lifecycle",
                 "state",
                 "status",
                 "target",
             ][..]
         );
-        for verb in ["state", "target", "brief", "lifecycle"] {
+        for verb in ["state", "target", "brief", "lifecycle", "evidence"] {
             assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
             assert!(web_act_allowed(verb, &[]), "{verb}");
         }
+        assert!(web_act_allowed(
+            "evidence",
+            &["archive".into(), "slug".into()]
+        ));
         assert!(web_act_allowed("lifecycle", &["status".into()]));
         assert!(web_act_allowed(
             "lifecycle",
@@ -2045,7 +2056,7 @@ mod tests {
         for verb in ["close", "drive", "adopt"] {
             assert!(web_act_allowed(verb, &[]), "{verb}");
         }
-        for verb in ["go", "evidence", "run", "run-claim"] {
+        for verb in ["go", "run", "run-claim"] {
             assert!(!web_act_allowed(verb, &[]), "{verb}");
             assert!(!web_act_allowed(verb, &["status".into()]), "{verb}");
         }
@@ -2213,7 +2224,26 @@ mod tests {
         );
         assert_eq!(argv_all(&tmp.root).unwrap().trim(), "lifecycle status");
         fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
-        for verb in ["evidence", "run", "run-claim"] {
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/evidence",
+                r#"{"args":[]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:evidence\n");
+        assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+        assert!(
+            !body.starts_with('{'),
+            "evidence must not be pid JSON: {body}"
+        );
+        assert_eq!(argv_all(&tmp.root).unwrap().trim(), "evidence");
+        assert!(!tmp.root.join("history").exists());
+        fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
+        for verb in ["run", "run-claim"] {
             let (code, _, resp) = exchange(
                 &addr,
                 &act_request(

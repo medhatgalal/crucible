@@ -33,3 +33,7 @@ The page may `POST /act/close`, `POST /act/drive`, `POST /act/adopt`, and `POST 
 ## Addendum (2026-09-26)
 
 The page may `POST /act/state`, `POST /act/target`, `POST /act/brief`, and `POST /act/lifecycle`.
+
+## Addendum (2026-09-26)
+
+The page may archive evidence and must not spawn `run` or `run-claim`.
