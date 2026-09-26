@@ -2,7 +2,9 @@
 //! `/health`. It appends `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` spawns
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
 //! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
-//! `POST /act/close` and bare `POST /act/status` wait. `POST /go` is not a walk.
+//! `POST /act/close`, bare `POST /act/status`, `POST /act/state`,
+//! `POST /act/target`, `POST /act/brief`, and `POST /act/lifecycle` wait.
+//! `POST /go` is not a walk.
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, ErrorKind, Read, Write};
@@ -326,12 +328,16 @@ pub const WEB_READ_ONLY: &[&str] = &[
 #[rustfmt::skip]
 pub const WEB_WRITERS: &[&str] = &[
     "adopt",
+    "brief",
     "close",
     "drive",
+    "lifecycle",
+    "state",
     "status",
+    "target",
 ];
 
-/// Read-only verbs allow any args. `adopt`, `close`, and `drive` allow any
+/// Read-only verbs allow any args. Writers other than `status` allow any
 /// args the JSON parser accepted. `status` allows only `[]` or `["--json"]`.
 pub fn web_act_allowed(verb: &str, args: &[String]) -> bool {
     if WEB_READ_ONLY.contains(&verb) {
@@ -368,6 +374,8 @@ pub fn web_page_acts() -> Vec<WebAct> {
     for verb in WEB_WRITERS {
         let args: &'static [&'static str] = if *verb == "adopt" {
             &["--managed"]
+        } else if *verb == "lifecycle" {
+            &["status"]
         } else {
             &[]
         };
@@ -1414,13 +1422,26 @@ mod tests {
         assert!(body.contains("data-verb=\"close\""));
         assert!(body.contains("data-verb=\"drive\""));
         assert!(body.contains("data-verb=\"adopt\""));
+        assert!(body.contains("data-verb=\"brief\""));
+        assert!(body.contains("data-verb=\"lifecycle\""));
+        assert!(body.contains("data-verb=\"state\""));
+        assert!(body.contains("data-verb=\"target\""));
         assert!(body.contains("data-args=\"[&quot;--managed&quot;]\""));
         assert!(body.contains(">adopt --managed<"));
+        assert!(body.contains("data-args=\"[&quot;status&quot;]\""));
+        assert!(body.contains(">lifecycle status<"));
+        assert!(body.contains("data-verb=\"state\" data-args=\"[]\""));
+        assert!(body.contains("data-verb=\"target\" data-args=\"[]\""));
+        assert!(body.contains("data-verb=\"brief\" data-args=\"[]\""));
         let read_at = body.find(">Read<").unwrap();
         let run_at = body.find("<h2>Run</h2>").unwrap();
         let adopt_at = body.find("data-verb=\"adopt\"").unwrap();
+        let brief_at = body.find("data-verb=\"brief\"").unwrap();
         let close_at = body.find("data-verb=\"close\"").unwrap();
         let drive_at = body.find("data-verb=\"drive\"").unwrap();
+        let lifecycle_at = body.find("data-verb=\"lifecycle\"").unwrap();
+        let state_at = body.find("data-verb=\"state\"").unwrap();
+        let target_at = body.find("data-verb=\"target\"").unwrap();
         let args_at = body.find("id=\"read-args\"").unwrap();
         let first_status = body.find("data-verb=\"status\"").unwrap();
         let bare_status = body[first_status + 1..]
@@ -1429,7 +1450,9 @@ mod tests {
             .unwrap();
         assert!(read_at < run_at && run_at < adopt_at && adopt_at < args_at);
         assert!(first_status < run_at);
-        assert!(adopt_at < close_at && close_at < drive_at && drive_at < bare_status);
+        assert!(adopt_at < brief_at && brief_at < close_at && close_at < drive_at);
+        assert!(drive_at < lifecycle_at && lifecycle_at < state_at);
+        assert!(state_at < bare_status && bare_status < target_at);
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
         assert_eq!(code, 200, "{body}");
         assert!(body.contains("NEXT RED"), "{body}");
@@ -1997,11 +2020,32 @@ mod tests {
         assert!(!web_act_allowed("status", &["--json".into(), "x".into()]));
         assert!(!web_act_allowed("status", &["".into()]));
         assert!(!web_act_allowed("status", &["--json".into(), "".into()]));
-        assert_eq!(WEB_WRITERS, &["adopt", "close", "drive", "status"][..]);
+        assert_eq!(
+            WEB_WRITERS,
+            &[
+                "adopt",
+                "brief",
+                "close",
+                "drive",
+                "lifecycle",
+                "state",
+                "status",
+                "target",
+            ][..]
+        );
+        for verb in ["state", "target", "brief", "lifecycle"] {
+            assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
+            assert!(web_act_allowed(verb, &[]), "{verb}");
+        }
+        assert!(web_act_allowed("lifecycle", &["status".into()]));
+        assert!(web_act_allowed(
+            "lifecycle",
+            &["enable".into(), "--apply".into()]
+        ));
         for verb in ["close", "drive", "adopt"] {
             assert!(web_act_allowed(verb, &[]), "{verb}");
         }
-        for verb in ["go", "state", "target", "brief", "lifecycle"] {
+        for verb in ["go", "evidence", "run", "run-claim"] {
             assert!(!web_act_allowed(verb, &[]), "{verb}");
             assert!(!web_act_allowed(verb, &["status".into()]), "{verb}");
         }
@@ -2115,20 +2159,73 @@ mod tests {
     }
 
     #[test]
-    fn act_state_target_brief_lifecycle_do_not_spawn() {
+    fn act_state_target_brief_lifecycle_are_waited() {
         let tmp = Tmp::new();
         let exe = recorder(&tmp.root);
         let addr = start_server(&tmp.root, &exe, 8);
-        for verb in ["state", "target", "brief", "lifecycle"] {
-            for json in [r#"{"args":[]}"#, r#"{"args":["x"]}"#] {
-                let (code, _, body) = exchange(
-                    &addr,
-                    &act_request(&format!("/act/{verb}"), json, "application/json", Some("1")),
-                );
-                assert_eq!(code, 404, "{verb} {json} -> {body}");
-                assert_eq!(body, "not found\n");
-                assert!(argv_all(&tmp.root).is_none(), "{verb} {json} spawned");
-            }
+        for verb in ["state", "target", "brief"] {
+            let (code, headers, body) = exchange(
+                &addr,
+                &act_request(
+                    &format!("/act/{verb}"),
+                    r#"{"args":[]}"#,
+                    "application/json",
+                    Some("1"),
+                ),
+            );
+            assert_eq!(code, 200, "{verb} {headers} {body}");
+            assert_eq!(body, format!("stdout:{verb}\n"));
+            assert!(headers.contains("X-Crucible-Exit: 0"), "{verb} {headers}");
+            assert!(
+                headers
+                    .to_ascii_lowercase()
+                    .contains("content-type: text/plain"),
+                "{verb} {headers}"
+            );
+            assert!(
+                !body.starts_with('{'),
+                "{verb} must not be pid JSON: {body}"
+            );
+            assert_eq!(argv_all(&tmp.root).unwrap().trim(), verb);
+            fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
+        }
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/lifecycle",
+                r#"{"args":["status"]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:lifecycle\n");
+        assert!(headers.contains("X-Crucible-Exit: 0"), "{headers}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("content-type: text/plain"),
+            "{headers}"
+        );
+        assert!(
+            !body.starts_with('{'),
+            "lifecycle must not be pid JSON: {body}"
+        );
+        assert_eq!(argv_all(&tmp.root).unwrap().trim(), "lifecycle status");
+        fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
+        for verb in ["evidence", "run", "run-claim"] {
+            let (code, _, resp) = exchange(
+                &addr,
+                &act_request(
+                    &format!("/act/{verb}"),
+                    r#"{"args":[]}"#,
+                    "application/json",
+                    Some("1"),
+                ),
+            );
+            assert_eq!(code, 404, "{verb} -> {resp}");
+            assert_eq!(resp, "not found\n");
+            assert!(argv_all(&tmp.root).is_none(), "{verb} spawned");
         }
     }
 

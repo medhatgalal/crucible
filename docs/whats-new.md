@@ -10,6 +10,15 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.22.0 — state, target, brief, lifecycle
+
+The page on `127.0.0.1:1735` spawns `state`, `target`, `brief`, and
+`lifecycle` from `WEB_WRITERS` and waits 5 seconds. A `state` click (`[]`)
+rewrites `STATE.md` when lifecycle is managed and writes nothing when it is
+not. `target` `[]`, `brief` `[]`, and `lifecycle` `["status"]` write nothing.
+`evidence`, `run`, and `run-claim` stay off the page. `POST /go` stays
+unavailable.
+
 ## 1.21.0 — page writers
 
 The page on `127.0.0.1:1735` adds `adopt --managed`, `close`, `drive`, and

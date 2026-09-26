@@ -29,3 +29,7 @@ are not in the allowlist (`state`, `target`, `brief`, and `lifecycle`).
 ## Addendum (2026-09-25)
 
 The page may `POST /act/close`, `POST /act/drive`, `POST /act/adopt`, and `POST /act/status` with args `[]`, from `crucible_web::WEB_WRITERS`. `status --json` stays the read-only allow. `drive` and `adopt` are detached process groups and return pid JSON. `close` and bare `status` wait up to 5 seconds and return stdout. The web process still does not write FLOOR, BACKLOG, or CHAT except through the backlog and chat handlers. The children may write. `POST /go` on `crucible serve` stays 405. `POST /act/go` is unchanged. The page does not choose the next step. `state`, `target`, `brief`, and `lifecycle` stay off the page.
+
+## Addendum (2026-09-26)
+
+The page may `POST /act/state`, `POST /act/target`, `POST /act/brief`, and `POST /act/lifecycle`.
