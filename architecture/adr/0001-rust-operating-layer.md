@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-21
 - **Status:** Accepted
-- **Product VERSION:** 1.23.1. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This docs correction bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
+- **Product VERSION:** 1.24.0. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This room change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
 
 Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run `/crucible` intake and `go` until `CLOSED` / `STOP-ASK` / `ESCALATE`.
 
@@ -12,7 +12,7 @@ This ADR freezes D1–D22. Living spec is `crates/contract` tests, verify-workin
 
 ## Current tree (main)
 
-Honest snapshot of this repo at **1.23.1**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.23.1.
+Honest snapshot of this repo at **1.24.0**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.24.0.
 
 | Piece | On main now |
 | --- | --- |
@@ -21,7 +21,7 @@ Honest snapshot of this repo at **1.23.1**. Rust working-mode has already cut ov
 | Wrapper | Repo-root `wm.sh` is the exec shim: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
 | Guided | Rust (`crates/guided`), dispatched by the `crucible` binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN` or `target/release/crucible`). `crucible-guided` only execs the sibling binary. Not a second kernel. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
-| Room | Landed (`crates/room`): `crucible room` probes `GET /health` on `127.0.0.1:1734` before listen. Matching VERSION is reused. Only connection refused spawns this binary's `serve`. External herdr; standing roles. Help lists `room` and `doctor`. |
+| Room | Landed (`crates/room`): `crucible room` joins one existing Herdr workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, ensured only when absent. No pane-run. Serve on `127.0.0.1:1734` is unchanged: matching VERSION is reused; only connection refused spawns this binary's `serve`. Help lists `room` and `doctor`. |
 | Doctor | `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` when it is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15) and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Never `$HOME` in CI. |
 | Web | Landed (`crates/web`): `crucible web` proxies GET `/walk` `/stats` `/health`. The web process may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. Not a second kernel (ADR 0002). Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. `state`, `target`, `brief`, and `lifecycle` may run as waited children under the ADR 0002 addendum. |
 | Skill copies | Canonical `skills/<name>`. Real copies, not symlinks: `.grok/skills`, `.claude/skills`, `.agents/skills`, `.kiro/skills`. Codex uses `.agents/skills` (no `.codex/skills` tree). |
@@ -29,7 +29,7 @@ Honest snapshot of this repo at **1.23.1**. Rust working-mode has already cut ov
 | Stats | `crucible.stats/v1` reads `.wm/EVENTS` when that WAL file exists (`source: "events"`), else `.wm/METRICS.tsv` (`source: "metrics"`). |
 | Human `status` | Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. `status --json` and GET `/walk` stay read-only. |
 
-Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`, do not add a verb. `VERSION` becomes 1.23.1 because these pages ship in the tarball.
+Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`, do not add a verb. `VERSION` becomes 1.24.0 because this room change ships in the tarball.
 
 ## PATH layout (D18)
 
@@ -62,7 +62,7 @@ crates/
   kernel/     # go, run, independence, FLOOR/TRACE/EVENTS writers
   cli/        # argv → kernel/contract and `guided` (the `crucible` binary)
   http/       # GET serve; same types as cli; never writes
-  room/       # probe GET /health; external herdr; GET cameras; spawn go
+  room/       # probe GET /health; external herdr; join the four labels; do not pane-run
   web/        # loopback page; append BACKLOG.tsv and .wm/CHAT.md; POST /act/go spawns go; read-only POST /act spawns that verb and waits.
   guided/     # adopt, cycle, drive; library. The `crucible` binary dispatches it. Not a second binary.
 skills/                 # canonical skill trees
@@ -149,8 +149,8 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D7 | Grok slash is **not** inside a walk unless the user **interrupts**. Workers = harness CLIs Crucible starts. |
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
 | D9 | Contracts: `crucible.walk/v1` + events WAL + **panel-as-files** (cast state `go` already requires; **not** a `WalkSnapshot` key in v1). CLI **read-only** JSON **equals** HTTP JSON. Files always written (human/`cat` without HTTP). |
-| D10 | Kernel HTTP: **GET** `/walk` `/stats?since=` `/health`. **No `POST /go`.** Room starts `go` as a **process**, not an HTTP walk. |
-| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Attach to exactly one existing workspace label from <cwd>/.crucible/herdr/workspace. Do not create, close, or rename a workspace. pane run only a tab this call created. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
+| D10 | Kernel HTTP: **GET** `/walk` `/stats?since=` `/health`. **No `POST /go`.** `go` is still a foreground process, not `POST /go`; room does not start it. |
+| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` joins one existing workspace; ensures `terminal`, `chat`, `orchestrator`, `dashboard` only when absent; does not pane-run; leaves watcher and reaper tabs. Not a copy of herdr-init and not a second room. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. |
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` (working-mode kernel and guided verbs) + `wm.sh` exec shim + files + cargo for contributors. `crucible-guided` only execs the sibling binary. The 1.17.0 changelog section records the break from “POSIX sh is the **working-mode** engine.” The 1.18.0 changelog section records guided verbs on that same binary. |
@@ -177,7 +177,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D8 | Chat stays free; interrupt wins | Always-on Grok DAG inside `/crucible` |
 | D9 | One language; `cat` works | Scrape Markdown; daemon-required board; panel JSON key |
 | D10 | Dual clock; tty/brakes are a process | Dashboard-started walks (`POST /go`) |
-| D11 | First-class cameras; recreate not fork | Optional tmux; copy herdr-init |
+| D11 | First-class cameras; join, do not fork and do not recreate | Optional tmux; copy herdr-init |
 | D12 | Not a binary feature | `shaping` menu in kernel now |
 | D13 | Cold-start contract | CHECKs that need cargo/rustc |
 | D14 | Honest identity | Quiet dual identity |
@@ -244,7 +244,7 @@ Bind **loopback only**. Default `127.0.0.1:1734`. `--bind` may change the **port
 | GET | `/health` | `{ "ok": true, "version": "<semver>", "bind": "127.0.0.1:1734" }` — process liveness, not walk success |
 | **forbidden** | **`POST /go`** | **Must 404/405.** Fake-fail of HTTP. |
 
-Loopback GET is **equivalent to reading `.wm`**, not an auth boundary (`SECURITY.md`). `go` is a **foreground OS process**. Room may spawn that process in a tab. `crucible serve` never starts a walk and never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group and is not a walk. `POST /go` stays 405. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002.
+Loopback GET is **equivalent to reading `.wm`**, not an auth boundary (`SECURITY.md`). `go` is a **foreground OS process**. Room does not spawn that process in a tab. `crucible serve` never starts a walk and never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group and is not a walk. `POST /go` stays 405. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002.
 
 Second server: probe GET `/health` first. If `ok: true` and `version` matches, do not start another listener. If the port is busy with a non-health or wrong version, **fail** (no `SO_REUSEPORT`).
 
@@ -268,14 +268,14 @@ Second server: probe GET `/health` first. If `ok: true` and `version` matches, d
 
 Sequence:
 
-0. Read `<cwd>/.crucible/herdr/workspace` and `<cwd>/.crucible/herdr/roles`. Invalid layout (missing, empty, multi-line, symlink, or roles not the five names in order): exit 2, no herdr, no listen, no TRACE.
-1. Resolve external `herdr` (`PATH`, else `CRUCIBLE_HERDR`). Missing or not executable: exit nonzero, print a refusal, no listen, no TRACE, and no health probe.
-2. Probe GET `/health` on `127.0.0.1:1734`. Matching VERSION: reuse (`serve reused`). Only connection refused spawns `current_exe() serve --bind 127.0.0.1:1734`. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
-3. `workspace list`. Attach to the one object with string `label` equal to the workspace file and string `workspace_id`, and without `tab_id` or `pane_id`. Ignore cwd. Zero or more than one: exit 1. Do not create, close, or rename a workspace. Do not pass `--session`.
-4. Create a role tab only when that label is absent (`chat`, `orchestrator`, `watcher`, `reaper`, `dashboard`). A second attach does not duplicate. A failed `tab create`, or a success body with no `tab_id`, does not `pane run` any role. Do not `tab close`.
-5. `pane run` only a `tab_id` this call created. `go` in orchestrator only when that tab was created now and intake is ready (`go orchestrator`). Intake not ready: `go waiting`, whether or not the tab was created. Intake ready and orchestrator already open: `go not started (orchestrator tab already open)`. `reap` only when reaper was created now and go was started now and pid >= 2. Cameras only on watcher and dashboard tabs created now. Chat is never pane-run.
+0. Read `<cwd>/.crucible/herdr/workspace` and `<cwd>/.crucible/herdr/roles` with the regular-file rules (missing, empty, symlink, unreadable, not a regular file, internal whitespace on the label: exit 2). Two roles files pass. The new file is `terminal`, `chat`, `orchestrator`, `dashboard`, in that order, with one optional trailing newline. The legacy file is `chat`, `orchestrator`, `watcher`, `reaper`, `dashboard`, in that order, with one optional trailing newline. Anything else is exit 2 (reordered lines, a sixth line, the five names plus `terminal`, a partial list, an edited body). No herdr, no listen, no TRACE on that failure. The legacy five-line file does not exit 2. The ensure-list is still the four standing labels, not the five names in the file.
+1. Resolve external `herdr` (`PATH`, else `CRUCIBLE_HERDR`) in `locate_herdr`. Missing or not executable: exit 2, print the existing refusal, no listen, no TRACE, no health probe.
+2. Probe `GET /health` on `127.0.0.1:1734` unchanged. Matching VERSION: `serve reused`. Only connection refused spawns `current_exe() serve --bind 127.0.0.1:1734`. Any other probe exits 1 and does not call herdr (no `SO_REUSEPORT`).
+3. `workspace list` with no `--session`. Select one workspace object that has a string `workspace_id`, a string `label`, and neither `tab_id` nor `pane_id`. Dedup by `workspace_id`. Zero or more than one attachable workspace: exit 1 and name `herdr-init` as the way to create or choose the room. Do not create, close, or rename a workspace. If no collected object reports a string `cwd`, attach when exactly one object's `label` equals the workspace file. If any collected object reports a string `cwd`, attach only when the label hits and the cwd hits (the cwd string equals this checkout, compared with `Display`, no symlink canonicalization) both have length 1 and the same `workspace_id`. Do not read `worktree.checkout_path`. Do not call `pane list`.
+4. `tab list --workspace <id>`. For each standing label in order `terminal`, `chat`, `orchestrator`, `dashboard`, `tab create` only when that label is absent (`--workspace`, `--cwd` of this checkout, `--label`, `--no-focus`). Do not create `watcher`, `reaper`, or `watchdog`. If those tabs are already present, leave them. Do not `tab close`. A second attach does not duplicate. A failed `tab create`, or a success body with no `tab_id`, returns the existing failure and does not start any role. Do not pass `--session`. Do not set `XDG_CONFIG_HOME` or `HERDR_CONFIG_PATH`.
+5. Pane-run nothing. Do not call `pane run`, `pane process-info`, or `pane list`. Do not start `go`, `reap`, or `camera`. Chat is never pane-run. Print `go not started`. Ignore intake. `IDEA.md` and `BACKLOG.tsv` do not start a walk.
 
-Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on default musl; auto-go via `POST /go`; watcher writes to the go PTY; spawn PATH `crucible`; missing herdr still listens or writes TRACE.
+Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on default musl; auto-go via `POST /go`; watcher writes to the go PTY; spawn PATH `crucible`; missing herdr still listens or writes TRACE; pane-run of `go` / `reap` / `camera`; creating watcher, reaper, or watchdog tabs; writing `.kiro/agents/herdr-orchestrator.json` or `.herdr-config/prompts/orchestrator.md`; setting `XDG_CONFIG_HOME` or `HERDR_CONFIG_PATH`.
 
 `examples/tmuxinator-crucible.yml` remains optional layout, not a substitute.
 

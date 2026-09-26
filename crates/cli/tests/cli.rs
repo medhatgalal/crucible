@@ -563,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.23.1");
+    assert_eq!(ver_before.trim(), "1.24.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -580,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.23.1");
+    assert_eq!(want, "1.24.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -2602,7 +2602,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.23.1");
+    assert_eq!(health["version"], "1.24.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2724,7 +2724,7 @@ fn plant_room_layout(root: &Path) {
     fs::write(dir.join("workspace"), "crucible\n").unwrap();
     fs::write(
         dir.join("roles"),
-        "chat\norchestrator\nwatcher\nreaper\ndashboard\n",
+        "terminal\nchat\norchestrator\ndashboard\n",
     )
     .unwrap();
 }
@@ -2824,7 +2824,7 @@ printf '%s\n' "$*" >> {log}
 state={state}
 cmd="$1 $2"
 if [ "$cmd" = "workspace list" ]; then
-  printf '%s\n' '{{"result":{{"workspaces":[{{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}}]}}}}'
+  printf '%s\n' '{{"result":{{"workspaces":[{{"workspace_id":"ws1","label":"crucible"}}]}}}}'
 elif [ "$cmd" = "workspace create" ]; then
   printf '%s\n' '{{"result":{{"workspace":{{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}}}}}}'
 elif [ "$cmd" = "tab list" ]; then
@@ -2892,12 +2892,16 @@ exit 0
         Some(0),
         "room with herdr: stdout={stdout:?} stderr={stderr:?}"
     );
-    for role in ["chat", "orchestrator", "watcher", "reaper", "dashboard"] {
+    for role in ["terminal", "chat", "orchestrator", "dashboard"] {
         assert!(
             stdout.contains(role),
             "standing role {role} missing: {stdout:?}"
         );
     }
+    assert!(
+        !stdout.contains("watcher"),
+        "room must not ensure watcher: {stdout:?}"
+    );
     assert!(
         stdout.contains("GET /health"),
         "must GET /health: {stdout:?}"
@@ -2906,7 +2910,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.23.1"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.24.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"
@@ -2923,9 +2927,11 @@ exit 0
     );
     assert!(!tmp.root.join(".wm/go.pid").exists());
     assert!(
-        stdout.contains("go orchestrator"),
-        "IDEA.md must start go as a process, not HTTP: {stdout}"
+        stdout.contains("go not started"),
+        "room must not start go: {stdout}"
     );
+    assert!(!stdout.contains("go orchestrator"), "{stdout}");
+    assert!(!stdout.contains("go waiting"), "{stdout}");
     assert!(!stdout.contains("POST"), "room must not POST /go: {stdout}");
     let reused = stdout.contains("serve reused");
     if reused {
@@ -2951,6 +2957,7 @@ exit 0
     assert!(!log.contains("config.toml"), "{log}");
     assert!(!log.contains("workspace create"), "{log}");
     assert!(!log.contains("--session"), "{log}");
+    assert!(!log.contains("pane run"), "{log}");
     assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
     assert!(
         !log.split_whitespace().any(|w| w == "reap"),

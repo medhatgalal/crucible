@@ -1,6 +1,7 @@
-//! `crucible room` probes loopback `GET /health` before listen, then asks
-//! external `herdr` for standing tabs. Cameras GET the API. `go` is a process
-//! in the orchestrator tab, never `POST /go`. Do not vendor an init tree.
+//! `crucible room` joins one existing Herdr workspace. It probes loopback
+//! `GET /health` before listen, then ensures `terminal`, `chat`,
+//! `orchestrator`, and `dashboard` when that label is absent. It does not
+//! start `go`, `reap`, or `camera`. Do not vendor an init tree.
 //! No Herdr crate.
 
 use std::ffi::OsStr;
@@ -18,7 +19,9 @@ const ROOM_BIND: &str = "127.0.0.1:1734";
 
 const PRODUCT_VERSION: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../VERSION"));
 
-pub const ROLES: [&str; 5] = ["chat", "orchestrator", "watcher", "reaper", "dashboard"];
+pub const ROLES: [&str; 4] = ["terminal", "chat", "orchestrator", "dashboard"];
+
+const LEGACY_ROLES: [&str; 5] = ["chat", "orchestrator", "watcher", "reaper", "dashboard"];
 
 fn product_version() -> &'static str {
     PRODUCT_VERSION.trim()
@@ -222,7 +225,7 @@ fn drive(
             return 1;
         }
     };
-    let report = match arrange(&herdr, exe, cwd, &addr) {
+    let report = match arrange(&herdr, cwd) {
         Ok(r) => r,
         Err(e) => {
             let _ = writeln!(err, "room: {e}");
@@ -231,12 +234,12 @@ fn drive(
     };
     let _ = writeln!(
         out,
-        "standing roles: chat, orchestrator, watcher, reaper, dashboard"
+        "standing roles: terminal, chat, orchestrator, dashboard"
     );
     if let Some((pid, guard)) = spawned {
         let _ = writeln!(out, "listening {addr}");
         let _ = writeln!(out, "serve pid {pid}");
-        // Serve stays up for cameras. Forgetting the guard skips the kill-on-drop.
+        // Serve stays up. Forgetting the guard skips the kill-on-drop.
         std::mem::forget(guard);
     } else {
         let _ = writeln!(out, "serve reused");
@@ -245,13 +248,7 @@ fn drive(
     let _ = writeln!(out, "{body}");
     let _ = writeln!(out, "workspace {}", report.workspace_id);
     let _ = writeln!(out, "tabs {}", report.labels.join(" "));
-    // Print the three-way line. started_go stays true only for Started.
-    let go_line = match report.go {
-        GoLine::Started => "go orchestrator",
-        GoLine::Waiting => "go waiting",
-        GoLine::AlreadyOpen => "go not started (orchestrator tab already open)",
-    };
-    let _ = writeln!(out, "{go_line}");
+    let _ = writeln!(out, "go not started");
     let _ = out.flush();
     0
 }
@@ -306,102 +303,31 @@ fn spawn_serve(exe: &Path, cwd: &Path, bind: &str) -> Result<(String, u32, Child
     Ok((addr, pid, guard))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum GoLine {
-    Started,
-    Waiting,
-    AlreadyOpen,
-}
-
 #[derive(Debug)]
 struct RoomReport {
     workspace_id: String,
     labels: Vec<String>,
-    // Arrange tests assert this. drive prints `go` and does not branch on it.
-    #[allow(dead_code)]
-    started_go: bool,
-    go: GoLine,
 }
 
 struct RoomLayout {
     label: String,
 }
 
-struct CreatedTab {
-    role: &'static str,
-    tab_id: String,
-    pane_id: Option<String>,
+struct WorkspaceObj {
+    id: String,
+    label: String,
+    cwd: Option<String>,
 }
 
-fn arrange(herdr: &Path, exe: &Path, cwd: &Path, addr: &str) -> Result<RoomReport, String> {
+fn arrange(herdr: &Path, cwd: &Path) -> Result<RoomReport, String> {
     let layout = load_room_layout(cwd)?;
-    let workspace_id = attach_workspace(herdr, &layout.label)?;
-    let mut created = ensure_tabs(herdr, cwd, &workspace_id)?;
-    // A failed create already returned. Do not pane-run any role, including ones created earlier.
-    resolve_created_panes(herdr, &workspace_id, &mut created)?;
-    let exe_s = exe.display().to_string();
-    let ready = intake_ready(cwd);
-    let orchestrator = created.iter().find(|tab| tab.role == "orchestrator");
-    let go = if !ready {
-        GoLine::Waiting
-    } else if let Some(orch) = orchestrator {
-        let pane = created_pane(orch)?;
-        herdr_ok(herdr, &["pane", "run", pane, &exe_s, "go"])?;
-        GoLine::Started
-    } else {
-        GoLine::AlreadyOpen
-    };
-    // Reap only a reaper tab this call created, and only after go started now.
-    if go == GoLine::Started {
-        let orch = created.iter().find(|tab| tab.role == "orchestrator");
-        let reaper = created.iter().find(|tab| tab.role == "reaper");
-        if let (Some(orch), Some(reaper)) = (orch, reaper) {
-            if let Some(pid) = go_pid(herdr, created_pane(orch)?) {
-                let pid_s = pid.to_string();
-                herdr_ok(
-                    herdr,
-                    &[
-                        "pane",
-                        "run",
-                        created_pane(reaper)?,
-                        &exe_s,
-                        "reap",
-                        "--pid",
-                        &pid_s,
-                    ],
-                )?;
-            }
-        }
-    }
-    for role in ["watcher", "dashboard"] {
-        if let Some(tab) = created.iter().find(|tab| tab.role == role) {
-            herdr_ok(
-                herdr,
-                &[
-                    "pane",
-                    "run",
-                    created_pane(tab)?,
-                    &exe_s,
-                    "camera",
-                    "--bind",
-                    addr,
-                ],
-            )?;
-        }
-    }
+    let workspace_id = attach_workspace(herdr, &layout.label, cwd)?;
+    ensure_tabs(herdr, cwd, &workspace_id)?;
     let labels: Vec<String> = ROLES.iter().map(|s| (*s).to_string()).collect();
     Ok(RoomReport {
         workspace_id,
         labels,
-        started_go: go == GoLine::Started,
-        go,
     })
-}
-
-fn created_pane(tab: &CreatedTab) -> Result<&str, String> {
-    tab.pane_id
-        .as_deref()
-        .ok_or_else(|| no_single_pane(tab.role))
 }
 
 fn load_room_layout(cwd: &Path) -> Result<RoomLayout, String> {
@@ -454,63 +380,87 @@ fn roles_match(path: &Path) -> Result<(), String> {
     if lines.last().is_some_and(|line| line.is_empty()) {
         lines.pop();
     }
-    if lines == ROLES {
+    if lines == ROLES || lines == LEGACY_ROLES {
         Ok(())
     } else {
         Err(format!(
-            "{} is not the five role names in order",
+            "{} is not the four standing labels in order (terminal, chat, orchestrator, dashboard) or the legacy five names in order (chat, orchestrator, watcher, reaper, dashboard)",
             path.display()
         ))
     }
 }
 
-fn attach_workspace(herdr: &Path, label: &str) -> Result<String, String> {
+fn attach_workspace(herdr: &Path, label: &str, cwd: &Path) -> Result<String, String> {
     let listed = herdr_ok(herdr, &["workspace", "list"])?;
-    let mut ids = workspace_ids_for_label(&listed, label)?;
-    match ids.len() {
-        1 => Ok(ids.remove(0)),
-        0 => Err(format!("no herdr workspace labeled {label}")),
-        n => Err(format!("{n} herdr workspaces labeled {label}")),
+    select_workspace(&listed, label, cwd)
+}
+
+fn select_workspace(text: &str, label: &str, cwd: &Path) -> Result<String, String> {
+    let value = parse_json(text)?;
+    let mut found = Vec::new();
+    collect_workspaces(&value, &mut found);
+    let label_hits: Vec<&WorkspaceObj> = found.iter().filter(|hit| hit.label == label).collect();
+    if found.iter().all(|hit| hit.cwd.is_none()) {
+        return match label_hits.len() {
+            1 => Ok(label_hits[0].id.clone()),
+            0 => Err(format!(
+                "no herdr workspace labeled {label}; create or choose the room with herdr-init"
+            )),
+            n => Err(format!(
+                "{n} herdr workspaces labeled {label}; choose the room with herdr-init"
+            )),
+        };
+    }
+    let checkout = cwd.display().to_string();
+    let cwd_hits: Vec<&WorkspaceObj> = found
+        .iter()
+        .filter(|hit| hit.cwd.as_deref() == Some(checkout.as_str()))
+        .collect();
+    if label_hits.len() == 1 && cwd_hits.len() == 1 && label_hits[0].id == cwd_hits[0].id {
+        Ok(label_hits[0].id.clone())
+    } else {
+        Err(format!(
+            "herdr workspace for {label} is not the workspace whose cwd is this checkout; choose the room with herdr-init"
+        ))
     }
 }
 
-fn workspace_ids_for_label(text: &str, label: &str) -> Result<Vec<String>, String> {
-    let value = parse_json(text)?;
-    let mut ids = Vec::new();
-    collect_workspace_ids(&value, label, &mut ids);
-    Ok(ids)
-}
-
-fn collect_workspace_ids(value: &Value, label: &str, ids: &mut Vec<String>) {
+fn collect_workspaces(value: &Value, out: &mut Vec<WorkspaceObj>) {
     match value {
         Value::Object(map) => {
-            let same_label = map.get("label").and_then(Value::as_str) == Some(label);
             // A tab or pane object also carries workspace_id. Those are not workspaces.
-            if same_label && !map.contains_key("tab_id") && !map.contains_key("pane_id") {
-                if let Some(id) = map.get("workspace_id").and_then(Value::as_str) {
-                    if !ids.iter().any(|seen| seen == id) {
-                        ids.push(id.to_string());
+            if !map.contains_key("tab_id") && !map.contains_key("pane_id") {
+                if let (Some(id), Some(label)) = (
+                    map.get("workspace_id").and_then(Value::as_str),
+                    map.get("label").and_then(Value::as_str),
+                ) {
+                    if !out.iter().any(|seen| seen.id == id) {
+                        let cwd = map.get("cwd").and_then(Value::as_str).map(str::to_string);
+                        out.push(WorkspaceObj {
+                            id: id.to_string(),
+                            label: label.to_string(),
+                            cwd,
+                        });
                     }
                 }
             }
             for child in map.values() {
-                collect_workspace_ids(child, label, ids);
+                collect_workspaces(child, out);
             }
         }
         Value::Array(items) => {
             for child in items {
-                collect_workspace_ids(child, label, ids);
+                collect_workspaces(child, out);
             }
         }
         _ => {}
     }
 }
 
-fn ensure_tabs(herdr: &Path, cwd: &Path, workspace_id: &str) -> Result<Vec<CreatedTab>, String> {
+fn ensure_tabs(herdr: &Path, cwd: &Path, workspace_id: &str) -> Result<(), String> {
     let cwd_s = cwd.display().to_string();
     let listed = herdr_ok(herdr, &["tab", "list", "--workspace", workspace_id])?;
     let have = tab_labels(&listed);
-    let mut created = Vec::new();
     for role in ROLES {
         if have.iter().any(|label| label == role) {
             continue;
@@ -530,45 +480,9 @@ fn ensure_tabs(herdr: &Path, cwd: &Path, workspace_id: &str) -> Result<Vec<Creat
             ],
         )
         .map_err(|_| tab_create_failed(role))?;
-        let Some(tab_id) = json_string_at(&body, &["result", "tab", "tab_id"]) else {
+        if json_string_at(&body, &["result", "tab", "tab_id"]).is_none() {
             return Err(tab_create_failed(role));
-        };
-        let pane_id = json_string_at(&body, &["result", "root_pane", "pane_id"]);
-        created.push(CreatedTab {
-            role,
-            tab_id,
-            pane_id,
-        });
-    }
-    Ok(created)
-}
-
-fn resolve_created_panes(
-    herdr: &Path,
-    workspace_id: &str,
-    created: &mut [CreatedTab],
-) -> Result<(), String> {
-    // root_pane.pane_id wins. Do not list panes when every new tab already has one.
-    if created.iter().all(|tab| tab.pane_id.is_some()) {
-        return Ok(());
-    }
-    let listed = herdr_ok(herdr, &["pane", "list", "--workspace", workspace_id])?;
-    let value = parse_json(&listed)?;
-    let mut pairs = Vec::new();
-    collect_pairs(&value, "tab_id", "pane_id", &mut pairs);
-    for tab in created.iter_mut() {
-        if tab.pane_id.is_some() {
-            continue;
         }
-        let hits: Vec<&str> = pairs
-            .iter()
-            .filter(|(id, _)| id == &tab.tab_id)
-            .map(|(_, pane)| pane.as_str())
-            .collect();
-        if hits.len() != 1 {
-            return Err(no_single_pane(tab.role));
-        }
-        tab.pane_id = Some(hits[0].to_string());
     }
     Ok(())
 }
@@ -585,26 +499,6 @@ fn tab_create_failed(role: &str) -> String {
     format!(
         "tab create {role} failed; tabs created earlier in this call were not started and will not be started until those tabs are closed in Herdr"
     )
-}
-
-fn no_single_pane(role: &str) -> String {
-    format!(
-        "tab {role} has no single pane; tabs created earlier in this call were not started and will not be started until those tabs are closed in Herdr"
-    )
-}
-
-fn go_pid(herdr: &Path, pane: &str) -> Option<u32> {
-    // Live herdr takes --pane. A positional id is "unknown option" and the reaper never runs.
-    // Prefer the process group: kill -TERM -N signals a group, and a nested pid can be the pane shell.
-    let text = herdr_ok(herdr, &["pane", "process-info", "--pane", pane]).ok()?;
-    let raw =
-        first_key(&text, "foreground_process_group_id").or_else(|| first_key(&text, "pid"))?;
-    let pid: u32 = raw.parse().ok()?;
-    if pid < 2 {
-        None
-    } else {
-        Some(pid)
-    }
 }
 
 fn herdr_ok(bin: &Path, args: &[&str]) -> Result<String, String> {
@@ -627,36 +521,6 @@ fn parse_json(text: &str) -> Result<Value, String> {
         .find('{')
         .ok_or_else(|| format!("herdr stdout is not JSON: {text}"))?;
     serde_json::from_str(&text[start..]).map_err(|e| format!("herdr json: {e}: {text}"))
-}
-
-fn first_key(text: &str, key: &str) -> Option<String> {
-    let v = parse_json(text).ok()?;
-    let mut found = Vec::new();
-    collect_key(&v, key, &mut found);
-    found.into_iter().next()
-}
-
-fn collect_key(v: &Value, key: &str, out: &mut Vec<String>) {
-    match v {
-        Value::Object(map) => {
-            for (k, child) in map {
-                if k == key {
-                    if let Some(s) = child.as_str() {
-                        out.push(s.to_string());
-                    } else if let Some(n) = child.as_u64() {
-                        out.push(n.to_string());
-                    }
-                }
-                collect_key(child, key, out);
-            }
-        }
-        Value::Array(items) => {
-            for child in items {
-                collect_key(child, key, out);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn collect_pairs(v: &Value, id_key: &str, other_key: &str, out: &mut Vec<(String, String)>) {
@@ -689,7 +553,7 @@ fn tab_labels(text: &str) -> Vec<String> {
     pairs.into_iter().map(|(_, label)| label).collect()
 }
 
-// Room and the web camera share one check: non-empty IDEA.md or a READY row.
+// Contract helper. Room does not consult intake.
 pub use crucible_contract::intake_ready;
 
 /// SIGTERM the process group of `pid` (the go process herdr started). Refuses pid < 2.
@@ -810,8 +674,8 @@ mod tests {
     }
 
     const ONE_PANE_LIST: &str = r#"{"result":{"panes":[{"pane_id":"pane-chat","tab_id":"tab-chat"},{"pane_id":"pane-orchestrator","tab_id":"tab-orchestrator"},{"pane_id":"pane-watcher","tab_id":"tab-watcher"},{"pane_id":"pane-reaper","tab_id":"tab-reaper"},{"pane_id":"pane-dashboard","tab_id":"tab-dashboard"}]}}"#;
-    const TWO_PANE_LIST: &str = r#"{"result":{"panes":[{"pane_id":"pane-chat","tab_id":"tab-chat"},{"pane_id":"pane-chat-b","tab_id":"tab-chat"},{"pane_id":"pane-orchestrator","tab_id":"tab-orchestrator"},{"pane_id":"pane-orchestrator-b","tab_id":"tab-orchestrator"},{"pane_id":"pane-watcher","tab_id":"tab-watcher"},{"pane_id":"pane-watcher-b","tab_id":"tab-watcher"},{"pane_id":"pane-reaper","tab_id":"tab-reaper"},{"pane_id":"pane-reaper-b","tab_id":"tab-reaper"},{"pane_id":"pane-dashboard","tab_id":"tab-dashboard"},{"pane_id":"pane-dashboard-b","tab_id":"tab-dashboard"}]}}"#;
-    const DEFAULT_WORKSPACES: &str = r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}]}}"#;
+    const DEFAULT_WORKSPACES: &str =
+        r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible"}]}}"#;
 
     fn plant_layout(root: &Path) {
         let dir = root.join(".crucible/herdr");
@@ -832,16 +696,6 @@ mod tests {
 
     fn fake_herdr(tmp: &Tmp) -> PathBuf {
         write_fake(tmp, &FakeSpec::default())
-    }
-
-    fn fake_herdr_pid(tmp: &Tmp, pid: u32) -> PathBuf {
-        write_fake(
-            tmp,
-            &FakeSpec {
-                pid,
-                ..FakeSpec::default()
-            },
-        )
     }
 
     fn write_fake(tmp: &Tmp, spec: &FakeSpec) -> PathBuf {
@@ -897,8 +751,12 @@ elif [ "$cmd" = "tab create" ]; then
     exit 1
   fi
   printf '%s\n' "$label" >> "$state"
-  if [ "@@ROOT@@" = "absent" ]; then
-    printf '%s\n' '{"result":{"tab":{"label":"'"$label"'","tab_id":"tab-'"$label"'","workspace_id":"ws1"}}}'
+  if [ "@@ROOT@@" = "absent" ] || [ "@@ROOT@@" = "notab" ]; then
+    if [ "@@ROOT@@" = "notab" ]; then
+      printf '%s\n' '{"result":{"tab":{"label":"'"$label"'","workspace_id":"ws1"}}}'
+    else
+      printf '%s\n' '{"result":{"tab":{"label":"'"$label"'","tab_id":"tab-'"$label"'","workspace_id":"ws1"}}}'
+    fi
   elif [ "@@ROOT@@" = "fixed" ]; then
     printf '%s\n' '{"result":{"tab":{"label":"'"$label"'","tab_id":"tab-'"$label"'","workspace_id":"ws1"},"root_pane":{"pane_id":"pane-from-create"}}}'
   else
@@ -914,16 +772,34 @@ fi
 exit 0
 "#;
 
-    fn exe_marker(tmp: &Tmp) -> PathBuf {
-        let path = tmp.root.join("crucible");
-        write_exec(&path, "#!/bin/sh\nexit 0\n");
-        path
+    fn assert_join_log(log: &str) {
+        for banned in [
+            "pane run",
+            "camera",
+            "reap",
+            "workspace create",
+            "workspace close",
+            "workspace rename",
+            "--session",
+            "session stop",
+            "session delete",
+            "config.toml",
+            "HERDR_CONFIG_PATH",
+            "XDG_CONFIG_HOME",
+            "tab close",
+        ] {
+            assert!(!log.contains(banned), "{banned} in log:\n{log}");
+        }
+        assert!(
+            !log.split_whitespace().any(|word| word == "server"),
+            "server in log:\n{log}"
+        );
     }
 
     #[test]
     fn standing_roles_are_the_documented_contract() {
         let prod = include_str!("lib.rs").split("#[cfg(test)]").next().unwrap();
-        assert!(prod.contains("standing roles: chat, orchestrator, watcher, reaper, dashboard"));
+        assert!(prod.contains("standing roles: terminal, chat, orchestrator, dashboard"));
     }
 
     #[test]
@@ -995,8 +871,11 @@ exit 0
         assert!(!prod.contains("127.0.0.1:0"));
         assert!(prod.contains("127.0.0.1:1734"));
         assert!(prod.contains("serve reused"));
-        assert!(!ROLES.contains(&"terminal"));
-        assert_eq!(ROLES.len(), 5);
+        assert!(ROLES.contains(&"terminal"));
+        assert_eq!(ROLES.len(), 4);
+        assert!(!ROLES.contains(&"watcher"));
+        assert!(!ROLES.contains(&"reaper"));
+        assert!(!ROLES.contains(&"watchdog"));
         for banned in [
             "workspace create",
             "workspace close",
@@ -1005,6 +884,7 @@ exit 0
             "--session",
             "session stop",
             "session delete",
+            "pane run",
             "HERDR_CONFIG_PATH",
             "XDG_CONFIG_HOME",
             "HERDR_SESSION",
@@ -1015,76 +895,82 @@ exit 0
     }
 
     #[test]
-    fn arrange_creates_five_tabs_and_does_not_duplicate() {
+    fn arrange_creates_four_tabs_and_does_not_duplicate() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         let herdr = fake_herdr(&tmp);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert_eq!(report.go, GoLine::Waiting);
-        assert!(!report.started_go);
+        let report = arrange(&herdr, &tmp.root).unwrap();
         assert_eq!(report.workspace_id, "ws1");
-        arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        let creates = log.matches("tab create").count();
         assert_eq!(
-            creates, 5,
+            report.labels,
+            ["terminal", "chat", "orchestrator", "dashboard"]
+        );
+        arrange(&herdr, &tmp.root).unwrap();
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert_eq!(
+            log.matches("tab create").count(),
+            4,
             "second attach must not create tabs again:\n{log}"
         );
-        assert_eq!(
-            log.matches("pane run").count(),
-            2,
-            "second attach must not pane run:\n{log}"
-        );
-        assert!(
-            log.contains("camera"),
-            "watcher must GET via camera:\n{log}"
-        );
-        assert!(!log.contains(" go"), "no IDEA means no go:\n{log}");
-        assert!(!log.contains("\tgo"), "no go argv:\n{log}");
-        let watcher = log.lines().find(|l| l.contains("camera")).unwrap();
-        assert!(
-            !watcher.contains("pane-orchestrator"),
-            "watcher must not target the go pane: {watcher}"
-        );
-        assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
-        assert!(!log.split_whitespace().any(|w| w == "server"), "{log}");
-        assert!(!log.contains("config.toml"), "{log}");
-        assert!(!log.contains("terminal"), "{log}");
-        assert!(!log.contains("workspace create"), "{log}");
-        assert!(!log.contains("workspace close"), "{log}");
-        assert!(!log.contains("workspace rename"), "{log}");
-        assert!(!log.contains("--session"), "{log}");
-        assert!(!log.contains("session"), "{log}");
-        assert!(!log.contains("worktree"), "{log}");
+        for role in ROLES {
+            assert_eq!(
+                log.matches(&format!("--label {role}")).count(),
+                1,
+                "{role} was not created once:\n{log}"
+            );
+        }
+        assert!(log.contains("workspace list"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
-    fn idea_starts_go_only_in_orchestrator_argv() {
+    fn idea_does_not_start_go() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
+        let body = serde_json::json!({
+            "ok": true,
+            "version": product_version()
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
         let herdr = fake_herdr(&tmp);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert!(report.started_go);
-        assert_eq!(report.go, GoLine::Started);
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        let stdout = String::from_utf8(out).unwrap();
+        let stderr = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("go not started"), "{stdout}");
+        assert!(!stdout.contains("go orchestrator"), "{stdout}");
+        assert!(!stdout.contains("go waiting"), "{stdout}");
+        assert!(!stdout.contains("go not started (orchestrator"), "{stdout}");
+        assert!(stdout.contains("1.24.0"), "{stdout}");
+        assert!(
+            stdout.contains("standing roles: terminal, chat, orchestrator, dashboard"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("tabs terminal chat orchestrator dashboard"),
+            "{stdout}"
+        );
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        let go_lines: Vec<_> = log.lines().filter(|l| l.contains(" go")).collect();
-        assert_eq!(go_lines.len(), 1, "one go process:\n{log}");
-        assert!(
-            go_lines[0].contains("pane-orchestrator"),
-            "go stays in orchestrator: {}",
-            go_lines[0]
-        );
-        assert!(
-            !tmp.root.join(".wm").exists(),
-            "arrange must not write TRACE"
-        );
+        assert!(log.contains("workspace list"), "{log}");
+        assert_join_log(&log);
+        assert!(!tmp.root.join(".wm").exists(), "room must not write TRACE");
     }
 
     #[test]
-    fn ready_backlog_starts_go_without_idea() {
+    fn ready_backlog_does_not_start_go() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         fs::write(
@@ -1094,10 +980,14 @@ exit 0
         .unwrap();
         assert!(intake_ready(&tmp.root));
         let herdr = fake_herdr(&tmp);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert!(report.started_go);
-        assert_eq!(report.go, GoLine::Started);
+        let report = arrange(&herdr, &tmp.root).unwrap();
+        assert_eq!(
+            report.labels,
+            ["terminal", "chat", "orchestrator", "dashboard"]
+        );
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(!log.split_whitespace().any(|word| word == "go"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
@@ -1270,7 +1160,9 @@ exit 0
         let stdout = String::from_utf8(out).unwrap();
         let stderr = String::from_utf8(err).unwrap();
         assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-        assert!(stdout.contains("go waiting"), "{stdout}");
+        assert!(stdout.contains("go not started"), "{stdout}");
+        assert!(!stdout.contains("go orchestrator"), "{stdout}");
+        assert!(!stdout.contains("go waiting"), "{stdout}");
         assert!(stdout.contains("serve reused"), "{stdout}");
         assert!(
             !stdout.lines().any(|l| l.starts_with("listening ")),
@@ -1286,9 +1178,8 @@ exit 0
             "probe plus a later accept"
         );
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(log.contains("camera"), "{log}");
-        assert!(!log.contains("pane-chat"), "{log}");
-        assert!(!log.split_whitespace().any(|w| w == "server"), "{log}");
+        assert!(log.contains("workspace list"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
@@ -1513,60 +1404,6 @@ exit 0
         let _ = http_get(&srv.addr, "/health").expect("fixture still accepts");
     }
 
-    #[test]
-    fn reaper_command_absent_when_pid_is_0() {
-        let tmp = Tmp::new();
-        plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = fake_herdr_pid(&tmp, 0);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert!(report.started_go);
-        assert_eq!(report.go, GoLine::Started);
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(
-            !log.split_whitespace().any(|w| w == "reap"),
-            "pid 0 must not reap:\n{log}"
-        );
-        assert!(!log.contains("pane-chat"), "no pane run in chat:\n{log}");
-        let go = log
-            .lines()
-            .find(|l| l.split_whitespace().any(|w| w == "go"))
-            .expect(&log);
-        assert!(go.contains("pane-orchestrator"), "{go}");
-    }
-
-    #[test]
-    fn reap_follows_go_only_when_pid_at_least_2() {
-        let tmp = Tmp::new();
-        plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = fake_herdr_pid(&tmp, 2);
-        let exe = exe_marker(&tmp);
-        arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        let lines: Vec<_> = log.lines().collect();
-        let go_at = lines
-            .iter()
-            .position(|l| l.split_whitespace().any(|w| w == "go"))
-            .expect(&log);
-        let reap_at = lines
-            .iter()
-            .position(|l| l.split_whitespace().any(|w| w == "reap"))
-            .expect(&log);
-        assert!(reap_at > go_at, "{log}");
-        let reap = lines[reap_at];
-        assert!(reap.contains("pane-reaper"), "{reap}");
-        assert!(
-            reap.split_whitespace()
-                .collect::<Vec<_>>()
-                .windows(2)
-                .any(|w| w == ["--pid", "2"]),
-            "{reap}"
-        );
-        assert!(!log.contains("pane-chat"), "{log}");
-    }
-
     fn layout_drive(tmp: &Tmp) -> (i32, String, String) {
         let herdr = fake_herdr(tmp);
         let exe = spawn_marker(tmp);
@@ -1646,6 +1483,9 @@ exit 0
             "chat\norchestrator\nwatcher\nreaper\n",
             "chat\norchestrator\nwatcher\nreaper\ndashboard\nterminal\n",
             "chat\nwatcher\norchestrator\nreaper\ndashboard\n",
+            "terminal\nchat\norchestrator\n",
+            "dashboard\norchestrator\nchat\nterminal\n",
+            "terminal\nchat\norchestrator\ndashboard\nwatcher\n",
         ] {
             let tmp = Tmp::new();
             write_roles(&tmp.root, body);
@@ -1681,8 +1521,7 @@ exit 0
                 ..FakeSpec::default()
             },
         );
-        let exe = exe_marker(tmp);
-        arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9")
+        arrange(&herdr, &tmp.root)
     }
 
     fn assert_list_did_not_mutate(tmp: &Tmp) {
@@ -1694,15 +1533,105 @@ exit 0
     }
 
     #[test]
-    fn attach_ignores_workspace_cwd() {
+    fn attach_without_cwd_uses_the_single_label() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         let herdr = fake_herdr(&tmp);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
+        let report = arrange(&herdr, &tmp.root).unwrap();
         assert_eq!(report.workspace_id, "ws1");
-        assert_ne!(tmp.root.display().to_string(), "/herdr-keeps-its-cwd");
         assert_list_did_not_mutate(&tmp);
+    }
+
+    #[test]
+    fn cwd_equal_to_checkout_attaches() {
+        let tmp = Tmp::new();
+        let list = serde_json::json!({
+            "result": {
+                "workspaces": [{
+                    "workspace_id": "ws-here",
+                    "label": "crucible",
+                    "cwd": tmp.root.display().to_string()
+                }]
+            }
+        })
+        .to_string();
+        let report = arrange_listed(&tmp, &list).unwrap();
+        assert_eq!(report.workspace_id, "ws-here");
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("tab create"), "{log}");
+        assert_join_log(&log);
+    }
+
+    #[test]
+    fn cwd_mismatch_does_not_attach() {
+        let tmp = Tmp::new();
+        let err = arrange_listed(
+            &tmp,
+            r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible","cwd":"/herdr-keeps-its-cwd"}]}}"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("herdr-init"), "{err}");
+        assert!(
+            err.contains("not the workspace whose cwd is this checkout"),
+            "{err}"
+        );
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("workspace list"), "{log}");
+        assert!(!log.contains("tab create"), "{log}");
+        assert!(!log.contains("workspace create"), "{log}");
+        assert_join_log(&log);
+    }
+
+    #[test]
+    fn label_hit_and_cwd_hit_must_be_the_same_workspace() {
+        let tmp = Tmp::new();
+        let checkout = tmp.root.display().to_string();
+        let cases = [
+            serde_json::json!({
+                "result": {"workspaces": [
+                    {"workspace_id": "ws-label", "label": "crucible", "cwd": "/other"},
+                    {"workspace_id": "ws-cwd", "label": "other", "cwd": checkout.clone()}
+                ]}
+            }),
+            serde_json::json!({
+                "result": {"workspaces": [
+                    {"workspace_id": "ws1", "label": "crucible", "cwd": checkout.clone()},
+                    {"workspace_id": "ws2", "label": "other", "cwd": checkout.clone()}
+                ]}
+            }),
+            serde_json::json!({
+                "result": {"workspaces": [
+                    {"workspace_id": "ws1", "label": "crucible", "cwd": checkout.clone()},
+                    {"workspace_id": "ws2", "label": "crucible"}
+                ]}
+            }),
+            serde_json::json!({
+                "result": {"workspaces": [
+                    {"workspace_id": "ws1", "label": "crucible"},
+                    {"workspace_id": "ws2", "label": "other", "cwd": "/elsewhere"}
+                ]}
+            }),
+        ];
+        for list in cases {
+            let err = arrange_listed(&tmp, &list.to_string()).unwrap_err();
+            assert!(err.contains("herdr-init"), "{err}");
+            let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+            assert!(!log.contains("tab create"), "{err}\n{log}");
+            assert!(!log.contains("workspace create"), "{log}");
+        }
+    }
+
+    #[test]
+    fn omitted_or_non_string_cwd_is_not_a_report() {
+        let tmp = Tmp::new();
+        for list in [
+            r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible","cwd":null}]}}"#,
+            r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible","cwd":1}]}}"#,
+            r#"{"result":{"workspaces":[{"workspace_id":"ws1","label":"crucible","worktree":{"checkout_path":"/not-cwd"}}]}}"#,
+        ] {
+            let report = arrange_listed(&tmp, list).unwrap();
+            assert_eq!(report.workspace_id, "ws1");
+        }
     }
 
     #[test]
@@ -1710,7 +1639,10 @@ exit 0
         let tmp = Tmp::new();
         let err = arrange_listed(&tmp, r#"{"result":{"workspaces":[]}}"#).unwrap_err();
         assert!(err.contains("no herdr workspace labeled"), "{err}");
+        assert!(err.contains("herdr-init"), "{err}");
         assert_list_did_not_mutate(&tmp);
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(!log.contains("tab create"), "{log}");
     }
 
     #[test]
@@ -1722,7 +1654,10 @@ exit 0
         )
         .unwrap_err();
         assert!(err.contains("2 herdr workspaces labeled"), "{err}");
+        assert!(err.contains("herdr-init"), "{err}");
         assert_list_did_not_mutate(&tmp);
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(!log.contains("tab create"), "{log}");
     }
 
     #[test]
@@ -1748,38 +1683,27 @@ exit 0
     }
 
     #[test]
-    fn existing_tab_is_not_pane_run() {
+    fn legacy_five_roles_join_and_leave_watcher_tabs() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = fake_herdr(&tmp);
-        seed_tabs(&tmp, &["orchestrator"]);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert_eq!(report.go, GoLine::AlreadyOpen);
-        assert!(!report.started_go);
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(!log.contains("pane-orchestrator"), "{log}");
-        assert!(log.contains("pane-watcher"), "{log}");
-        assert!(log.contains("pane-dashboard"), "{log}");
-
+        fs::write(
+            tmp.root.join(".crucible/herdr/roles"),
+            "chat\norchestrator\nwatcher\nreaper\ndashboard\n",
+        )
+        .unwrap();
         let body = serde_json::json!({
             "ok": true,
             "version": product_version()
         })
         .to_string();
         let srv = HealthSrv::start(body);
-        let live = Tmp::new();
-        plant_layout(&live.root);
-        fs::write(live.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = fake_herdr(&live);
-        seed_tabs(&live, &["orchestrator"]);
-        let exe = spawn_marker(&live);
+        let herdr = fake_herdr(&tmp);
+        let exe = spawn_marker(&tmp);
         let mut out = Vec::new();
         let mut err = Vec::new();
         let code = drive(
             &exe,
-            &live.root,
+            &tmp.root,
             herdr.parent().unwrap().as_os_str(),
             None,
             &srv.addr,
@@ -1789,48 +1713,40 @@ exit 0
         let stdout = String::from_utf8(out).unwrap();
         let stderr = String::from_utf8(err).unwrap();
         assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
-        assert!(
-            stdout.contains("go not started (orchestrator tab already open)"),
-            "{stdout}"
-        );
+        assert!(stdout.contains("go not started"), "{stdout}");
         assert!(!stdout.contains("go orchestrator"), "{stdout}");
         assert!(!stdout.contains("go waiting"), "{stdout}");
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("workspace list"), "{log}");
+        for role in ["terminal", "chat", "orchestrator", "dashboard"] {
+            assert!(
+                log.contains(&format!("--label {role}")),
+                "{role} missing:\n{log}"
+            );
+        }
+        assert!(!log.contains("--label watcher"), "{log}");
+        assert!(!log.contains("--label reaper"), "{log}");
+        assert!(!log.contains("--label watchdog"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
-    fn new_reaper_old_orchestrator_does_not_go_or_reap() {
+    fn existing_watcher_and_reaper_tabs_are_left_alone() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
         let herdr = fake_herdr(&tmp);
-        seed_tabs(&tmp, &["orchestrator"]);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert_eq!(report.go, GoLine::AlreadyOpen);
-        assert!(!report.started_go);
+        seed_tabs(&tmp, &["watcher", "reaper", "chat"]);
+        arrange(&herdr, &tmp.root).unwrap();
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(!log.split_whitespace().any(|w| w == "go"), "{log}");
-        assert!(!log.split_whitespace().any(|w| w == "reap"), "{log}");
-    }
-
-    #[test]
-    fn new_orchestrator_and_old_reaper_does_not_reap() {
-        let tmp = Tmp::new();
-        plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = fake_herdr_pid(&tmp, 2);
-        seed_tabs(&tmp, &["reaper"]);
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert_eq!(report.go, GoLine::Started);
-        assert!(report.started_go);
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        let go = log
-            .lines()
-            .find(|l| l.split_whitespace().any(|w| w == "go"))
-            .expect(&log);
-        assert!(go.contains("pane-orchestrator"), "{go}");
-        assert!(!log.split_whitespace().any(|w| w == "reap"), "{log}");
+        assert!(log.contains("--label terminal"), "{log}");
+        assert!(log.contains("--label orchestrator"), "{log}");
+        assert!(log.contains("--label dashboard"), "{log}");
+        assert!(!log.contains("--label chat"), "{log}");
+        assert!(!log.contains("--label watcher"), "{log}");
+        assert!(!log.contains("--label reaper"), "{log}");
+        assert!(!log.contains("--label watchdog"), "{log}");
+        assert_eq!(log.matches("tab create").count(), 3, "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
@@ -1841,7 +1757,7 @@ exit 0
         let herdr = write_fake(
             &tmp,
             &FakeSpec {
-                fail_tab: "watcher",
+                fail_tab: "dashboard",
                 ..FakeSpec::default()
             },
         );
@@ -1870,109 +1786,52 @@ exit 0
             "{stderr}"
         );
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(!log.contains("pane run"), "{log}");
-        assert!(!log.contains("tab close"), "{log}");
-        let exe = exe_marker(&tmp);
-        let err = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap_err();
+        assert_join_log(&log);
+        let err = arrange(&herdr, &tmp.root).unwrap_err();
         assert!(
             err.contains("tabs created earlier in this call were not started"),
             "{err}"
         );
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(!log.contains("pane run"), "{log}");
-        assert!(!log.contains("pane-chat"), "{log}");
-        assert!(!log.contains("pane-orchestrator"), "{log}");
-        assert!(!log.contains("tab close"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
-    fn root_pane_beats_two_pane_rows() {
+    fn tab_create_without_tab_id_does_not_continue() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         let herdr = write_fake(
             &tmp,
             &FakeSpec {
-                root: "fixed",
-                panes: TWO_PANE_LIST,
+                root: "notab",
                 ..FakeSpec::default()
             },
         );
-        let exe = exe_marker(&tmp);
-        arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
+        let err = arrange(&herdr, &tmp.root).unwrap_err();
+        assert!(
+            err.contains("tabs created earlier in this call were not started"),
+            "{err}"
+        );
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(log.contains("pane-from-create"), "{log}");
         assert!(!log.contains("pane list"), "{log}");
-        assert!(log.contains("pane run"), "{log}");
+        assert_join_log(&log);
     }
 
     #[test]
-    fn missing_root_pane_uses_the_one_pane_row() {
-        let tmp = Tmp::new();
-        plant_layout(&tmp.root);
-        fs::write(tmp.root.join("IDEA.md"), "receipt\n").unwrap();
-        let herdr = write_fake(
-            &tmp,
-            &FakeSpec {
-                root: "absent",
-                panes: ONE_PANE_LIST,
-                ..FakeSpec::default()
-            },
-        );
-        let exe = exe_marker(&tmp);
-        let report = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap();
-        assert_eq!(report.go, GoLine::Started);
-        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert_eq!(log.matches("pane list").count(), 1, "{log}");
-        let go = log
-            .lines()
-            .find(|l| l.split_whitespace().any(|w| w == "go"))
-            .expect(&log);
-        assert!(go.contains("pane-orchestrator"), "{go}");
-    }
-
-    #[test]
-    fn two_panes_and_no_root_pane_do_not_run() {
+    fn missing_root_pane_does_not_list_panes() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
         let herdr = write_fake(
             &tmp,
             &FakeSpec {
                 root: "absent",
-                panes: TWO_PANE_LIST,
                 ..FakeSpec::default()
             },
         );
-        let exe = exe_marker(&tmp);
-        let err = arrange(&herdr, &exe, &tmp.root, "127.0.0.1:9").unwrap_err();
-        assert!(err.contains("no single pane"), "{err}");
+        arrange(&herdr, &tmp.root).unwrap();
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
-        assert!(log.contains("pane list"), "{log}");
-        assert!(!log.contains("pane run"), "{log}");
-    }
-
-    #[test]
-    #[ignore = "live herdr list; set CRUCIBLE_ROOM_LIVE=1"]
-    fn live_herdr_list_commands() {
-        if std::env::var("CRUCIBLE_ROOM_LIVE").ok().as_deref() != Some("1") {
-            return;
-        }
-        let bin = std::env::var("CRUCIBLE_HERDR").unwrap_or_else(|_| "herdr".to_string());
-        for args in [
-            &["workspace", "list"][..],
-            &["tab", "list"][..],
-            &["pane", "list"][..],
-        ] {
-            let out = Command::new(&bin)
-                .args(args)
-                .output()
-                .unwrap_or_else(|e| panic!("spawn {bin} {args:?}: {e}"));
-            assert!(
-                out.status.success(),
-                "{args:?}: {}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            let text = String::from_utf8_lossy(&out.stdout);
-            parse_json(&text).unwrap_or_else(|e| panic!("{args:?}: {e}: {text}"));
-        }
+        assert!(!log.contains("pane list"), "{log}");
+        assert_eq!(log.matches("tab create").count(), 4, "{log}");
+        assert_join_log(&log);
     }
 }
