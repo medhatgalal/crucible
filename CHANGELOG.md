@@ -99,6 +99,11 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.23.1] - 2026-09-26
+
+### Docs
+- ADR 0001 and `docs/working-mode.md` no longer say the product is 1.17.0 or that `adopt` / `cycle` / `drive` are a POSIX program. Those verbs are the Rust `crucible` binary. `wm.sh` stays the exec shim. The tarball is still `crucible-$VERSION.tar.gz`: a git archive of the tag with the host-built release binary installed as `crucible`. No new verb.
+
 ## [1.23.0] - 2026-09-26
 
 ### Web
