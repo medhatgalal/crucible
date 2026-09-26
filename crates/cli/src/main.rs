@@ -128,53 +128,53 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
                 Err(err) => guided_fail(err),
             }
         }),
-        "cycle" => with_guided_root(|root| guided_ok(crucible_guided::cycle(root, &args, clock))),
+        "cycle" => with_program_root(|root| guided_ok(crucible_guided::cycle(root, &args, clock))),
         "drive" => {
-            with_guided_root(|root| guided_ok(crucible_guided::drive::drive(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::drive::drive(root, &args, clock)))
         }
         "claim" => {
-            with_guided_root(|root| guided_ok(crucible_guided::claims::claim(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::claims::claim(root, &args, clock)))
         }
-        "triage" => with_guided_root(|root| match crucible_guided::triage::triage(root) {
+        "triage" => with_program_root(|root| match crucible_guided::triage::triage(root) {
             Ok(report) => guided_report(report.text, report.status),
             Err(err) => guided_fail(err),
         }),
         "add" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::add(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::add(root, &args, clock)))
         }
-        "dispatch" => with_guided_root(|root| {
+        "dispatch" => with_program_root(|root| {
             guided_ok(crucible_guided::dispatch::dispatch(root, &args, clock))
         }),
-        "attempt" => with_guided_root(|root| {
+        "attempt" => with_program_root(|root| {
             guided_ok(crucible_guided::attempt::attempt(root, &args, clock))
         }),
         "result" => {
-            with_guided_root(|root| guided_ok(crucible_guided::result::result(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::result::result(root, &args, clock)))
         }
-        "contract-audit" => with_guided_root(|root| {
+        "contract-audit" => with_program_root(|root| {
             guided_ok(crucible_guided::audit::contract_audit(root, &args, clock))
         }),
-        "plan-audit" => with_guided_root(|root| {
+        "plan-audit" => with_program_root(|root| {
             guided_ok(crucible_guided::audit::plan_audit(root, &args, clock))
         }),
-        "probe-acp" => with_guided_root(|root| {
+        "probe-acp" => with_program_root(|root| {
             guided_ok(crucible_guided::audit::probe_acp(root, &args, clock))
         }),
         "phase" => {
-            with_guided_root(|root| guided_ok(crucible_guided::phase::phase(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::phase::phase(root, &args, clock)))
         }
         "task" => {
-            with_guided_root(|root| guided_ok(crucible_guided::task::task(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::task::task(root, &args, clock)))
         }
         "ready" => {
-            with_guided_root(|root| guided_ok(crucible_guided::task::ready(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::task::ready(root, &args, clock)))
         }
-        "check" => with_guided_root(|root| match crucible_guided::close::check(root, &args) {
+        "check" => with_program_root(|root| match crucible_guided::close::check(root, &args) {
             Ok(report) => guided_report(report.text, report.status),
             Err(err) => guided_fail(err),
         }),
         "close" => {
-            with_guided_root(
+            with_program_root(
                 |root| match crucible_guided::close::close(root, &args, clock) {
                     Ok(text) => guided_report(text, 0),
                     Err(GuidedError::Message(msg)) if msg == "need a slug" => {
@@ -186,28 +186,32 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
             )
         }
         "evidence" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::evidence(root, &args)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::evidence(root, &args)))
         }
         "run" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::run(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::run(root, &args, clock)))
         }
         "run-claim" => {
-            with_guided_root(|root| guided_ok(crucible_guided::run::run_claim(root, &args, clock)))
+            with_program_root(|root| guided_ok(crucible_guided::run::run_claim(root, &args, clock)))
         }
-        "next" => with_guided_root(|root| guided_ok(crucible_guided::inspect::next(root))),
-        "agents" => with_guided_root(|root| guided_ok(crucible_guided::inspect::agents(root))),
+        "next" => with_program_root(|root| guided_ok(crucible_guided::inspect::next(root))),
+        "agents" => with_program_root(|root| guided_ok(crucible_guided::inspect::agents(root))),
         "target" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::target(root, &args)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::target(root, &args)))
         }
-        "state" => with_guided_root(|root| guided_ok(crucible_guided::inspect::state(root))),
+        "state" => with_program_root(|root| guided_ok(crucible_guided::inspect::state(root))),
         "lifecycle" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::lifecycle(root, &args)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::lifecycle(root, &args)))
         }
-        "brief" => with_guided_root(|root| guided_ok(crucible_guided::inspect::brief(root, &args))),
+        "brief" => {
+            with_program_root(|root| guided_ok(crucible_guided::inspect::brief(root, &args)))
+        }
         "workid" => {
-            with_guided_root(|root| guided_ok(crucible_guided::inspect::workid(root, &args)))
+            with_program_root(|root| guided_ok(crucible_guided::inspect::workid(root, &args)))
         }
-        "panes" => with_guided_root(|root| guided_ok(crucible_guided::inspect::panes(root, &args))),
+        "panes" => {
+            with_program_root(|root| guided_ok(crucible_guided::inspect::panes(root, &args)))
+        }
         "selftest" => cmd_selftest(rest),
         "help" => cmd_help(rest),
         other => unknown_verb(other),
@@ -216,6 +220,13 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
 
 fn with_guided_root(body: impl FnOnce(&Path) -> i32) -> i32 {
     match crucible_guided::root() {
+        Ok(root) => body(&root),
+        Err(err) => guided_fail(err),
+    }
+}
+
+fn with_program_root(body: impl FnOnce(&Path) -> i32) -> i32 {
+    match crucible_guided::program_root() {
         Ok(root) => body(&root),
         Err(err) => guided_fail(err),
     }

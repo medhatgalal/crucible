@@ -1838,7 +1838,14 @@ pub(crate) fn self_path(root: &Path) -> String {
             let rt = physical(root);
             if let Ok(rest) = rt.strip_prefix(&rr) {
                 if !rest.as_os_str().is_empty() {
-                    return format!("{}/crucible", rest.display());
+                    let installed = rr.join(rest).join("crucible");
+                    if is_regular(&installed) {
+                        return format!("{}/crucible", rest.display());
+                    }
+                    // No program binary. `./crucible` names the checkout wrapper
+                    // when `repo/crucible` is a regular file, and is today's
+                    // string when that file is absent too.
+                    return "./crucible".to_string();
                 }
             }
         }

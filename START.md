@@ -40,6 +40,7 @@ the **other** loop. Do not mix. Install/refresh: [docs/install.md](docs/install.
 - `STOP-ASK QUESTIONS`: write `ANSWERS.md` (or clear `QUESTIONS.md`), then `go`.
 - `STOP-ASK MAP-HUMAN`: HIGH/live only. LOW local maps do not need it.
 - Engine (fix `wm.sh`) is a different loop — do not `go` a product to patch it.
+- On this checkout the binary is `./crucible`, and the program root is the state-only record.
 - Board: `.wm/FLOOR.md`, `.wm/TRACE.tsv`, `.wm/CLOSED`. How-to:
   [docs/working-mode.md](docs/working-mode.md).
 

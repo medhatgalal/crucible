@@ -15,7 +15,10 @@ not this documentation tree and not `.crucible/<program>/`.
 built. Cwd is always the **product** (target) root. `adopt` copies the engine
 *into* `.crucible/<program>/` in the product. Never adopt into the engine repo
 unless the intent is engine work — and then do not `go` a product to patch
-`wm.sh`. Engine work is a different loop.
+`wm.sh`. Engine work is a different loop. When the product toplevel is the
+engine source, `adopt <program> --managed` writes a state-only record under
+`.crucible/<program>/` and does not copy the engine; `./crucible drive` uses
+that record; `--refresh` from this same checkout is refused.
 
 Protocol: [START.md](../START.md). Guided outer loop: [drive.md](drive.md).
 Working-mode outer loop: `/crucible` (Grok, Kiro CLI, or Codex) then [working-mode.md](working-mode.md).

@@ -36,7 +36,7 @@ pub use cycle::{cycle, cycle_investigation_state, cycle_worth, write_cycle_statu
 pub use panel::{panel_approval_current, panel_id, panel_valid, proposal_id, proposal_valid};
 pub use program::{lifecycle_mode, uses_guided_cycle, uses_managed_lifecycle, LifecycleMode};
 pub use project::project_cycle_line;
-pub use root::root;
+pub use root::{program_root, root};
 pub use state::{
     state_add_item, state_commit, state_lock, state_render_file, state_unlock, state_update_item,
     state_validate_file, state_value, StateLock, STATE_HEADER,
@@ -224,6 +224,22 @@ mod tests {
             let exe = std::env::current_exe().unwrap();
             let expect = exe.parent().filter(|p| !p.as_os_str().is_empty()).unwrap();
             assert_eq!(root().unwrap(), expect);
+        });
+    }
+
+    #[test]
+    fn program_root_keeps_a_directory_that_already_has_program() {
+        let tmp = Tmp::new();
+        fs::write(tmp.path().join("PROGRAM"), "cycle: guided\n").unwrap();
+        let other = tmp.path().join(".crucible/other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(
+            other.join("PROGRAM"),
+            "repo: /\nlifecycle: managed\ncycle: guided\n",
+        )
+        .unwrap();
+        with_root_env(Some(tmp.path().as_os_str()), None, || {
+            assert_eq!(program_root().unwrap(), tmp.path());
         });
     }
 
