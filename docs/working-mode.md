@@ -20,7 +20,10 @@ text. The verbs are not a shell on that page.
 Install **from** the engine tree **into** the product. Never adopt into the
 engine repo unless the intent is engine work — and then do not `go` a product.
 Engine work (fix `wm.sh`, change Crucible) is a different loop. Do not `go` a
-product as a way to patch the engine.
+product as a way to patch the engine. When the product toplevel is the engine
+source, `adopt <program> --managed` writes a state-only record under
+`.crucible/<program>/` and does not copy the engine; `./crucible drive` uses
+that record; `--refresh` from this same checkout is refused.
 
 Guided loop (default `adopt work --managed`): `cycle` / `drive`. Working-mode
 (`adopt work --managed --working-mode`): `/crucible` then `go`. Do not mix.
