@@ -397,6 +397,8 @@ printf 'fleet\n' > "$AD/.crucible/herdr/workspace"
 chmod 600 "$AD/.crucible/herdr/workspace"
 printf 'chat\norchestrator\nwatcher\nreaper\ndashboard\nterminal\n' \
   > "$AD/.crucible/herdr/roles"
+cp "$AD/.crucible/herdr/roles" "$BASE/kept-roles"
+chmod 640 "$AD/.crucible/herdr/roles"
 printf 'nope\n' > "$AD/.crucible/work/templates/herdr/workspace"
 printf 'nope\n' > "$AD/.crucible/work/templates/herdr/roles"
 
@@ -410,8 +412,13 @@ assert_fleet_label() {
     600|0600) ok ;;
     *) bad "herdr workspace label mode is $mode, want 0600" ;;
   esac
-  cmp -s "$HERE/templates/herdr/roles" "$AD/.crucible/herdr/roles" \
-    && ok || bad 'herdr roles drifted from engine template'
+  cmp -s "$BASE/kept-roles" "$AD/.crucible/herdr/roles" \
+    && ok || bad 'refresh rewrote a regular herdr roles file'
+  mode_roles=$(stat -f '%OLp' "$AD/.crucible/herdr/roles" 2>/dev/null || stat -c '%a' "$AD/.crucible/herdr/roles")
+  case $mode_roles in
+    640|0640) ok ;;
+    *) bad "herdr roles mode is $mode_roles, want 0640" ;;
+  esac
   cmp -s "$HERE/templates/herdr/workspace" "$AD/.crucible/work/templates/herdr/workspace" \
     && ok || bad 'program herdr workspace drifted from engine template'
   cmp -s "$HERE/templates/herdr/roles" "$AD/.crucible/work/templates/herdr/roles" \

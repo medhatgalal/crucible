@@ -5,13 +5,6 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-### Install
-- `crucible adopt` and `crucible adopt --refresh` copy `templates/herdr/workspace`
-  (`crucible`) and `templates/herdr/roles` (chat, orchestrator, watcher, reaper,
-  dashboard) into `.crucible/herdr/` and the installed program's `templates/herdr/`.
-  They do not run `herdr`. Refresh leaves an existing regular workspace file
-  unchanged, including its mode, so the label is not reset. No VERSION bump.
-
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`
   `/skills/<name>`) are real copies of `skills/<name>`, not symlinks.
@@ -19,27 +12,6 @@ All notable changes to this project are documented here. This project follows
   KEEP restore recopies that battery into the harness directories.
   `$HOME` skill trees are not the source of truth. Codex stays on
   `.agents/skills` (no second `.codex/skills` tree). No VERSION bump.
-
-### Room
-- `crucible room` reads `<cwd>/.crucible/herdr/` before herdr and before listen.
-  A bad layout exits 2 and does not call herdr. It attaches to exactly one
-  existing workspace label (cwd is not identity). Zero or more than one match
-  exits 1 and does not create, close, or rename a workspace. A role tab is
-  added only when that label is absent, and `go`, `reap`, and `camera` pane-run
-  only on a tab this call created. No VERSION bump.
-- `crucible room` asks external `herdr` for a workspace and standing tabs
-  (chat, orchestrator, watcher, reaper, dashboard). A second run does not
-  create the same tab again. Watcher and dashboard run `camera` (GET only).
-  `go` is `herdr pane run` in the orchestrator only when `IDEA.md` is
-  non-empty or a READY `BACKLOG.tsv` row exists. `reap --pid` sends SIGTERM
-  to that process group only when process-info pid is >= 2. Missing `herdr`:
-  exit 2, no serve, no TRACE. No `POST /go`. No Herdr crate.
-- Before listen, `crucible room` probes `GET /health` on `127.0.0.1:1734`
-  (one 100ms connect, one 2s read). A matching VERSION is reused (`serve
-  reused`). Only connection refused spawns this binary's `serve --bind
-  127.0.0.1:1734`. Any other probe exits 1 and does not call herdr (no
-  `SO_REUSEPORT`). Herdr is `PATH`, else `CRUCIBLE_HERDR`. Never `herdr
-  server`. No `config.toml` write.
 
 ### Web
 - `crucible web` is a loopback page (default `127.0.0.1:1735`) that
@@ -62,16 +34,6 @@ All notable changes to this project are documented here. This project follows
   `src/.grok/rules/loop-router.md` into the product as a regular file, with or
   without `--working-mode`, and do not write `$HOME`. A destination symlink is
   replaced. There is no KEEP.
-
-### Room
-- `crucible room` probes `GET /health` on `127.0.0.1:1734` before any listen.
-  Matching VERSION reuses that process (`serve reused`). Only connection
-  refused spawns this binary's (`current_exe`) `serve --bind 127.0.0.1:1734`
-  — not PATH `wm`/`crucible`, and not `SO_REUSEPORT`. Any other probe exits 1
-  and does not call herdr. Herdr is on `PATH`, else `CRUCIBLE_HERDR`. Missing
-  or non-executable: exit 2, no listen, no TRACE. Standing roles (chat,
-  orchestrator, watcher, reaper, dashboard). Not a herdr-init copy. No
-  `POST /go`. Kernel/contract stay Herdr-free.
 
 ### Docs
 - `/crucible` skill forbids `/execute-plan` as the product walker for adopted
@@ -98,6 +60,32 @@ All notable changes to this project are documented here. This project follows
   `GET /stats?since=8h|24h|7d` matches `stats --json`, `GET /health` reports
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
+
+## [1.24.0] - 2026-09-26
+
+### Room
+- `crucible room` joins one existing Herdr workspace. It does not create,
+  close, or rename a workspace. Standing labels are `terminal`, `chat`,
+  `orchestrator`, and `dashboard`, created only when that label is absent.
+  Watcher, reaper, and watchdog tabs are left in place and are not created.
+  Room pane-runs nothing. Serve on `127.0.0.1:1734` is unchanged (probe,
+  reuse on a matching version, spawn this binary only on connection refused).
+  Missing herdr exits 2 and does not listen. A roles file that is still
+  `chat`, `orchestrator`, `watcher`, `reaper`, `dashboard` is valid: room
+  attaches, ensures only the four labels, leaves those tabs, and exits 0.
+
+### Install
+- `adopt` and `adopt --refresh` copy `templates/herdr/` into
+  `.crucible/herdr/` and the installed program's `templates/herdr/`. They do
+  not run herdr. Refresh leaves a regular `.crucible/herdr/workspace` and a
+  regular `.crucible/herdr/roles` unchanged, including mode. A missing roles
+  file is the four lines `terminal`, `chat`, `orchestrator`, `dashboard`.
+  A product that already has the five-line roles file keeps those bytes.
+  The program template copy is updated to the four lines.
+
+### Docs
+- ADR 0001, `docs/install.md`, and `docs/whats-new.md` record the join.
+  `docs/working-mode.md` pins 1.24.0.
 
 ## [1.23.1] - 2026-09-26
 

@@ -4,11 +4,13 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
-`crucible room` reads `<cwd>/.crucible/herdr/`. A bad layout exits 2 before herdr and before listen. It attaches to one existing Herdr workspace label and does not create a workspace. It adds a role tab only when that label is absent, and pane-runs `go`, `reap`, and `camera` only on a tab this call created. It probes `GET /health` on `127.0.0.1:1734` and spawns this binary's `serve --bind 127.0.0.1:1734` only on connection refused. Missing herdr does not listen.
-
 `crucible serve --bind 127.0.0.1:PORT` (default `127.0.0.1:1734`) GET `/walk`,
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
+
+## 1.24.0 — join the Herdr room
+
+`crucible room` joins one existing Herdr workspace. It does not create, close, or rename a workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, added only when that label is absent. It does not add or close watcher, reaper, or watchdog tabs. It pane-runs nothing. Serve on `127.0.0.1:1734` is unchanged. Missing herdr does not listen. A kept five-line roles file (`chat`, `orchestrator`, `watcher`, `reaper`, `dashboard`) still joins: ensure only the four labels, leave watcher and reaper tabs, pane-run nothing, exit 0.
 
 ## 1.23.1 — guided contract text
 
