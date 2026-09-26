@@ -10,6 +10,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.23.1 — guided contract text
+
+ADR 0001 and the working-mode how-to now say `adopt`, `cycle`, and `drive` are the Rust binary. `wm.sh` is still the exec shim. No new verb.
+
 ## 1.23.0 — evidence archive
 
 The page waits on `evidence`. A click (`[]`) writes nothing and shows exit 2

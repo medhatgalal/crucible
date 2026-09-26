@@ -563,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.23.0");
+    assert_eq!(ver_before.trim(), "1.23.1");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -580,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.23.0");
+    assert_eq!(want, "1.23.1");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -2602,7 +2602,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.23.0");
+    assert_eq!(health["version"], "1.23.1");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2906,7 +2906,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.23.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.23.1"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"

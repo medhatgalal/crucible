@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-21
 - **Status:** Accepted
-- **Product VERSION:** 1.17.0 (cut-over already shipped). This ADR does not bump `VERSION`.
+- **Product VERSION:** 1.23.1. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This docs correction bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
 
 Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run `/crucible` intake and `go` until `CLOSED` / `STOP-ASK` / `ESCALATE`.
 
@@ -12,13 +12,13 @@ This ADR freezes D1–D22. Living spec is `crates/contract` tests, verify-workin
 
 ## Current tree (main)
 
-Honest snapshot of this repo after **1.17.0** (Rust working-mode cut-over). Room, web, and the skill copies are in the tree. `VERSION` stays 1.17.0.
+Honest snapshot of this repo at **1.23.1**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.23.1.
 
 | Piece | On main now |
 | --- | --- |
 | Kernel | Rust (`crates/kernel`). Not POSIX `floor_write`. |
 | Product binary | Cargo `[[bin]]` name **`crucible`** (`crates/cli`). **No `wm` binary.** |
-| Wrapper | Repo-root `wm.sh`: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
+| Wrapper | Repo-root `wm.sh` is the exec shim: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
 | Guided | Rust (`crates/guided`), dispatched by the `crucible` binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN` or `target/release/crucible`). `crucible-guided` only execs the sibling binary. Not a second kernel. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
 | Room | Landed (`crates/room`): `crucible room` probes `GET /health` on `127.0.0.1:1734` before listen. Matching VERSION is reused. Only connection refused spawns this binary's `serve`. External herdr; standing roles. Help lists `room` and `doctor`. |
@@ -29,18 +29,18 @@ Honest snapshot of this repo after **1.17.0** (Rust working-mode cut-over). Room
 | Stats | `crucible.stats/v1` reads `.wm/EVENTS` when that WAL file exists (`source: "events"`), else `.wm/METRICS.tsv` (`source: "metrics"`). |
 | Human `status` | Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. `status --json` and GET `/walk` stay read-only. |
 
-Non-goals of this ADR PR: do not implement kernel, do not dump `wm.sh`, do not bump `VERSION`.
+Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`, do not add a verb. `VERSION` becomes 1.23.1 because these pages ship in the tarball.
 
 ## PATH layout (D18)
 
 | Role | Name | Where |
 | --- | --- | --- |
 | Working-mode **kernel binary** | **`crucible`** | Engine tarball root; copied to `.crucible/work/crucible` |
-| Guided **POSIX entry** | **`./crucible`** in the engine git tree; **`crucible-guided`** in the release tarball | `adopt` / `cycle` / `drive` / `help`. Not the walker. |
+| Guided verbs | **`crucible`** (Rust) | Engine git tree: repo-root `./crucible` is a finder (`#!/bin/sh`) and execs `CRUCIBLE_BIN` or `target/release/crucible`. Release tarball: `crucible` is the host-built release binary. `crucible-guided` is `#!/bin/sh` and only execs the sibling `crucible`. Not a second implementation. Not the walker. `adopt` / `cycle` / `drive` / `help`. |
 | Wrapper | **`wm.sh`** | `WM_WRAPPER=$0`; `exec` absolute sibling `crucible`. Copied to `.crucible/<program>/wm.sh`. |
 | `exec` target | Absolute path **next to the wrapper** | Never a bare `crucible` or `wm` on `PATH` |
 
-Operator inner loop stays `.crucible/work/wm.sh go`. `~/.local/bin/crucible` as the **walker** is rejected (collides with POSIX adopt). Room and `serve` spawn `std::env::current_exe()` or `"$bindir/crucible"`, never PATH `crucible`.
+Operator inner loop stays `.crucible/work/wm.sh go`. `~/.local/bin/crucible` as the **walker** is rejected (it collides with guided `crucible`, the Rust binary adopt installs). Room and `serve` spawn `std::env::current_exe()` or `"$bindir/crucible"`, never PATH `crucible`.
 
 Wrapper (the only shipped walker `.sh`; not `exec -a`):
 
@@ -60,25 +60,27 @@ Help may use `WM_WRAPPER` when set so greps still see `run: .crucible/<prog>/wm.
 crates/
   contract/   # snapshot, events, parse/emit files — no I/O servers
   kernel/     # go, run, independence, FLOOR/TRACE/EVENTS writers
-  cli/        # argv → kernel/contract (the `crucible` binary)
+  cli/        # argv → kernel/contract and `guided` (the `crucible` binary)
   http/       # GET serve; same types as cli; never writes
   room/       # probe GET /health; external herdr; GET cameras; spawn go
   web/        # loopback page; append BACKLOG.tsv and .wm/CHAT.md; POST /act/go spawns go; read-only POST /act spawns that verb and waits.
+  guided/     # adopt, cycle, drive; library. The `crucible` binary dispatches it. Not a second binary.
 skills/                 # canonical skill trees
 .grok/skills/           # real copy of skills/ (not a symlink)
 .grok/rules/loop-router.md  # real file, bytes of testdata/loop-router.md; not a symlink
 .claude/skills/         # real copy of skills/
 .agents/skills/         # real copy of skills/ (Codex; no .codex/skills)
 .kiro/skills/           # real copy of skills/
-wm.sh                   # WM_WRAPPER; exec "$bindir/crucible"
-crucible                # POSIX adopt/cycle/drive (engine tree)
+wm.sh                   # exec shim: WM_WRAPPER; exec "$bindir/crucible"
+crucible                # finder: CRUCIBLE_BIN or target/release/crucible (engine tree)
+crucible-guided         # thin exec of the sibling crucible; not a second implementation
 architecture/adr/       # landed decisions only
 architecture/wip/       # gitignored; not source
 ```
 
 No `wrappers/` directory. `room`, `web`, and the skill copies are in this tree. `web` is not a second kernel.
 
-**Dependency rule:** `contract` has no servers. `kernel` depends on `contract` only. `http` and `cli` depend on `contract` (`cli` also on `kernel` / `http` for verbs that mutate or serve). `room` depends on process spawn + HTTP client — **not** on `kernel` internals and **not** on a Herdr crate. `web` depends on `contract` and `http`, not on `kernel`. `crates/kernel` and `crates/contract` MUST NOT import Herdr, Grok, or EngOS types. Default musl features: **zero** Herdr crates in the whole `crucible` tree.
+**Dependency rule:** `contract` has no servers. `kernel` depends on `contract` only. `http` and `cli` depend on `contract` (`cli` also on `kernel` / `http` for verbs that mutate or serve). `cli` depends on `guided` for `adopt` / `cycle` / `drive`. `room` depends on process spawn + HTTP client — **not** on `kernel` internals and **not** on a Herdr crate. `web` depends on `contract` and `http`, not on `kernel`. `crates/kernel` and `crates/contract` MUST NOT import Herdr, Grok, or EngOS types. Default musl features: **zero** Herdr crates in the whole `crucible` tree.
 
 ```mermaid
 flowchart TB
@@ -87,7 +89,7 @@ flowchart TB
     ROOM["room"]
     WEB["web"]
     CAT["human / cat / tmux"]
-    POSIX["POSIX crucible / crucible-guided"]
+    GUIDED["Rust guided adopt / cycle / drive"]
     STATUS["bare status"]
   end
   subgraph kernelLayer [Kernel go]
@@ -114,7 +116,7 @@ flowchart TB
   WEB -->|append only| CHAT
   WEB -->|POST /act/go spawns process group| BIN
   WEB -->|POST /act read-only verb, no process group| BIN
-  POSIX -.->|does not go| BIN
+  GUIDED -.->|does not go| BIN
   BIN --> K
   K --> C
   SERVE --> C
@@ -141,8 +143,8 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D1 | Keep this repo. Do not retire it. Room is a **crate in this repo**, not a second kernel repo. |
 | D2 | **Rust is the only kernel.** No mixed “sh writes / rust reads” product mode. No long compat dual-walker. |
 | D3 | **`.sh` is wrappers only:** export `WM_WRAPPER=$0` then `exec` the versioned **`crucible`** binary by **absolute sibling path** (never `exec -a`). No card logic, no FLOOR writes, no TRACE in shell. |
-| D4 | Release: **versioned static `crucible`** in GitHub/GitLab release + tarball (`dist/crucible-$VERSION.tar.gz`). `adopt --refresh` installs **that** binary plus POSIX guided entry. Product machines need **no rustc**. Contributors: cargo + rustfmt + clippy. |
-| D5 | v1 walker = **working-mode** only. Guided `cycle`/`drive` later, **same** snapshot schema. |
+| D4 | Release: **versioned static `crucible`** in the GitHub release + tarball (`dist/crucible-$VERSION.tar.gz`, prefix `crucible-$VERSION/`). The file named `crucible` in the tarball is the host release binary. `wm.sh` and `crucible-guided` stay the committed exec shims. `crucible-guided` only execs the sibling binary. `adopt --refresh` installs **that** binary. Product machines need **no rustc**. Contributors: cargo + rustfmt + clippy. There is no platform-qualified asset name. |
+| D5 | v1 walker = **working-mode** only, and guided `cycle` / `drive` are on the Rust `crucible` binary now, **same** snapshot schema. |
 | D6 | Superpowers is **not** a dependency. EngOS is **not** in the walk. |
 | D7 | Grok slash is **not** inside a walk unless the user **interrupts**. Workers = harness CLIs Crucible starts. |
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
@@ -151,12 +153,12 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` in a product repo: start kernel serve if needed, start Herdr **structured tabs/roles** (chat, orchestrator, watcher, reaper, dashboard), cameras **GET** the API. Attach to exactly one existing workspace label from <cwd>/.crucible/herdr/workspace. Do not create, close, or rename a workspace. pane run only a tab this call created. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. Not a fork of herdr-init; **recreate** the concept. |
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
-| D14 | Identity: static `crucible` + POSIX guided entry + files + cargo for contributors. CHANGELOG 1.17.0 records the break from “POSIX sh is the **working-mode** engine.” |
+| D14 | Identity: static `crucible` (working-mode kernel and guided verbs) + `wm.sh` exec shim + files + cargo for contributors. `crucible-guided` only execs the sibling binary. The 1.17.0 changelog section records the break from “POSIX sh is the **working-mode** engine.” The 1.18.0 changelog section records guided verbs on that same binary. |
 | D15 | **Grok router is required** as a real file `<repo>/.grok/rules/loop-router.md` (bytes identical to `testdata/loop-router.md`; not a symlink; not under `.crucible/`). Keep-current: `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` and does not write; `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Engine CI hashes the fixture against this ADR (never `$HOME`). Must **not** force `/execute-plan` inside `/crucible`. |
 | D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Campaign WIP stays gitignored under `architecture/wip/`. Rotting `docs/superpowers/plans/` deleted. |
 | D17 | Web is a **client of GET JSON**, not a second kernel. Timing is ADR 0002 and the web drive: the web process may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. No walker logic in the UI. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. Still no walker logic in the UI. |
-| D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec wrapper (absolute sibling). Engine-tree POSIX `./crucible` is not overwritten by `cargo build`; the tarball installs Rust `crucible` beside `crucible-guided`. |
-| D19 | v1 Rust owns working-mode + `serve`. Guided `cycle`/`drive` (and `adopt`/`refresh` on the POSIX entry) stay on `./crucible` / `crucible-guided` until a later tag, same schema. `room` has landed. |
+| D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec shim (absolute sibling). Engine-tree `./crucible` is the finder and is not overwritten by `cargo build`. The tarball installs the Rust release binary as `crucible`. `crucible-guided` stays the thin sibling exec, not a second implementation. |
+| D19 | Rust owns working-mode, `serve`, and guided `adopt` / `cycle` / `drive` (`crates/guided`, dispatched by the `crucible` binary). The deferral until a later tag already shipped: 1.18.0. Same schema. `room` has landed. This tag has no separate guided program. |
 | D20 | **Operator override:** `crucible serve` never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. `status --json` and GET `/walk` stay read-only. Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. Read-only act spawns do not write files. Bare `status`, `close`, `drive`, and `adopt` may be spawned from the page (ADR 0002 page-writer addendum). The web process still does not write FLOOR, BACKLOG, or CHAT except through the backlog and chat handlers. |
 | D21 | Herdr is an **external process** (`herdr` on PATH). Default musl `crucible` has **zero** Herdr crates. |
 | D22 | WAL path is **`.wm/EVENTS`** (JSONL, no `.jsonl` suffix). |
@@ -182,8 +184,8 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D15 | Phrase map rots otherwise | Router as product walker; CI reads `$HOME` |
 | D16 | Rotting `docs/superpowers/plans/` | Design dumps next to how-to |
 | D17 | No second source of truth. Timing is ADR 0002 | Walker logic in the UI |
-| D18 | One product name; POSIX adopt must not collide | A `wm` kernel binary; dumping `wm.sh` while docs still say `wm.sh go` |
-| D19 | Guided porcelain stays POSIX until a later tag | Rust `adopt` / retire POSIX entry in v1 |
+| D18 | One product name; a PATH walker named `crucible` collides with guided `crucible` | A `wm` kernel binary; dumping `wm.sh` while docs still say `wm.sh go` |
+| D19 | Guided `adopt` / `cycle` / `drive` are Rust on this tag (shipped 1.18.0) | A shell guided program after that tag |
 | D20 | CLI=HTTP CHECK is coherent | `serve` writes; `--json` or GET `/walk` appends TRACE |
 | D21 | Static binary; kernel stays clean | Link Herdr into `crucible` |
 | D22 | Pin golden path | `.wm/EVENTS.jsonl`; implementer choice |
@@ -279,7 +281,7 @@ Fake-fail: copy herdr-init; Herdr types in kernel/contract; Herdr crate on defau
 
 ## Packaging
 
-Local filename stays **`crucible-$VERSION.tar.gz`** with prefix **`crucible-$VERSION/`**. Contents: host-platform `crucible` binary + `wm.sh` wrapper + POSIX `crucible-guided` + skills. Product machines: **no rustc**. CI may rename the upload to a platform-qualified asset; local CHECKs use the unplatformed name.
+Local filename stays **`crucible-$VERSION.tar.gz`** with prefix **`crucible-$VERSION/`**. The file named `crucible` in the tarball is the host release binary. `wm.sh` and `crucible-guided` stay the committed exec shims. `crucible-guided` only execs the sibling binary. Product machines need **no rustc**. There is no platform-qualified asset name.
 
 This ADR does not change `package-release.sh`.
 
@@ -295,7 +297,7 @@ All rejected. Do not reopen without a new ADR.
 | A4 `POST /go` | D10 |
 | A5 Superpowers / EngOS / Core-Prompts in the binary | D6, D12 |
 | A6 Kernel binary named `wm` | D18 operator override: product binary is `crucible` |
-| A7 Rust grows `adopt` / retire POSIX guided in v1 | D5, D19 |
+| A7 Rust grows `adopt` and retires the shell guided program on the working-mode cut-over tag | D5, D19. Rejected for that tag. The later tag is 1.18.0. This row is not a description of 1.23.1. |
 | A8 GET `/walk` or `status --json` writes | D20 |
 | A9 Herdr crate linked into default musl `crucible` | D21 |
 | A10 Dump `wm.sh` on cut-over | Operator inner loop and verify greps still name `.crucible/work/wm.sh go`. Wrapper stays. |

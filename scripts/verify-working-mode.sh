@@ -34,7 +34,7 @@ trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 130' 2
 trap 'rm -rf "$BASE" "$EMPTY_HOME"; exit 143' 15
 
 VERSION=$(sed -n '1p' "$HERE/VERSION")
-[ "$VERSION" = 1.23.0 ] && ok || bad "VERSION wanted 1.23.0 got $VERSION"
+[ "$VERSION" = 1.23.1 ] && ok || bad "VERSION wanted 1.23.1 got $VERSION"
 
 sh -n "$WM" && ok || bad 'wm.sh is not valid POSIX sh'
 if grep -q 'WM_WRAPPER' "$WM" && grep -q 'exec' "$WM" && grep -q 'crucible' "$WM"; then
@@ -71,13 +71,13 @@ WM="$STAGE/wm.sh"
 export WM_ENGINE="$WM"
 
 ver=$("$STAGE/crucible" --version 2>"$ERR") || ver=
-[ "$ver" = 1.23.0 ] && ok || bad "crucible --version wanted 1.23.0 got $ver"
+[ "$ver" = 1.23.1 ] && ok || bad "crucible --version wanted 1.23.1 got $ver"
 ver=$("$STAGE/crucible" -V 2>"$ERR") || ver=
-[ "$ver" = 1.23.0 ] && ok || bad "crucible -V wanted 1.23.0 got $ver"
+[ "$ver" = 1.23.1 ] && ok || bad "crucible -V wanted 1.23.1 got $ver"
 
 # Wrapper execs the sibling binary (not POSIX ./crucible).
 wrap=$("$WM" --version 2>"$ERR") || wrap=
-[ "$wrap" = 1.23.0 ] && ok || bad "wm.sh --version (wrapper exec) wanted 1.23.0 got $wrap err=$(cat "$ERR")"
+[ "$wrap" = 1.23.1 ] && ok || bad "wm.sh --version (wrapper exec) wanted 1.23.1 got $wrap err=$(cat "$ERR")"
 
 # go without IDEA.md is STOP-ASK INTAKE (rust). Do not use wm.sh go as the
 # product walker except to prove the wrapper execs rust.
