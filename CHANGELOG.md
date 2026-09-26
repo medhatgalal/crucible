@@ -99,6 +99,15 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.23.0] - 2026-09-26
+
+### Web
+- The page waits on `evidence`. A click (`[]`) writes nothing and shows
+  exit 2 with an empty body. Typed `archive SLUG` creates `history` and
+  renames non-dot stale `*.txt`. A kill mid-loop can leave some of those
+  files already renamed. `run` and `run-claim` stay off. Kernel `POST /go`
+  stays 405.
+
 ## [1.22.0] - 2026-09-26
 
 ### Web
