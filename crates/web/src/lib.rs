@@ -3,8 +3,11 @@
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
 //! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
 //! `POST /act/close`, bare `POST /act/status`, `POST /act/state`,
-//! `POST /act/target`, `POST /act/brief`, `POST /act/lifecycle`, and
-//! `POST /act/evidence` wait.
+//! `POST /act/target`, `POST /act/brief`, `POST /act/lifecycle`,
+//! `POST /act/evidence`, `POST /act/add`, `POST /act/attempt`,
+//! `POST /act/claim`, `POST /act/contract-audit`, `POST /act/cycle`,
+//! `POST /act/phase`, `POST /act/plan-audit`, `POST /act/probe-acp`, and
+//! `POST /act/ready` wait. `check` and `triage` are read-only.
 //! `POST /go` is not a walk.
 
 use std::fs::{self, OpenOptions};
@@ -317,10 +320,12 @@ fn route(
 #[rustfmt::skip]
 pub const WEB_READ_ONLY: &[&str] = &[
     "agents",
+    "check",
     "debrief",
     "next",
     "panes",
     "stats",
+    "triage",
     "workid",
 ];
 
@@ -328,12 +333,21 @@ pub const WEB_READ_ONLY: &[&str] = &[
 /// `scripts/selftest.sh` parses this const. One name per line.
 #[rustfmt::skip]
 pub const WEB_WRITERS: &[&str] = &[
+    "add",
     "adopt",
+    "attempt",
     "brief",
+    "claim",
     "close",
+    "contract-audit",
+    "cycle",
     "drive",
     "evidence",
     "lifecycle",
+    "phase",
+    "plan-audit",
+    "probe-acp",
+    "ready",
     "state",
     "status",
     "target",
@@ -1410,7 +1424,7 @@ mod tests {
         assert!(body.contains("id=\"read-args\""));
         assert!(body.contains("id=\"read\""));
         for verb in [
-            "agents", "debrief", "next", "panes", "stats", "workid", "status",
+            "agents", "check", "debrief", "next", "panes", "stats", "triage", "workid", "status",
         ] {
             assert!(
                 body.contains(&format!("data-verb=\"{verb}\"")),
@@ -1437,9 +1451,38 @@ mod tests {
         assert!(body.contains("data-verb=\"brief\" data-args=\"[]\""));
         assert!(body.contains("data-verb=\"evidence\" data-args=\"[]\""));
         assert!(body.contains(">evidence<"));
-        assert!(!body.contains("data-verb=\"run\""));
+        assert!(body.contains("data-verb=\"check\""));
+        assert!(body.contains("data-verb=\"triage\""));
+        assert!(body.contains("data-verb=\"check\" data-args=\"[]\""));
+        assert!(body.contains("data-verb=\"triage\" data-args=\"[]\""));
+        for verb in [
+            "add",
+            "attempt",
+            "claim",
+            "contract-audit",
+            "cycle",
+            "phase",
+            "plan-audit",
+            "probe-acp",
+            "ready",
+        ] {
+            assert!(
+                body.contains(&format!("data-verb=\"{verb}\" data-args=\"[]\"")),
+                "{verb} missing from {body}"
+            );
+        }
+        for verb in ["result", "dispatch", "task", "run", "run-claim"] {
+            assert!(
+                !body.contains(&format!("data-verb=\"{verb}\"")),
+                "{verb} must stay off the page"
+            );
+        }
         let read_at = body.find(">Read<").unwrap();
         let run_at = body.find("<h2>Run</h2>").unwrap();
+        let check_at = body.find("data-verb=\"check\"").unwrap();
+        let triage_at = body.find("data-verb=\"triage\"").unwrap();
+        assert!(read_at < check_at && check_at < triage_at && triage_at < run_at);
+        let add_at = body.find("data-verb=\"add\"").unwrap();
         let adopt_at = body.find("data-verb=\"adopt\"").unwrap();
         let brief_at = body.find("data-verb=\"brief\"").unwrap();
         let close_at = body.find("data-verb=\"close\"").unwrap();
@@ -1454,7 +1497,7 @@ mod tests {
             .find("data-verb=\"status\"")
             .map(|off| off + first_status + 1)
             .unwrap();
-        assert!(read_at < run_at && run_at < adopt_at && adopt_at < args_at);
+        assert!(read_at < run_at && run_at < add_at && add_at < adopt_at && adopt_at < args_at);
         assert!(first_status < run_at);
         assert!(adopt_at < brief_at && brief_at < close_at && close_at < drive_at);
         assert!(drive_at < evidence_at && evidence_at < lifecycle_at && lifecycle_at < state_at);
@@ -2014,7 +2057,7 @@ mod tests {
     fn web_read_only_is_exactly_the_non_writing_slice() {
         assert_eq!(
             WEB_READ_ONLY,
-            &["agents", "debrief", "next", "panes", "stats", "workid"][..]
+            &["agents", "check", "debrief", "next", "panes", "stats", "triage", "workid",][..]
         );
         assert!(web_act_allowed("debrief", &[]));
         assert!(web_act_allowed(
@@ -2029,17 +2072,53 @@ mod tests {
         assert_eq!(
             WEB_WRITERS,
             &[
+                "add",
                 "adopt",
+                "attempt",
                 "brief",
+                "claim",
                 "close",
+                "contract-audit",
+                "cycle",
                 "drive",
                 "evidence",
                 "lifecycle",
+                "phase",
+                "plan-audit",
+                "probe-acp",
+                "ready",
                 "state",
                 "status",
                 "target",
             ][..]
         );
+        let acts = web_page_acts();
+        for verb in [
+            "check",
+            "triage",
+            "add",
+            "attempt",
+            "claim",
+            "contract-audit",
+            "cycle",
+            "phase",
+            "plan-audit",
+            "probe-acp",
+            "ready",
+        ] {
+            let args = acts.iter().find(|act| act.verb == verb).expect(verb).args;
+            assert!(args.is_empty(), "{verb} button args {args:?}");
+        }
+        for verb in ["check", "triage"] {
+            assert!(WEB_READ_ONLY.contains(&verb), "{verb}");
+            assert!(!WEB_WRITERS.contains(&verb), "{verb}");
+            assert!(web_act_allowed(verb, &[]), "{verb}");
+        }
+        for verb in ["cycle", "claim"] {
+            assert!(WEB_WRITERS.contains(&verb), "{verb}");
+            assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
+            assert!(web_act_allowed(verb, &[]), "{verb}");
+        }
         for verb in ["state", "target", "brief", "lifecycle", "evidence"] {
             assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
             assert!(web_act_allowed(verb, &[]), "{verb}");
@@ -2056,9 +2135,105 @@ mod tests {
         for verb in ["close", "drive", "adopt"] {
             assert!(web_act_allowed(verb, &[]), "{verb}");
         }
-        for verb in ["go", "run", "run-claim"] {
+        for verb in ["go", "result", "dispatch", "task", "run", "run-claim"] {
+            assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
+            assert!(!WEB_WRITERS.contains(&verb), "{verb}");
             assert!(!web_act_allowed(verb, &[]), "{verb}");
             assert!(!web_act_allowed(verb, &["status".into()]), "{verb}");
+            assert!(
+                !web_act_allowed(verb, &["slug".into(), "maker".into(), "x".into()]),
+                "{verb}"
+            );
+        }
+    }
+
+    #[test]
+    fn station_verbs_off_the_page_do_not_spawn() {
+        let tmp = Tmp::new();
+        let exe = recorder(&tmp.root);
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&tmp.root)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{args:?} {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8(out.stdout).unwrap()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "t"]);
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "base",
+        ]);
+        let branches = git(&["branch", "--list"]);
+        let refs = git(&["for-each-ref", "--format=%(refname)"]);
+        let forbidden = ["result", "dispatch", "task", "run", "run-claim"];
+        let bodies = [r#"{"args":[]}"#, r#"{"args":["slug","maker","x"]}"#];
+        let waited = [
+            "check",
+            "triage",
+            "add",
+            "attempt",
+            "claim",
+            "contract-audit",
+            "cycle",
+            "phase",
+            "plan-audit",
+            "probe-acp",
+            "ready",
+        ];
+        let addr = start_server(
+            &tmp.root,
+            &exe,
+            forbidden.len() * bodies.len() + waited.len(),
+        );
+        for verb in forbidden {
+            for body in bodies {
+                let (code, _, resp) = exchange(
+                    &addr,
+                    &act_request(&format!("/act/{verb}"), body, "application/json", Some("1")),
+                );
+                assert_eq!(code, 404, "{verb} {body} -> {resp}");
+                assert_eq!(resp, "not found\n");
+                assert!(argv_all(&tmp.root).is_none(), "{verb} spawned");
+                assert!(!tmp.root.join("SPAWNED").exists(), "{verb} spawned");
+            }
+        }
+        assert!(!tmp.root.join("worktrees").exists());
+        assert!(!tmp.root.join("attempts").exists());
+        assert!(!tmp.root.join("items").exists());
+        assert!(!tmp.root.join(".git").join("worktrees").exists());
+        assert_eq!(git(&["branch", "--list"]), branches);
+        assert_eq!(git(&["for-each-ref", "--format=%(refname)"]), refs);
+        for verb in waited {
+            let (code, headers, body) = exchange(
+                &addr,
+                &act_request(
+                    &format!("/act/{verb}"),
+                    r#"{"args":[]}"#,
+                    "application/json",
+                    Some("1"),
+                ),
+            );
+            assert_eq!(code, 200, "{verb} {headers} {body}");
+            assert_eq!(body, format!("stdout:{verb}\n"));
+            assert!(headers.contains("X-Crucible-Exit: 0"), "{verb} {headers}");
+            assert!(
+                !body.starts_with('{'),
+                "{verb} must not be pid JSON: {body}"
+            );
+            assert_eq!(argv_all(&tmp.root).unwrap().trim(), verb);
+            fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
         }
     }
 

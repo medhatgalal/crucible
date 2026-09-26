@@ -8,6 +8,15 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.25.0 — station verbs
+
+The page spawns read-only `check` and `triage`, and waits on `add`,
+`attempt`, `claim`, `contract-audit`, `cycle`, `phase`, `plan-audit`,
+`probe-acp`, and `ready`. A `cycle` or `claim` click (`[]`) writes.
+The other new clicks show exit 2 with an empty body. `result`,
+`dispatch`, `task`, `run`, and `run-claim` stay off. Kernel `POST /go`
+stays 405.
+
 ## 1.24.0 — join the Herdr room
 
 `crucible room` joins one existing Herdr workspace. It does not create, close, or rename a workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, added only when that label is absent. It does not add or close watcher, reaper, or watchdog tabs. It pane-runs nothing. Serve on `127.0.0.1:1734` is unchanged. Missing herdr does not listen. A kept five-line roles file (`chat`, `orchestrator`, `watcher`, `reaper`, `dashboard`) still joins: ensure only the four labels, leave watcher and reaper tabs, pane-run nothing, exit 0.

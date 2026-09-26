@@ -954,7 +954,7 @@ exit 0
         assert!(!stdout.contains("go orchestrator"), "{stdout}");
         assert!(!stdout.contains("go waiting"), "{stdout}");
         assert!(!stdout.contains("go not started (orchestrator"), "{stdout}");
-        assert!(stdout.contains("1.24.0"), "{stdout}");
+        assert!(stdout.contains("1.25.0"), "{stdout}");
         assert!(
             stdout.contains("standing roles: terminal, chat, orchestrator, dashboard"),
             "{stdout}"

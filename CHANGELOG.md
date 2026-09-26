@@ -61,6 +61,19 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.25.0] - 2026-09-26
+
+### Web
+- The page spawns read-only `check` and `triage`, and waits on `add`,
+  `attempt`, `claim`, `contract-audit`, `cycle`, `phase`, `plan-audit`,
+  `probe-acp`, and `ready`. A `cycle` or `claim` click (`[]`) writes.
+  The other new writers show exit 2 with an empty body. `result`,
+  `dispatch`, `task`, `run`, and `run-claim` stay off. Kernel `POST /go`
+  stays 405.
+
+### Docs
+- `docs/working-mode.md` pins 1.25.0.
+
 ## [1.24.0] - 2026-09-26
 
 ### Room
