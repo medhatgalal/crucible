@@ -40,4 +40,8 @@ The page may archive evidence and must not spawn `run` or `run-claim`.
 
 ## Addendum (2026-09-26)
 
-The page may spawn the read-only pair `check` and `triage`, and the waited writers `add`, `attempt`, `claim`, `contract-audit`, `cycle`, `phase`, `plan-audit`, `probe-acp`, and `ready`; it must not spawn `result`, `dispatch`, `task`, `run`, or `run-claim`.
+The page may spawn the read-only pair `check` and `triage`, and the waited writers `add`, `attempt`, `claim`, `contract-audit`, `cycle`, `phase`, `plan-audit`, `probe-acp`, and `ready`; it must not spawn `dispatch`, `task`, `run`, or `run-claim`.
+
+## Addendum (2026-09-26)
+
+The page may `POST /act/result` only for `ATTEMPT OUTCOME EVIDENCE NEXT` and an optional fingerprint. That body is not a shell command. `run` and `run-claim` stay off. `POST /go` on `crucible serve` stays 405.

@@ -8,6 +8,13 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.26.0 — record one result from the page
+
+The page may `POST /act/result` with attempt id, outcome, one evidence
+filename, and next action. A shell-shaped body is 404 and does not spawn.
+`run` and `run-claim` stay off. `check` was already on the page. Kernel
+`POST /go` stays 405.
+
 ## 1.25.0 — station verbs
 
 The page spawns read-only `check` and `triage`, and waits on `add`,
