@@ -348,6 +348,7 @@ pub const WEB_WRITERS: &[&str] = &[
     "plan-audit",
     "probe-acp",
     "ready",
+    "result",
     "state",
     "status",
     "target",
@@ -365,7 +366,54 @@ pub fn web_act_allowed(verb: &str, args: &[String]) -> bool {
     if verb == "status" {
         return args.is_empty() || (args.len() == 1 && args[0] == "--json");
     }
+    if verb == "result" {
+        return result_page_args(args);
+    }
     true
+}
+
+/// Closed argv for `result`. No shell command: attempt id, outcome, one
+/// evidence filename, next action, and an optional fingerprint.
+fn result_page_args(args: &[String]) -> bool {
+    if args.len() != 4 && args.len() != 5 {
+        return false;
+    }
+    let attempt = args[0].as_str();
+    let outcome = args[1].as_str();
+    let evidence = args[2].as_str();
+    let next = args[3].as_str();
+    if !page_token(attempt) || !page_filename(evidence) {
+        return false;
+    }
+    if !matches!(
+        outcome,
+        "PASS" | "REJECT" | "BLOCKED" | "NEEDS_CONTEXT" | "SCOPE_CONFLICT"
+    ) {
+        return false;
+    }
+    if !matches!(next, "CLOSE" | "FIX" | "DECIDE" | "ESCALATE") {
+        return false;
+    }
+    if args.len() == 5 {
+        let fp = args[4].as_str();
+        if fp != "-" && !(fp.len() == 12 && fp.bytes().all(|b| b.is_ascii_alphanumeric())) {
+            return false;
+        }
+    }
+    true
+}
+
+fn page_token(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.contains('\\')
+        && !s.contains("..")
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+fn page_filename(s: &str) -> bool {
+    page_token(s) && !s.starts_with('.')
 }
 
 pub struct WebAct {
@@ -1471,7 +1519,8 @@ mod tests {
                 "{verb} missing from {body}"
             );
         }
-        for verb in ["result", "dispatch", "task", "run", "run-claim"] {
+        assert!(body.contains("data-verb=\"result\" data-args=\"[]\""));
+        for verb in ["dispatch", "task", "run", "run-claim"] {
             assert!(
                 !body.contains(&format!("data-verb=\"{verb}\"")),
                 "{verb} must stay off the page"
@@ -2087,6 +2136,7 @@ mod tests {
                 "plan-audit",
                 "probe-acp",
                 "ready",
+                "result",
                 "state",
                 "status",
                 "target",
@@ -2135,7 +2185,26 @@ mod tests {
         for verb in ["close", "drive", "adopt"] {
             assert!(web_act_allowed(verb, &[]), "{verb}");
         }
-        for verb in ["go", "result", "dispatch", "task", "run", "run-claim"] {
+        assert!(result_page_args(&[
+            "A1700000000.4.1".into(),
+            "PASS".into(),
+            "check.txt".into(),
+            "CLOSE".into(),
+        ]));
+        assert!(!result_page_args(&[]));
+        assert!(!result_page_args(&[
+            "A1".into(),
+            "PASS".into(),
+            "a/b".into(),
+            "CLOSE".into(),
+        ]));
+        assert!(!result_page_args(&[
+            "sh".into(),
+            "-c".into(),
+            "echo".into(),
+            "x".into(),
+        ]));
+        for verb in ["go", "dispatch", "task", "run", "run-claim"] {
             assert!(!WEB_READ_ONLY.contains(&verb), "{verb}");
             assert!(!WEB_WRITERS.contains(&verb), "{verb}");
             assert!(!web_act_allowed(verb, &[]), "{verb}");
@@ -2177,7 +2246,7 @@ mod tests {
         ]);
         let branches = git(&["branch", "--list"]);
         let refs = git(&["for-each-ref", "--format=%(refname)"]);
-        let forbidden = ["result", "dispatch", "task", "run", "run-claim"];
+        let forbidden = ["dispatch", "task", "run", "run-claim"];
         let bodies = [r#"{"args":[]}"#, r#"{"args":["slug","maker","x"]}"#];
         let waited = [
             "check",
@@ -2195,7 +2264,7 @@ mod tests {
         let addr = start_server(
             &tmp.root,
             &exe,
-            forbidden.len() * bodies.len() + waited.len(),
+            forbidden.len() * bodies.len() + waited.len() + 2,
         );
         for verb in forbidden {
             for body in bodies {
@@ -2235,6 +2304,32 @@ mod tests {
             assert_eq!(argv_all(&tmp.root).unwrap().trim(), verb);
             fs::remove_file(tmp.root.join("ARGV_ALL")).unwrap();
         }
+        let (code, _, resp) = exchange(
+            &addr,
+            &act_request(
+                "/act/result",
+                r#"{"args":["sh","-c","echo","x"]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 404, "{resp}");
+        assert!(argv_all(&tmp.root).is_none());
+        let (code, headers, body) = exchange(
+            &addr,
+            &act_request(
+                "/act/result",
+                r#"{"args":["A1700000000.4.1","PASS","check.txt","CLOSE"]}"#,
+                "application/json",
+                Some("1"),
+            ),
+        );
+        assert_eq!(code, 200, "{headers} {body}");
+        assert_eq!(body, "stdout:result\n");
+        assert_eq!(
+            argv_all(&tmp.root).unwrap().trim(),
+            "result A1700000000.4.1 PASS check.txt CLOSE"
+        );
     }
 
     #[test]

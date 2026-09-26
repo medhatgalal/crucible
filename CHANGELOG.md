@@ -61,6 +61,12 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.26.0] - 2026-09-26
+
+### Added
+
+- The page may `POST /act/result` with `ATTEMPT OUTCOME EVIDENCE NEXT` and an optional fingerprint. That argv is closed. It is not a shell command. `run` and `run-claim` stay off the page. Kernel `POST /go` stays 405.
+
 ## [1.25.0] - 2026-09-26
 
 ### Web

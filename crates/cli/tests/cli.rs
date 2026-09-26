@@ -563,7 +563,7 @@ fn go_does_not_overwrite_workspace_posix_or_version() {
         posix_before.starts_with(b"#!/bin/sh"),
         "workspace ./crucible must remain the POSIX script"
     );
-    assert_eq!(ver_before.trim(), "1.25.0");
+    assert_eq!(ver_before.trim(), "1.26.0");
 
     let tmp = Tmp::new();
     let _ = bin().current_dir(&tmp.root).arg("go").output().unwrap();
@@ -580,7 +580,7 @@ fn version_flag_prints_product_version() {
         .expect("VERSION")
         .trim()
         .to_string();
-    assert_eq!(want, "1.25.0");
+    assert_eq!(want, "1.26.0");
     for flag in ["--version", "-V"] {
         let out = bin().arg(flag).output().unwrap();
         assert!(
@@ -2602,7 +2602,7 @@ fn serve_get_health_includes_bind_and_version() {
     assert_eq!(code, 200);
     assert_eq!(health["ok"], true);
     assert_eq!(health["bind"], srv.addr);
-    assert_eq!(health["version"], "1.25.0");
+    assert_eq!(health["version"], "1.26.0");
     assert!(!tmp.root.join(".wm").exists());
 }
 
@@ -2910,7 +2910,7 @@ exit 0
         stdout.contains("\"ok\":true") || stdout.contains("\"ok\": true"),
         "health body: {stdout:?}"
     );
-    assert!(stdout.contains("1.25.0"), "health version: {stdout:?}");
+    assert!(stdout.contains("1.26.0"), "health version: {stdout:?}");
     assert!(
         !tmp.root.join("path-crucible").exists(),
         "must spawn current_exe, not PATH crucible"
@@ -3322,4 +3322,203 @@ fn adopt_home_canary_copies_shaping_module() {
     assert_eq!(home_names(&home), vec!["MARKER".to_string()]);
     assert_eq!(fs::read(home.join("MARKER")).unwrap(), b"CANARY\n");
     assert!(!home.join("modules").exists());
+}
+
+#[test]
+fn page_starts_records_and_checks_one_item() {
+    let tmp = Tmp::new();
+    let root = &tmp.root;
+    fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+    fs::write(
+        root.join("STATE.tsv"),
+        "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n",
+    )
+    .unwrap();
+    let web_port = 20000 + (std::process::id() % 10000);
+    let serve_port = web_port + 1;
+    let mut web = bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(["web", "--bind", &format!("127.0.0.1:{web_port}")])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut serve = bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(["serve", "--bind", &format!("127.0.0.1:{serve_port}")])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_listen(&mut web);
+    wait_listen(&mut serve);
+    let web_addr = format!("127.0.0.1:{web_port}");
+    let serve_addr = format!("127.0.0.1:{serve_port}");
+
+    let (code, _, body) = post(
+        &web_addr,
+        "/act/add",
+        r#"{"args":["page-item","Bounded page item"]}"#,
+    );
+    assert_eq!(code, 200, "{body}");
+    assert!(
+        root.join("items/page-item/ITEM.md").is_file(),
+        "add did not start the item: {body}"
+    );
+
+    let wid = run_out(root, &["workid", "page-item"]);
+    let id = "A1700000000.4.1";
+    fs::write(
+        root.join("STATE.tsv"),
+        format!(
+            "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\npage-item\tACTIVE\tREVIEW\t{wid}\tLOW\t{id}\t-\t1\n"
+        ),
+    )
+    .unwrap();
+    let ad = root.join("attempts").join(id);
+    fs::create_dir_all(&ad).unwrap();
+    fs::write(
+        ad.join("meta.tsv"),
+        format!(
+            "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\tpage-item\t-\t{wid}\tjudge\tbea\tcodex\tA1\tFOCUSED\tRETURNED\t1\t2\t-\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        ad.join("events.tsv"),
+        "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tseed\nRETURNED\t2\t9\tobserved\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("items/page-item/evidence/check.txt"),
+        format!("crucible-run/1\nagent: bea\nwork-id: {wid}\nattempt-id: {id}\n"),
+    )
+    .unwrap();
+
+    let (code, headers, body) = post(
+        &web_addr,
+        "/act/result",
+        &format!(r#"{{"args":["{id}","PASS","check.txt","CLOSE"]}}"#),
+    );
+    assert_eq!(code, 200, "{headers} {body}");
+    assert!(body.contains("result.md"), "{body}");
+    assert!(ad.join("result.md").is_file(), "{body}");
+    let recorded = fs::read_to_string(ad.join("result.md")).unwrap();
+    assert!(recorded.contains("OUTCOME: PASS\n"), "{recorded}");
+    assert!(!body.contains("sh -c"), "{body}");
+
+    let item_md = root.join("items/page-item/ITEM.md");
+    let text = fs::read_to_string(&item_md).unwrap().replace(
+        "TEMPLATE-FALSIFIER-UNWRITTEN. Replace this line with one bounded command or script.",
+        "true",
+    );
+    fs::write(&item_md, text).unwrap();
+    let (code, headers, body) = post(&web_addr, "/act/check", r#"{"args":["page-item"]}"#);
+    assert_eq!(code, 200, "{headers} {body:?}");
+    assert!(
+        body.contains("check page-item"),
+        "check body={body:?} exit header={headers}"
+    );
+
+    for verb in ["run", "run-claim"] {
+        let (code, _, body) = post(
+            &web_addr,
+            &format!("/act/{verb}"),
+            r#"{"args":["slug","name","--","echo","hi"]}"#,
+        );
+        assert_eq!(code, 404, "{verb} {body}");
+        assert_eq!(body, "not found\n");
+    }
+    let (code, _, body) = post(
+        &web_addr,
+        "/act/result",
+        r#"{"args":["sh","-c","echo","x"]}"#,
+    );
+    assert_eq!(code, 404, "{body}");
+
+    let (code, _, body) = post_raw(&serve_addr, "POST", "/go", "");
+    assert_eq!(code, 405, "{body}");
+
+    let _ = web.kill();
+    let _ = serve.kill();
+    let _ = web.wait();
+    let _ = serve.wait();
+}
+
+fn wait_listen(child: &mut Child) {
+    let out = child.stdout.as_mut().unwrap();
+    let mut buf = Vec::new();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) {
+        let mut byte = [0u8; 1];
+        if out.read(&mut byte).unwrap_or(0) == 0 {
+            continue;
+        }
+        buf.push(byte[0]);
+        if byte[0] == b'\n' {
+            let line = String::from_utf8_lossy(&buf);
+            assert!(line.contains("listening"), "{line}");
+            return;
+        }
+    }
+    panic!("server did not listen: {}", String::from_utf8_lossy(&buf));
+}
+
+fn run_out(root: &Path, args: &[&str]) -> String {
+    let out = bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{args:?} stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn post(addr: &str, path: &str, body: &str) -> (u16, String, String) {
+    let raw = format!(
+        "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nX-Crucible-Act: 1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    http_exchange(addr, raw.as_bytes())
+}
+
+fn post_raw(addr: &str, method: &str, path: &str, body: &str) -> (u16, String, String) {
+    let raw = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    http_exchange(addr, raw.as_bytes())
+}
+
+fn http_exchange(addr: &str, raw: &[u8]) -> (u16, String, String) {
+    let start = Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(addr) {
+            Ok(s) => break s,
+            Err(_) if start.elapsed() < Duration::from_secs(5) => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => panic!("connect {addr}: {err}"),
+        }
+    };
+    stream.write_all(raw).unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_ref(), ""));
+    let code = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
+    (code, head.to_string(), body.to_string())
 }
