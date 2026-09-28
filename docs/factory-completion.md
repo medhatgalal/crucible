@@ -2,15 +2,15 @@
 
 Pickup after the 2026-09-28 reboot. This file is the remaining work. The session plan is not required.
 
-Verified on `main` after `a84b943` (`VERSION` `1.27.1`). Orders O1–O7 and corrections C1–C7 are merged. Do not redo them. F1 is the `result` speech wire. F2, F3, and F4 are still open. There is no `orchestrate run`.
+Verified on `main` after `efcf310` (`VERSION` `1.27.1`). Orders O1–O7, corrections C1–C7, F1, and F2 are merged. Do not redo them. F3 is `orchestrate run` in this change. F4 remains.
 
 ## Done
 
-Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, assembly script once, and the room pane-run of that step on a guided checkout. `go` calls `drive` only when `cycle: guided` is present. Kernel `POST /go` stays 405.
+Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, assembly script once, and a maker shell that lands through `result`. `go` calls `drive` only when `cycle: guided` is present. Kernel `POST /go` stays 405. This change adds `orchestrate run`.
 
 ## Still open
 
-F1 is on `main` at `6cd1900`. F2 is the maker-shell proof in this change. F3 and F4 remain. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged.
+F1 is on `main` at `6cd1900`. F2 is on `main` at `efcf310`. F3 is `orchestrate run` in this change. F4 remains. Nothing since `v1.27.1` is tagged.
 
 ## Orders
 

@@ -1,4 +1,4 @@
-//! One factory step. Reads the program directory and appends speech.
+//! One factory step, or a run of steps until idle or asking.
 
 use std::fs;
 use std::path::Path;
@@ -14,9 +14,33 @@ use crate::{message, records, GuidedError};
 const ORDER_HEADER: &str = "order_id\tdepends_on\tpaths_file\tverify_script";
 
 pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
-    if args != ["step"] {
-        return Err(message("usage: crucible orchestrate step"));
+    match args {
+        ["step"] => orchestrate_step(root, clock),
+        ["run"] => orchestrate_run(root, clock),
+        _ => Err(message("usage: crucible orchestrate step|run")),
     }
+}
+
+fn orchestrate_run(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
+    for _ in 0..64 {
+        let before = read_speech(root)?;
+        let last = orchestrate_step(root, clock)?;
+        if last == "idle\n" || asked_new(&before, &read_speech(root)?) {
+            return Ok(last);
+        }
+    }
+    Err(message("orchestrate run exceeded 64 steps"))
+}
+
+fn asked_new(before: &[Said], after: &[Said]) -> bool {
+    after.len() > before.len()
+        && after
+            .iter()
+            .skip(before.len())
+            .any(|row| row.sentence == "asking")
+}
+
+fn orchestrate_step(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
     let orders = read_orders(root)?;
     let mut said = read_speech(root)?;
     let kept: Vec<&TaskRow> = orders.iter().filter(|row| row.id != "assembly").collect();
