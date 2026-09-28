@@ -2070,6 +2070,68 @@ The file contains hello.
     assert!(status.contains("line: DONE —"), "{status}");
 }
 
+#[test]
+fn speech_queue_and_factory_page_print_the_same_lines() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    let prog = tmp.root.join(".crucible").join("work");
+    fs::create_dir_all(&prog).unwrap();
+    let repo = fs::canonicalize(&tmp.root).unwrap();
+    fs::write(
+        prog.join("PROGRAM"),
+        format!(
+            "cycle: guided\nlifecycle: managed\nrepo: {}\n",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prog.join("ORDERS.tsv"),
+        "order_id\tdepends_on\tpaths_file\tverify_script\nA\t-\ta.paths\ta.sh\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("SPEECH.tsv"),
+        "epoch\trole\tsentence\ttext\n1\torchestrator\tdispatched\tA\n",
+    )
+    .unwrap();
+    let cli = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_ROOT", &tmp.root)
+        .args(["speech", "queue"])
+        .output()
+        .unwrap();
+    assert!(
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    let from_cli = String::from_utf8_lossy(&cli.stdout).to_string();
+    assert_eq!(from_cli, "A dispatched\n");
+    let web = start_web(&tmp.root);
+    let raw = format!(
+        "GET /api/factory HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        web.addr
+    );
+    let start = Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(&web.addr) {
+            Ok(s) => break s,
+            Err(_) if start.elapsed() < Duration::from_secs(5) => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => panic!("connect {}: {err}", web.addr),
+        }
+    };
+    stream.write_all(raw.as_bytes()).unwrap();
+    let mut buf = Vec::new();
+    stream.read_to_end(&mut buf).unwrap();
+    let text = String::from_utf8_lossy(&buf);
+    let body = text.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+    assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+    assert_eq!(body, from_cli);
+}
+
 fn start_web(dir: &Path) -> ServeProc {
     let mut child = bin()
         .current_dir(dir)

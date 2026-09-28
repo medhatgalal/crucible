@@ -23,6 +23,11 @@ All notable changes to this project are documented here. This project follows
 - `crucible speech ROLE SENTENCE TEXT` appends one sentence to the program
   `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
   cannot say another speaker's sentence. No VERSION bump.
+- `crucible speech queue` and `GET /api/factory` print the same order
+  lines. On a guided checkout, `crucible room` runs `orchestrate step` in
+  the orchestrator pane and `speech queue` in the dashboard pane. It does
+  not pane-run `go`. A checkout with no guided program still prints
+  `go not started`.
 - Where a guided program is installed, `go` and `POST /act/go` run `drive`.
   `go --next` is that same call. A working-mode tree with no guided program
   still uses the kernel walk. Kernel `POST /go` stays 405.

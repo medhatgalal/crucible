@@ -77,6 +77,7 @@ label { display: block; margin: 0.25rem 0; }
 <pre id="read"></pre>
 <h2>Health</h2><pre id="health"></pre>
 <h2>Walk</h2><pre id="walk"></pre>
+<h2>Factory</h2><pre id="factory"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
 <h2>Backlog</h2>
 <label>id <input id="b-id" type="text"></label>
@@ -87,8 +88,9 @@ label { display: block; margin: 0.25rem 0; }
 <button id="backlog-add" type="button">Add backlog</button>
 <pre id="backlog"></pre>
 <h2>CHAT.md</h2>
-<label>line <input id="c-line" type="text"></label>
-<button id="chat-send" type="button">Send chat</button>
+<label>sentence <input id="c-sentence" type="text" value="source"></label>
+<label>text <input id="c-line" type="text"></label>
+<button id="chat-send" type="button">Send manager sentence</button>
 <pre id="chat"></pre>
 <pre id="go"></pre>
 <script>
@@ -105,7 +107,7 @@ async function postAct(path, payload) {
   return res.text();
 }
 async function load() {
-  for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
+  for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
     try {
       const res = await fetch(path, { method: "GET" });
@@ -133,8 +135,8 @@ document.getElementById("backlog-add").addEventListener("click", async () => {
 document.getElementById("chat-send").addEventListener("click", async () => {
   const el = document.getElementById("chat");
   try {
-    el.textContent = await postAct("/act/chat", {
-      line: document.getElementById("c-line").value
+    el.textContent = await postAct("/act/speech", {
+      args: ["manager", document.getElementById("c-sentence").value, document.getElementById("c-line").value]
     });
   } catch (e) {
     el.textContent = String(e);
@@ -288,6 +290,18 @@ fn route(
                 return write_resp(stream, 500, "text/plain", &body, head);
             }
         }
+    }
+    if req.path == "/api/factory" {
+        return match spawn_read(exe, cwd, "speech", &["queue".to_string()]) {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                write_resp(stream, 200, "text/plain; charset=utf-8", &text, head)
+            }
+            Err(ReadSpawn::Spawn) => write_resp(stream, 500, "text/plain", "spawn failed\n", head),
+            Err(ReadSpawn::Timeout) => {
+                write_resp(stream, 504, "text/plain", "act timed out\n", head)
+            }
+        };
     }
     if req.path == "/api/chat" {
         match chat_text(cwd) {
@@ -1476,7 +1490,8 @@ mod tests {
         assert!(!body.contains("cannot start"));
         assert!(body.contains("CHAT.md"));
         assert!(body.contains("/act/backlog"));
-        assert!(body.contains("/act/chat"));
+        assert!(body.contains("/act/speech"));
+        assert!(body.contains("/api/factory"));
         assert!(body.contains("/act/go"));
         assert!(body.contains("X-Crucible-Act"));
         assert!(body.contains("application/json"));
