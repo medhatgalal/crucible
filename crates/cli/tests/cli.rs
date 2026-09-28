@@ -3987,3 +3987,255 @@ fn http_exchange(addr: &str, raw: &[u8]) -> (u16, String, String) {
         .unwrap_or(0);
     (code, head.to_string(), body.to_string())
 }
+
+fn factory_program(root: &Path, orders: &str) -> PathBuf {
+    init_git_product(root);
+    let prog = root.join(".crucible").join("work");
+    fs::create_dir_all(&prog).unwrap();
+    let repo = fs::canonicalize(root).unwrap();
+    fs::write(
+        prog.join("PROGRAM"),
+        format!(
+            "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    fs::write(prog.join("ORDERS.tsv"), orders).unwrap();
+    fs::write(root.join("PRODUCT.txt"), "leave me\n").unwrap();
+    prog
+}
+
+fn factory_bin(root: &Path, args: &[&str]) -> std::process::Output {
+    bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+fn factory_ok(root: &Path, args: &[&str]) -> String {
+    let out = factory_bin(root, args);
+    assert!(
+        out.status.success(),
+        "{args:?} stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+fn speech_facts(path: &Path) -> Vec<(String, String, String)> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .skip(1)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let _epoch = fields.next().unwrap();
+            (
+                fields.next().unwrap().to_string(),
+                fields.next().unwrap().to_string(),
+                fields.next().unwrap().to_string(),
+            )
+        })
+        .collect()
+}
+
+fn tree_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for ent in fs::read_dir(&dir).unwrap() {
+            let ent = ent.unwrap();
+            let path = ent.path();
+            if path.file_name().is_some_and(|name| name == ".git") {
+                continue;
+            }
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.insert(rel, fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+fn assert_only_speech_grew(
+    before: &std::collections::BTreeMap<String, Vec<u8>>,
+    after: &std::collections::BTreeMap<String, Vec<u8>>,
+) {
+    let speech = ".crucible/work/SPEECH.tsv";
+    for (path, bytes) in before {
+        if path == speech {
+            continue;
+        }
+        assert_eq!(
+            after.get(path).map(Vec::as_slice),
+            Some(bytes.as_slice()),
+            "product file changed: {path}"
+        );
+    }
+    for path in after.keys() {
+        if path == speech {
+            continue;
+        }
+        assert!(
+            before.contains_key(path),
+            "wrote a file outside the speech record: {path}"
+        );
+    }
+    assert!(after.contains_key(speech), "missing {speech}");
+}
+
+#[test]
+fn orchestrate_step_dispatches_a_then_b_only_after_a_lands() {
+    let tmp = Tmp::new();
+    let prog = factory_program(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\tA,assembly\tb.paths\tb.sh
+assembly\tA,B\t-\tassembly.sh
+",
+    );
+    let before = tree_bytes(&tmp.root);
+    let first = factory_ok(&tmp.root, &["orchestrate", "step"]);
+    assert!(first.contains("SPEECH.tsv"), "{first}");
+    let speech = prog.join("SPEECH.tsv");
+    assert_eq!(
+        speech_facts(&speech),
+        vec![(
+            "orchestrator".to_string(),
+            "dispatched".to_string(),
+            "A".to_string()
+        )]
+    );
+    let mid = tree_bytes(&tmp.root);
+    assert_only_speech_grew(&before, &mid);
+    let second = factory_ok(&tmp.root, &["orchestrate", "step"]);
+    assert_ne!(second, "idle\n", "{second}");
+    assert_eq!(
+        speech_facts(&speech)
+            .into_iter()
+            .filter(|(_, sentence, _)| sentence == "dispatched")
+            .map(|(_, _, text)| text)
+            .collect::<Vec<_>>(),
+        vec!["A".to_string(), "A".to_string()]
+    );
+    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    factory_ok(&tmp.root, &["speech", "machine", "landed", "A"]);
+    factory_ok(&tmp.root, &["orchestrate", "step"]);
+    let facts = speech_facts(&speech);
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "A"),
+        "{facts:?}"
+    );
+    let landed_at = facts
+        .iter()
+        .position(|row| row.1 == "landed" && row.2 == "A")
+        .unwrap();
+    let dispatched_b = facts
+        .iter()
+        .position(|row| row.1 == "dispatched" && row.2 == "B")
+        .unwrap();
+    assert!(dispatched_b > landed_at, "{facts:?}");
+    assert!(!facts.iter().any(|row| row.2 == "assembly"), "{facts:?}");
+    let stats = crucible_contract::StatsWindow::from_wm_dir(&prog, "8h", &SystemClock).unwrap();
+    let machines = &stats.factory.expect("SPEECH.tsv").orders[0].machines;
+    assert!(
+        machines
+            .iter()
+            .any(|line| line.sentence == "dispatched" && line.result == "B"),
+        "{machines:?}"
+    );
+    factory_ok(&tmp.root, &["speech", "machine", "landed", "B"]);
+    let held = fs::read(&speech).unwrap();
+    let idle = factory_ok(&tmp.root, &["orchestrate", "step"]);
+    assert_eq!(idle, "idle\n");
+    assert_eq!(fs::read(&speech).unwrap(), held);
+    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    assert_eq!(
+        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
+}
+
+#[test]
+fn orchestrate_step_asks_until_the_manager_answers() {
+    let tmp = Tmp::new();
+    let prog = factory_program(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+",
+    );
+    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
+    let before = tree_bytes(&tmp.root);
+    factory_ok(&tmp.root, &["orchestrate", "step"]);
+    let speech = prog.join("SPEECH.tsv");
+    let facts = speech_facts(&speech);
+    assert_eq!(
+        facts,
+        vec![
+            (
+                "machine".to_string(),
+                "need-a-fact".to_string(),
+                "A".to_string()
+            ),
+            (
+                "orchestrator".to_string(),
+                "paused".to_string(),
+                "A".to_string()
+            ),
+            (
+                "orchestrator".to_string(),
+                "asking".to_string(),
+                "A".to_string()
+            ),
+        ]
+    );
+    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
+    factory_ok(&tmp.root, &["orchestrate", "step"]);
+    let facts = speech_facts(&speech);
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.0 == "orchestrator" && row.1 == "dispatched" && row.2 == "A"),
+        "{facts:?}"
+    );
+    assert!(
+        !facts
+            .iter()
+            .any(|row| row.1 == "dispatched" && row.2 == "B"),
+        "{facts:?}"
+    );
+    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    assert_eq!(
+        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
+    let program_names = entry_names(&prog);
+    assert_eq!(
+        program_names,
+        vec![
+            "ORDERS.tsv".to_string(),
+            "PROGRAM".to_string(),
+            "SPEECH.tsv".to_string(),
+        ]
+    );
+}

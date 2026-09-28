@@ -11,6 +11,7 @@ pub mod drive;
 pub mod grill;
 mod harness;
 pub mod inspect;
+pub mod orchestrate;
 mod panel;
 pub mod phase;
 mod program;
