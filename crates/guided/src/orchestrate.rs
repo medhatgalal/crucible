@@ -2,10 +2,11 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use crucible_contract::Clock;
 
-use crate::dispatch::{graph_error, TaskRow};
+use crate::dispatch::{graph_error, is_executable, TaskRow};
 use crate::panel::{is_regular, split_tabs};
 use crate::speech::speech;
 use crate::{message, records, GuidedError};
@@ -17,23 +18,45 @@ pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<Stri
         return Err(message("usage: crucible orchestrate step"));
     }
     let orders = read_orders(root)?;
-    let said = read_speech(root)?;
+    let mut said = read_speech(root)?;
     let kept: Vec<&TaskRow> = orders.iter().filter(|row| row.id != "assembly").collect();
-    if let Some(order) = kept.iter().find(|row| paused(&said, &row.id)) {
-        let id = order.id.as_str();
-        let paused_at = speech(root, &["orchestrator", "paused", id], clock)?;
-        let asking_at = speech(root, &["orchestrator", "asking", id], clock)?;
-        return Ok(format!("{paused_at}{asking_at}"));
-    }
+    let mut wrote = String::new();
     for order in &kept {
-        if landed(&said, &order.id) || paused(&said, &order.id) || awaiting(&said, &order.id) {
+        let id = order.id.as_str();
+        if paused(&said, id) && !asked_after(&said, id, "need-a-fact") {
+            wrote.push_str(&speech(root, &["orchestrator", "paused", id], clock)?);
+            wrote.push_str(&speech(root, &["orchestrator", "asking", id], clock)?);
+        } else if escalated_open(&said, id) && !asked_after(&said, id, "escalated") {
+            wrote.push_str(&speech(root, &["orchestrator", "asking", id], clock)?);
+        }
+    }
+    said = read_speech(root)?;
+    for order in &kept {
+        let id = order.id.as_str();
+        if landed(&said, id)
+            || paused(&said, id)
+            || escalated_open(&said, id)
+            || awaiting(&said, id)
+        {
             continue;
         }
         if deps_landed(&order.deps, &said) {
-            return speech(root, &["orchestrator", "dispatched", &order.id], clock);
+            wrote.push_str(&speech(root, &["orchestrator", "dispatched", id], clock)?);
+            return Ok(if wrote.is_empty() {
+                "idle\n".to_string()
+            } else {
+                wrote
+            });
         }
     }
-    Ok("idle\n".to_string())
+    if let Some(line) = run_assembly_once(root, &orders, &said, clock)? {
+        wrote.push_str(&line);
+    }
+    if wrote.is_empty() {
+        Ok("idle\n".to_string())
+    } else {
+        Ok(wrote)
+    }
 }
 
 fn read_orders(root: &Path) -> Result<Vec<TaskRow>, GuidedError> {
@@ -176,6 +199,30 @@ fn awaiting(said: &[Said], id: &str) -> bool {
     })
 }
 
+fn escalated_open(said: &[Said], id: &str) -> bool {
+    let Some(at) = said
+        .iter()
+        .rposition(|row| row.sentence == "escalated" && row.text == id)
+    else {
+        return false;
+    };
+    !said.iter().enumerate().any(|(idx, row)| {
+        idx > at && row.role == "manager" && row.sentence == "answer" && row.text == id
+    })
+}
+
+fn asked_after(said: &[Said], id: &str, trigger: &str) -> bool {
+    let Some(at) = said
+        .iter()
+        .rposition(|row| row.sentence == trigger && row.text == id)
+    else {
+        return false;
+    };
+    said.iter().enumerate().any(|(idx, row)| {
+        idx > at && row.role == "orchestrator" && row.sentence == "asking" && row.text == id
+    })
+}
+
 fn paused(said: &[Said], id: &str) -> bool {
     let Some(need) = said
         .iter()
@@ -186,6 +233,53 @@ fn paused(said: &[Said], id: &str) -> bool {
     !said.iter().enumerate().any(|(idx, row)| {
         idx > need && row.role == "manager" && row.sentence == "answer" && row.text == id
     })
+}
+
+fn run_assembly_once(
+    root: &Path,
+    orders: &[TaskRow],
+    said: &[Said],
+    clock: &dyn Clock,
+) -> Result<Option<String>, GuidedError> {
+    let Some(assembly) = orders.iter().find(|row| row.id == "assembly") else {
+        return Ok(None);
+    };
+    if orders
+        .iter()
+        .filter(|row| row.id != "assembly")
+        .any(|row| !landed(said, &row.id))
+    {
+        return Ok(None);
+    }
+    if landed(said, "assembly") || escalated_open(said, "assembly") {
+        return Ok(None);
+    }
+    let script = root.join(&assembly.verify_script);
+    if !is_regular(&script) || !is_executable(&script) {
+        return Err(message(format!(
+            "invalid ORDERS.tsv: order assembly: {}",
+            assembly.verify_script
+        )));
+    }
+    let shebang = fs::read_to_string(&script)
+        .ok()
+        .and_then(|text| records(&text).first().copied().map(str::to_string))
+        .unwrap_or_default();
+    if shebang != "#!/bin/sh" {
+        return Err(message(
+            "invalid ORDERS.tsv: order assembly: script must start with #!/bin/sh",
+        ));
+    }
+    let code = match Command::new(&script).current_dir(root).output() {
+        Ok(out) => out.status.code().unwrap_or(1),
+        Err(_) => 127,
+    };
+    let sentence = if code == 0 { "landed" } else { "escalated" };
+    Ok(Some(speech(
+        root,
+        &["machine", sentence, "assembly"],
+        clock,
+    )?))
 }
 
 fn deps_landed(deps: &str, said: &[Said]) -> bool {
@@ -246,6 +340,21 @@ epoch\trole\tsentence\ttext
         );
         assert!(!landed_b.contains("dispatched\tassembly"));
         speech(&path, &["machine", "landed", "B"], &clock).unwrap();
+        let script = path.join("assembly.sh");
+        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = fs::metadata(&script).unwrap().permissions();
+            perm.set_mode(0o755);
+            fs::set_permissions(&script, perm).unwrap();
+        }
+        orchestrate(&path, &["step"], &clock).unwrap();
+        let assembled = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        assert!(
+            assembled.ends_with("7\tmachine\tlanded\tassembly\n"),
+            "{assembled}"
+        );
         let held = fs::read(path.join("SPEECH.tsv")).unwrap();
         assert_eq!(orchestrate(&path, &["step"], &clock).unwrap(), "idle\n");
         assert_eq!(fs::read(path.join("SPEECH.tsv")).unwrap(), held);
@@ -257,7 +366,8 @@ epoch\trole\tsentence\ttext
             .collect::<Vec<_>>();
         assert!(names.contains(&"ORDERS.tsv".to_string()));
         assert!(names.contains(&"SPEECH.tsv".to_string()));
-        assert_eq!(names.len(), 2, "{names:?}");
+        assert!(names.contains(&"assembly.sh".to_string()));
+        assert_eq!(names.len(), 3, "{names:?}");
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -283,13 +393,18 @@ epoch\trole\tsentence\ttext
 9\tmachine\tneed-a-fact\tA
 9\torchestrator\tpaused\tA
 9\torchestrator\tasking\tA
+9\torchestrator\tdispatched\tB
 "
+        );
+        let asked = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        assert!(
+            asked.contains("9\torchestrator\tdispatched\tB\n"),
+            "{asked}"
         );
         speech(&path, &["manager", "answer", "A"], &clock).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
         let went = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
-        assert!(went.ends_with("9\torchestrator\tdispatched\tA\n"), "{went}");
-        assert!(!went.contains("dispatched\tB"));
+        assert!(went.contains("9\torchestrator\tdispatched\tA\n"), "{went}");
         let _ = fs::remove_dir_all(&path);
     }
 }

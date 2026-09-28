@@ -409,7 +409,9 @@ A program file named `ticket` lets that same command read a two-line ticket when
 
 `crucible orchestrate step` is one pass of the outer loop. It reads `ORDERS.tsv` in the program directory and appends factory speech by the same record as `speech`. It does not edit a product file outside that directory and it does not start a maker.
 
-An order is landed when `SPEECH.tsv` contains a `landed` sentence whose text is that order id. It is paused when the file contains `need-a-fact` for that id and no later manager `answer` for that id. While any order other than `assembly` is paused, the step appends `paused` and `asking` and does not dispatch. Otherwise it dispatches the first order whose dependencies are already landed. An empty dependency list means none. The `assembly` row is not dispatched, and a dependency named `assembly` does not count. One step dispatches at most one order. When none is ready the command exits 0 and prints `idle`.
+An order is landed when `SPEECH.tsv` contains a `landed` sentence whose text is that order id. A `need-a-fact` with no later manager `answer` pauses that order only: the step appends one `paused` and one `asking` for it, then may still dispatch one other ready order. An `escalated` sentence with no later answer appends one `asking` and does not dispatch that order. A later step does not repeat those sentences. When every order except `assembly` has landed, the step runs the assembly `verify_script` once. Exit 0 appends `machine landed assembly`. Any other exit appends `machine escalated assembly`. A second step does not run it again. One step still dispatches at most one order. When nothing was written it exits 0 and prints `idle`.
+
+Walk on the page is the kernel camera. Factory is the order queue from `speech queue`. They are not the same payload.
 
 ```sh
 $CP orchestrate step
