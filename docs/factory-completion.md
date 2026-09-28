@@ -2,15 +2,15 @@
 
 Pickup after the 2026-09-28 reboot. This file is the remaining work. The session plan is not required.
 
-Verified on `main` after `efcf310` (`VERSION` `1.27.1`). Orders O1–O7, corrections C1–C7, F1, and F2 are merged. Do not redo them. F3 is `orchestrate run` in this change. F4 remains.
+Verified on `main` after `509f5a4`. Orders O1–O7, corrections C1–C7, F1, F2, and F3 are merged. Do not redo them. F4 bumps `VERSION` to `1.28.0` in this change. Tag `v1.28.0` after this pull request merges.
 
 ## Done
 
-Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, assembly script once, and a maker shell that lands through `result`. `go` calls `drive` only when `cycle: guided` is present. Kernel `POST /go` stays 405. This change adds `orchestrate run`.
+Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, `orchestrate run`, assembly script once, and a maker shell that lands through `result`. `go` calls `drive` only when `cycle: guided` is present. Kernel `POST /go` stays 405.
 
 ## Still open
 
-F1 is on `main` at `6cd1900`. F2 is on `main` at `efcf310`. F3 is `orchestrate run` in this change. F4 remains. Nothing since `v1.27.1` is tagged.
+F1 is on `main` at `6cd1900`. F2 is on `main` at `efcf310`. F3 is on `main` at `509f5a4`. F4 is this change. The tag waits until this pull request is on `main`.
 
 ## Orders
 

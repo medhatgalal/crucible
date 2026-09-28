@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-21
 - **Status:** Accepted
-- **Product VERSION:** 1.27.1. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This page change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
+- **Product VERSION:** 1.28.0. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This page change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
 
 Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run intake and one delivery walker until `DONE`, `CLOSED`, `STOP-ASK`, or `ESCALATE`. Where a guided program is installed, `go` and `POST /act/go` run `drive`. Kernel `POST /go` stays 405.
 
@@ -12,7 +12,7 @@ This ADR freezes D1–D22. Living spec is `crates/contract` tests, verify-workin
 
 ## Current tree (main)
 
-Honest snapshot of this repo at **1.27.1**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.27.1.
+Honest snapshot of this repo at **1.28.0**. Rust working-mode has already cut over. Guided `adopt` / `cycle` / `drive` have been Rust since 1.18.0. Room, web, and the skill copies are in the tree. `VERSION` is 1.28.0.
 
 | Piece | On main now |
 | --- | --- |

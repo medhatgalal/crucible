@@ -8,6 +8,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.28.0 — one factory order
+
+`crucible speech` records one sentence. `crucible grill decide` records one part or a vehicle. `crucible orchestrate step` dispatches, asks, or runs the assembly script once. `crucible orchestrate run` repeats that step until it is idle or has asked. A guided `crucible room` pane-runs `orchestrate run`. `crucible result` appends `landed` or `escalated` for that order. A shipped `drive` tick starts the `agents.tsv` maker shell. Kernel `POST /go` stays 405.
+
 ## 1.27.1 — re-verify the current commit
 
 A maker `result PASS` is allowed when the evidence work id is the current commit and HEAD has not moved since dispatch. Evidence stamped with an older work id is refused.

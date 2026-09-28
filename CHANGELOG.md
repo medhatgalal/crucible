@@ -5,53 +5,6 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
-### Factory
-- `crucible orchestrate run` repeats `step` until the step is idle or
-  appended `asking`. A guided `crucible room` pane-runs `orchestrate run`.
-  No VERSION bump.
-- A shipped `drive` tick starts the `agents.tsv` maker shell. The shell
-  writes the owned file. `crucible result` then appends `landed`. The
-  test does not plant that sentence. No VERSION bump.
-- `crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`
-  to `SPEECH.tsv`. `ESCALATE` appends `machine escalated <slug>`. Other
-  outcomes do not. A second identical result does not append again.
-  No VERSION bump.
-- A program file `ticket` whose text is the word `on` lets `crucible grill decide`
-  read a two-line ticket (`path:` then `check:`) as the same unsigned part as a
-  hand-written request with that owned path and check. `off` or a missing file
-  leaves the request parser unchanged. The manifest is `modules/ticket/module.txt`
-  (`values: off, on`; writes nothing). No VERSION bump.
-- A pause or an escalation holds that order only. The same step may
-  dispatch one other ready order. When every other order has landed, the
-  step runs the assembly script once. `crucible.stats/v1` reports `floor_s`
-  and `grill_s` from those epochs when both ends exist. No VERSION bump.
-- `crucible orchestrate step` reads program `ORDERS.tsv` and appends one
-  factory step to `SPEECH.tsv`: `paused` and `asking`, one `dispatched`
-  order, or it prints `idle`. `assembly` is not dispatched. It does not
-  edit a product file and it does not start a maker. No VERSION bump.
-- `crucible grill decide` records one part or a vehicle in `GRILL.md`
-  (vehicle, source words, scout, frame, size, cut, sign). One owned path
-  and one check is one order. More than one path needs `ORDERS.tsv` or
-  exits 2 with `vehicle graph required`. A `scout: FULLY-EXISTS` path is
-  dropped. No VERSION bump.
-- `crucible speech ROLE SENTENCE TEXT` appends one sentence to the program
-  `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
-  cannot say another speaker's sentence. No VERSION bump.
-- `crucible speech queue` and `GET /api/factory` print the same order
-  lines. On a guided checkout, `crucible room` runs `orchestrate run` in
-  the orchestrator pane and `speech queue` in the dashboard pane. It does
-  not pane-run `go`. A checkout with no guided program still prints
-  `go not started`.
-- Where a guided program is installed, `go` and `POST /act/go` run `drive`.
-  `go --next` is that same call. A working-mode tree with no guided program
-  still uses the kernel walk. Kernel `POST /go` stays 405.
-- `crucible.stats/v1` shows every factory sentence already stored in the program
-  `SPEECH.tsv`: orders in (`source`), landed, and escalated, with each line
-  nested under its order. The sentence text is the result. Duration and
-  evidence stay absent when the line does not carry them. One bad line does
-  not drop the rest. The `since` window still applies only to `.wm/EVENTS`
-  and `.wm/METRICS.tsv`. No VERSION bump.
-
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`
   `/skills/<name>`) are real copies of `skills/<name>`, not symlinks.
@@ -107,6 +60,53 @@ All notable changes to this project are documented here. This project follows
   `GET /stats?since=8h|24h|7d` matches `stats --json`, `GET /health` reports
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
+
+## [1.28.0] - 2026-09-28
+
+### Factory
+- `crucible orchestrate run` repeats `step` until the step is idle or
+  appended `asking`. A guided `crucible room` pane-runs `orchestrate run`.
+- A shipped `drive` tick starts the `agents.tsv` maker shell. The shell
+  writes the owned file. `crucible result` then appends `landed`. The
+  test does not plant that sentence.
+- `crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`
+  to `SPEECH.tsv`. `ESCALATE` appends `machine escalated <slug>`. Other
+  outcomes do not. A second identical result does not append again.
+- A program file `ticket` whose text is the word `on` lets `crucible grill decide`
+  read a two-line ticket (`path:` then `check:`) as the same unsigned part as a
+  hand-written request with that owned path and check. `off` or a missing file
+  leaves the request parser unchanged. The manifest is `modules/ticket/module.txt`
+  (`values: off, on`; writes nothing).
+- A pause or an escalation holds that order only. The same step may
+  dispatch one other ready order. When every other order has landed, the
+  step runs the assembly script once. `crucible.stats/v1` reports `floor_s`
+  and `grill_s` from those epochs when both ends exist.
+- `crucible orchestrate step` reads program `ORDERS.tsv` and appends one
+  factory step to `SPEECH.tsv`: `paused` and `asking`, one `dispatched`
+  order, or it prints `idle`. `assembly` is not dispatched. It does not
+  edit a product file and it does not start a maker.
+- `crucible grill decide` records one part or a vehicle in `GRILL.md`
+  (vehicle, source words, scout, frame, size, cut, sign). One owned path
+  and one check is one order. More than one path needs `ORDERS.tsv` or
+  exits 2 with `vehicle graph required`. A `scout: FULLY-EXISTS` path is
+  dropped.
+- `crucible speech ROLE SENTENCE TEXT` appends one sentence to the program
+  `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
+  cannot say another speaker's sentence.
+- `crucible speech queue` and `GET /api/factory` print the same order
+  lines. On a guided checkout, `crucible room` runs `orchestrate run` in
+  the orchestrator pane and `speech queue` in the dashboard pane. It does
+  not pane-run `go`. A checkout with no guided program still prints
+  `go not started`.
+- Where a guided program is installed, `go` and `POST /act/go` run `drive`.
+  `go --next` is that same call. A working-mode tree with no guided program
+  still uses the kernel walk. Kernel `POST /go` stays 405.
+- `crucible.stats/v1` shows every factory sentence already stored in the program
+  `SPEECH.tsv`: orders in (`source`), landed, and escalated, with each line
+  nested under its order. The sentence text is the result. Duration and
+  evidence stay absent when the line does not carry them. One bad line does
+  not drop the rest. The `since` window still applies only to `.wm/EVENTS`
+  and `.wm/METRICS.tsv`.
 
 ## [1.27.1] - 2026-09-28
 
