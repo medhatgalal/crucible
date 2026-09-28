@@ -6,6 +6,9 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- `crucible orchestrate run` repeats `step` until the step is idle or
+  appended `asking`. A guided `crucible room` pane-runs `orchestrate run`.
+  No VERSION bump.
 - A shipped `drive` tick starts the `agents.tsv` maker shell. The shell
   writes the owned file. `crucible result` then appends `landed`. The
   test does not plant that sentence. No VERSION bump.
@@ -35,7 +38,7 @@ All notable changes to this project are documented here. This project follows
   `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
   cannot say another speaker's sentence. No VERSION bump.
 - `crucible speech queue` and `GET /api/factory` print the same order
-  lines. On a guided checkout, `crucible room` runs `orchestrate step` in
+  lines. On a guided checkout, `crucible room` runs `orchestrate run` in
   the orchestrator pane and `speech queue` in the dashboard pane. It does
   not pane-run `go`. A checkout with no guided program still prints
   `go not started`.

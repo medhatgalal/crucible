@@ -419,7 +419,10 @@ Walk on the page is the kernel camera. Factory is the order queue from `speech q
 
 ```sh
 $CP orchestrate step
+$CP orchestrate run
 ```
+
+`orchestrate run` repeats `step` until a step prints `idle` or appends `asking`. On a guided checkout, `crucible room` pane-runs `orchestrate run`.
 
 ## Session cleanup
 

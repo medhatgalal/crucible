@@ -282,7 +282,7 @@ fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), Strin
     if let Some(pane) = pane_for_tab(&listed, "tab-orchestrator") {
         herdr_ok(
             herdr,
-            &["pane", "run", &pane, exe_s.as_ref(), "orchestrate", "step"],
+            &["pane", "run", &pane, exe_s.as_ref(), "orchestrate", "run"],
         )?;
     }
     if let Some(pane) = pane_for_tab(&listed, "tab-dashboard") {
@@ -1056,7 +1056,7 @@ exit 0
         assert!(!stdout.contains("go not started"), "{stdout}");
         let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
         assert!(log.contains("pane run pane-orchestrator"), "{log}");
-        assert!(log.contains("orchestrate step"), "{log}");
+        assert!(log.contains("orchestrate run"), "{log}");
         assert!(log.contains("pane run pane-dashboard"), "{log}");
         assert!(log.contains("speech queue"), "{log}");
         assert!(!log.contains(" go"), "{log}");

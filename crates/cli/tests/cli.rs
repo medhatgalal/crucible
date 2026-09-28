@@ -4552,6 +4552,251 @@ assembly\tA,B\t-\tassembly.sh
     );
 }
 
+fn plant_factory_panel(root: &Path, prog: &Path) {
+    let exe = env!("CARGO_BIN_EXE_crucible");
+    let maker = root.join("maker.sh");
+    fs::write(
+        &maker,
+        format!(
+            "#!/bin/sh\nslug=$(cat current-item)\nprintf hello > \"$slug.txt\"\ni=0\nwhile [ \"$i\" -lt 50 ]; do\n  if \"{exe}\" run \"$slug\" mk1 -- true; then\n    exit 0\n  fi\n  i=$((i+1))\n  sleep 0.05\ndone\nexit 1\n"
+        ),
+    )
+    .unwrap();
+    let mut perm = fs::metadata(&maker).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(&maker, perm).unwrap();
+    fs::write(
+        prog.join("agents.tsv"),
+        format!(
+            "\
+c0\tkindA\tm\thigh\ttrue\n\
+a1\tkindA\tm\thigh\ttrue\n\
+a2\tkindB\tm\thigh\ttrue\n\
+mk1\tkindA\tm\thigh\t{maker}\n\
+j1\tkindB\tm\thigh\ttrue\n\
+j2\tkindB\tm\thigh\ttrue\n",
+            maker = maker.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.md"),
+        "\
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+
+## Waivers
+
+NONE for this fixture.
+",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.ASSIGN.tsv"),
+        "\
+role\tagent\trequired\tnotes
+coordinator\tc0\tyes\tthis session
+claim-auditor\ta1\tyes\t
+claim-auditor\ta2\tyes\t
+scout\ta1\tno\t
+maker\tmk1\tyes\t
+reviewer\tj1\tyes\t
+contract-auditor\tj2\tyes\t
+",
+    )
+    .unwrap();
+    factory_ok(root, &["cycle", "approve-panel"]);
+    fs::create_dir_all(prog.join("roles")).unwrap();
+    fs::write(prog.join("roles/maker.md"), "Make the owned file.\n").unwrap();
+}
+
+fn plant_build_item(prog: &Path, slug: &str) {
+    let item = prog.join("items").join(slug);
+    fs::create_dir_all(item.join("work")).unwrap();
+    fs::create_dir_all(item.join("evidence")).unwrap();
+    fs::write(item.join("work/note.txt"), "base\n").unwrap();
+    fs::write(
+        item.join("ITEM.md"),
+        format!("# {slug}\n\n- [ ] A1: greeting file exists\n"),
+    )
+    .unwrap();
+    fs::write(item.join("plan-audit.md"), "VERDICT: PASS\n").unwrap();
+}
+
+fn activate_only(prog: &Path, slug: &str) {
+    let path = prog.join("STATE.tsv");
+    let mut out = String::from(
+        "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n",
+    );
+    if path.is_file() {
+        for line in fs::read_to_string(&path).unwrap().lines().skip(1) {
+            if line.is_empty() {
+                continue;
+            }
+            let mut fields: Vec<String> = line.split('\t').map(str::to_string).collect();
+            if fields.len() != 8 || fields[0] == slug {
+                continue;
+            }
+            if fields[1] == "ACTIVE" || fields[1] == "BLOCKED" {
+                fields[1] = "CLOSED".to_string();
+                fields[5] = "-".to_string();
+            }
+            out.push_str(&fields.join("\t"));
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("{slug}\tACTIVE\tBUILD\tEMPTY\tLOW\t-\t-\t1\n"));
+    fs::write(path, out).unwrap();
+}
+
+fn drive_maker_until_landed(root: &Path, prog: &Path, slug: &str) {
+    fs::write(root.join("current-item"), format!("{slug}\n")).unwrap();
+    let speech_path = prog.join("SPEECH.tsv");
+    let before = fs::read_to_string(&speech_path).unwrap_or_default();
+    let landed = format!("\tmachine\tlanded\t{slug}\n");
+    assert!(!before.contains(&landed), "{before}");
+    let dispatched = factory_ok(root, &["dispatch", slug, "maker", "mk1"]);
+    let id = Path::new(dispatched.trim())
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    factory_ok(root, &["attempt", "transport", &id, "multi-agent"]);
+    factory_ok(root, &["contract-audit", &id, "j2", "PASS"]);
+    let drove = factory_ok(root, &["drive", "tick"]);
+    assert!(drove.contains("finish recorded"), "{drove}");
+    assert_eq!(fs::read(root.join(format!("{slug}.txt"))).unwrap(), b"hello");
+    let after_drive = fs::read_to_string(&speech_path).unwrap_or_default();
+    assert!(
+        !after_drive.contains(&landed),
+        "drive must not plant landed: {after_drive}"
+    );
+    let evidence = fs::read_dir(prog.join("items").join(slug).join("evidence"))
+        .unwrap()
+        .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
+        .find(|name| name.ends_with(".txt"))
+        .expect("maker run wrote evidence");
+    factory_ok(root, &["result", &id, "PASS", &evidence, "CLOSE"]);
+    let speech = fs::read_to_string(&speech_path).unwrap();
+    assert_eq!(
+        speech.lines().filter(|line| line.ends_with(landed.trim_end())).count(),
+        1,
+        "{speech}"
+    );
+}
+
+#[test]
+fn orchestrate_run_assembles_and_stops_when_it_must_ask() {
+    let tmp = Tmp::new();
+    let prog = factory_program(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+assembly\tA,B\t-\tassembly.sh
+",
+    );
+    let script = prog.join("assembly.sh");
+    fs::write(&script, "#!/bin/sh\necho once >> stamp\nexit 0\n").unwrap();
+    let mut perm = fs::metadata(&script).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(&script, perm).unwrap();
+    plant_factory_panel(&tmp.root, &prog);
+    plant_build_item(&prog, "A");
+    activate_only(&prog, "A");
+    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
+    factory_ok(&tmp.root, &["orchestrate", "run"]);
+    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    assert!(
+        facts.iter().any(|row| row.1 == "asking" && row.2 == "A"),
+        "{facts:?}"
+    );
+    assert!(
+        !facts.iter().any(|row| row.1 == "landed"),
+        "{facts:?}"
+    );
+    assert!(
+        !facts
+            .iter()
+            .any(|row| row.1 == "dispatched" && row.2 == "A"),
+        "{facts:?}"
+    );
+    assert!(!prog.join("stamp").exists());
+    assert_eq!(
+        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
+    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
+    drive_maker_until_landed(&tmp.root, &prog, "A");
+    plant_build_item(&prog, "B");
+    activate_only(&prog, "B");
+    drive_maker_until_landed(&tmp.root, &prog, "B");
+    let owned_a = fs::read(tmp.root.join("A.txt")).unwrap();
+    let owned_b = fs::read(tmp.root.join("B.txt")).unwrap();
+    factory_ok(&tmp.root, &["orchestrate", "run"]);
+    assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
+    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "A"),
+        "{facts:?}"
+    );
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "B"),
+        "{facts:?}"
+    );
+    assert_eq!(
+        facts
+            .iter()
+            .filter(|row| row.1 == "landed" && row.2 == "assembly")
+            .count(),
+        1,
+        "{facts:?}"
+    );
+    assert_eq!(fs::read(tmp.root.join("A.txt")).unwrap(), owned_a);
+    assert_eq!(fs::read(tmp.root.join("B.txt")).unwrap(), owned_b);
+    assert_eq!(
+        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
+    factory_ok(&tmp.root, &["orchestrate", "run"]);
+    assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
+    assert_eq!(
+        speech_facts(&prog.join("SPEECH.tsv"))
+            .iter()
+            .filter(|row| row.1 == "landed" && row.2 == "assembly")
+            .count(),
+        1
+    );
+}
+
 #[test]
 fn orchestrate_step_asks_on_escalation_without_pausing_the_sibling() {
     let tmp = Tmp::new();
