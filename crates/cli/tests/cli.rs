@@ -1807,6 +1807,82 @@ fn start_serve(dir: &Path, bind: &str) -> ServeProc {
     ServeProc { child, addr }
 }
 
+#[test]
+fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    let prog = tmp.root.join(".crucible").join("work");
+    fs::create_dir_all(&prog).unwrap();
+    let repo = fs::canonicalize(&tmp.root).unwrap();
+    fs::write(
+        prog.join("PROGRAM"),
+        format!(
+            "cycle: guided\nlifecycle: managed\nrepo: {}\n",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    let cli = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_ROOT", &tmp.root)
+        .args(["speech", "manager", "source", "the greeting is wrong"])
+        .output()
+        .expect("speech cli");
+    assert!(
+        cli.status.success(),
+        "stderr {}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    let path = prog.join("SPEECH.tsv");
+    let after_cli = fs::read_to_string(&path).unwrap();
+    assert!(
+        after_cli.starts_with("epoch\trole\tsentence\ttext\n"),
+        "{after_cli}"
+    );
+    assert!(
+        after_cli
+            .lines()
+            .nth(1)
+            .unwrap()
+            .ends_with("\tmanager\tsource\tthe greeting is wrong"),
+        "{after_cli}"
+    );
+    let refused = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_ROOT", &tmp.root)
+        .args(["speech", "manager", "landed", "no"])
+        .output()
+        .expect("speech refuse");
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("speech sentence refused"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), after_cli);
+    let web = start_web(&tmp.root);
+    let (status, _headers, body) = post(
+        &web.addr,
+        "/act/speech",
+        r#"{"args":["machine","landed","greeting fixed"]}"#,
+    );
+    assert_eq!(status, 200, "{body}");
+    let after_http = fs::read_to_string(&path).unwrap();
+    let http_line = after_http.lines().nth(2).unwrap();
+    assert!(
+        http_line.ends_with("\tmachine\tlanded\tgreeting fixed"),
+        "{after_http}"
+    );
+    let (bad_status, bad_headers, bad_body) = post(
+        &web.addr,
+        "/act/speech",
+        r#"{"args":["guest","source","no"]}"#,
+    );
+    assert_eq!(bad_status, 200, "{bad_body}");
+    assert!(bad_headers.contains("X-Crucible-Exit: 2"), "{bad_headers}");
+    assert_eq!(fs::read_to_string(&path).unwrap(), after_http);
+}
+
 fn start_web(dir: &Path) -> ServeProc {
     let mut child = bin()
         .current_dir(dir)

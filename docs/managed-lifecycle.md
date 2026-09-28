@@ -15,6 +15,15 @@ CP=.crucible/<program>/crucible     # after `adopt work --managed`: CP=.crucible
 Then `$CP cycle` is `.crucible/work/crucible cycle`. Nothing exports this for you; a shell
 without it runs nothing.
 
+Factory speech is one record, `SPEECH.tsv`, in the program directory. The manager may say
+`source`, `correction`, or `answer`. A machine may say `started`, `need-a-fact`, `escalated`,
+or `landed`. The orchestrator may say `dispatched`, `paused`, `advanced`, or `asking`. Any
+other role or sentence is refused and the file is left unchanged.
+
+```sh
+$CP speech manager source "the greeting is wrong"
+```
+
 Managed lifecycle makes program state machine-readable and gives the agent one deterministic resume
 behavior. It is selected by behavior in `PROGRAM`:
 

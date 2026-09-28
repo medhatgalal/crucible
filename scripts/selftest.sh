@@ -647,8 +647,8 @@ else
   [ -z "$missing_arm" ] && ok "WEB_WRITERS is $n_writers dispatch_verb arms" \
     || bad "WEB_WRITERS names are not dispatch arms:$missing_arm"
   got=$(printf '%s\n' $web_writers | sort)
-  want=$(printf '%s\n' add adopt attempt brief claim close contract-audit cycle drive evidence lifecycle phase plan-audit probe-acp ready result state status target | sort)
-  [ "$got" = "$want" ] && ok "WEB_WRITERS is exactly add adopt attempt brief claim close contract-audit cycle drive evidence lifecycle phase plan-audit probe-acp ready state status target" \
+  want=$(printf '%s\n' add adopt attempt brief claim close contract-audit cycle drive evidence lifecycle phase plan-audit probe-acp ready result speech state status target | sort)
+  [ "$got" = "$want" ] && ok "WEB_WRITERS is exactly add adopt attempt brief claim close contract-audit cycle drive evidence lifecycle phase plan-audit probe-acp ready result speech state status target" \
     || bad "WEB_WRITERS set is '$got'"
   if [ "$n_allow" -ge 1 ]; then
     overlap=""
