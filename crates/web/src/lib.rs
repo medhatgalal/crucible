@@ -1492,6 +1492,8 @@ mod tests {
         assert!(body.contains("/act/backlog"));
         assert!(body.contains("/act/speech"));
         assert!(body.contains("/api/factory"));
+        assert!(body.contains("<h2>Walk</h2>"));
+        assert!(body.contains("<h2>Factory</h2>"));
         assert!(body.contains("/act/go"));
         assert!(body.contains("X-Crucible-Act"));
         assert!(body.contains("application/json"));

@@ -1885,6 +1885,7 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
 }
 
 #[test]
+// Drive client only. The program is already closed. This does not launch a maker.
 fn guided_go_is_drive_and_reaches_done() {
     let tmp = Tmp::new();
     init_git_product(&tmp.root);
@@ -3870,6 +3871,61 @@ fn grill_one_file_request_stays_one_order() {
 }
 
 #[test]
+fn grill_ticket_matches_handwritten_request() {
+    fn signed(root: &std::path::Path, ticket: bool) -> String {
+        let prog = plant_guided_program(root);
+        let request = root.join("REQUEST.md");
+        if ticket {
+            fs::write(prog.join("ticket"), "on\n").unwrap();
+            fs::write(&request, "path: src/hello.rs\ncheck: cargo test hello\n").unwrap();
+        } else {
+            fs::write(
+                &request,
+                "\
+# Request
+
+## Owned files
+
+- src/hello.rs
+
+## Checks
+
+- cargo test hello
+",
+            )
+            .unwrap();
+        }
+        let out = grill_bin(root, &["grill", "decide", request.to_str().unwrap()]);
+        assert!(
+            out.status.success(),
+            "stderr {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let body = fs::read_to_string(prog.join("GRILL.md")).unwrap();
+        let mut normalized = String::new();
+        for line in body.lines() {
+            if let Some(rest) = line.trim().strip_prefix("decided ") {
+                assert!(rest.chars().all(|c| c.is_ascii_digit()), "{body}");
+                normalized.push_str("decided EPOCH\n");
+            } else {
+                normalized.push_str(line);
+                normalized.push('\n');
+            }
+        }
+        normalized
+    }
+    let handwritten = Tmp::new();
+    let from_ticket = Tmp::new();
+    assert_eq!(
+        signed(&handwritten.root, false),
+        signed(&from_ticket.root, true)
+    );
+    let help = bin().arg("help").output().unwrap();
+    let text = String::from_utf8_lossy(&help.stdout);
+    assert!(!text.contains("\nticket "), "{text}");
+}
+
+#[test]
 fn grill_two_paths_need_a_vehicle_graph() {
     let tmp = Tmp::new();
     let prog = plant_guided_program(&tmp.root);
@@ -4223,15 +4279,75 @@ assembly\tA,B\t-\tassembly.sh
         "{machines:?}"
     );
     factory_ok(&tmp.root, &["speech", "machine", "landed", "B"]);
-    let held = fs::read(&speech).unwrap();
+    let script = prog.join("assembly.sh");
+    fs::write(&script, "#!/bin/sh\necho once >> stamp\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perm = fs::metadata(&script).unwrap().permissions();
+        perm.set_mode(0o755);
+        fs::set_permissions(&script, perm).unwrap();
+    }
+    factory_ok(&tmp.root, &["orchestrate", "step"]);
+    let facts = speech_facts(&speech);
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "assembly"),
+        "{facts:?}"
+    );
+    assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
     let idle = factory_ok(&tmp.root, &["orchestrate", "step"]);
     assert_eq!(idle, "idle\n");
-    assert_eq!(fs::read(&speech).unwrap(), held);
-    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
     assert_eq!(
         fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
         b"leave me\n"
     );
+}
+
+#[test]
+fn orchestrate_step_asks_on_escalation_without_pausing_the_sibling() {
+    let tmp = Tmp::new();
+    let prog = factory_program(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+",
+    );
+    factory_ok(&tmp.root, &["speech", "machine", "escalated", "A"]);
+    factory_ok(&tmp.root, &["orchestrate", "step"]);
+    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.1 == "asking" && row.2 == "A"),
+        "{facts:?}"
+    );
+    assert!(
+        !facts.iter().any(|row| row.1 == "paused"),
+        "{facts:?}"
+    );
+    assert!(
+        facts
+            .iter()
+            .any(|row| row.1 == "dispatched" && row.2 == "B"),
+        "{facts:?}"
+    );
+    assert!(
+        !facts
+            .iter()
+            .any(|row| row.1 == "dispatched" && row.2 == "A"),
+        "{facts:?}"
+    );
+    let held = fs::read(prog.join("SPEECH.tsv")).unwrap();
+    assert_eq!(
+        factory_ok(&tmp.root, &["orchestrate", "step"]),
+        "idle\n"
+    );
+    assert_eq!(fs::read(prog.join("SPEECH.tsv")).unwrap(), held);
 }
 
 #[test]
@@ -4268,6 +4384,11 @@ B\t-\tb.paths\tb.sh
                 "asking".to_string(),
                 "A".to_string()
             ),
+            (
+                "orchestrator".to_string(),
+                "dispatched".to_string(),
+                "B".to_string()
+            ),
         ]
     );
     assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
@@ -4281,7 +4402,7 @@ B\t-\tb.paths\tb.sh
         "{facts:?}"
     );
     assert!(
-        !facts
+        facts
             .iter()
             .any(|row| row.1 == "dispatched" && row.2 == "B"),
         "{facts:?}"

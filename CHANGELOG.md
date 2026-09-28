@@ -11,6 +11,10 @@ All notable changes to this project are documented here. This project follows
   hand-written request with that owned path and check. `off` or a missing file
   leaves the request parser unchanged. The manifest is `modules/ticket/module.txt`
   (`values: off, on`; writes nothing). No VERSION bump.
+- A pause or an escalation holds that order only. The same step may
+  dispatch one other ready order. When every other order has landed, the
+  step runs the assembly script once. `crucible.stats/v1` reports `floor_s`
+  and `grill_s` from those epochs when both ends exist. No VERSION bump.
 - `crucible orchestrate step` reads program `ORDERS.tsv` and appends one
   factory step to `SPEECH.tsv`: `paused` and `asking`, one `dispatched`
   order, or it prints `idle`. `assembly` is not dispatched. It does not

@@ -43,6 +43,12 @@ pub struct Factory {
     pub orders_in: u64,
     pub landed: u64,
     pub escalated: u64,
+    /// First `landed` epoch minus first `dispatched` epoch, when both exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor_s: Option<i64>,
+    /// `GRILL.md` `decided` epoch minus the first manager `source` epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grill_s: Option<i64>,
     pub orders: Vec<FactoryOrder>,
 }
 
@@ -163,6 +169,7 @@ fn window_from_events(
 }
 
 struct SpeechRow {
+    epoch: i64,
     role: String,
     sentence: String,
     text: String,
@@ -171,10 +178,7 @@ struct SpeechRow {
 /// Four columns, exactly. A short or long row is not a sentence.
 fn parse_speech_row(line: &str) -> Option<SpeechRow> {
     let mut parts = line.split('\t');
-    let epoch = parts.next()?;
-    if epoch.parse::<i64>().is_err() {
-        return None;
-    }
+    let epoch = parts.next()?.parse::<i64>().ok()?;
     let role = parts.next()?.to_string();
     let sentence = parts.next()?.to_string();
     let text = parts.next()?.to_string();
@@ -182,6 +186,7 @@ fn parse_speech_row(line: &str) -> Option<SpeechRow> {
         return None;
     }
     Some(SpeechRow {
+        epoch,
         role,
         sentence,
         text,
@@ -200,11 +205,14 @@ fn push_factory_line(orders: &mut Vec<FactoryOrder>, fresh_order: bool, line: Fa
 }
 
 /// Every parsed `SPEECH.tsv` row. `since` does not drop rows. One bad row does not drop the rest.
-fn factory_from_speech(text: &str) -> Factory {
+fn factory_from_speech(text: &str, decided: Option<i64>) -> Factory {
     let mut orders = Vec::new();
     let mut orders_in = 0u64;
     let mut landed = 0u64;
     let mut escalated = 0u64;
+    let mut first_source = None;
+    let mut first_dispatched = None;
+    let mut first_landed = None;
     for (i, raw) in text.lines().enumerate() {
         let line = raw.trim_end_matches('\r');
         if line.trim().is_empty() {
@@ -217,8 +225,17 @@ fn factory_from_speech(text: &str) -> Factory {
             continue;
         };
         match row.sentence.as_str() {
-            "source" => orders_in += 1,
-            "landed" => landed += 1,
+            "source" => {
+                orders_in += 1;
+                first_source.get_or_insert(row.epoch);
+            }
+            "dispatched" => {
+                first_dispatched.get_or_insert(row.epoch);
+            }
+            "landed" => {
+                landed += 1;
+                first_landed.get_or_insert(row.epoch);
+            }
             "escalated" => escalated += 1,
             _ => {}
         }
@@ -234,10 +251,20 @@ fn factory_from_speech(text: &str) -> Factory {
             },
         );
     }
+    let floor_s = match (first_dispatched, first_landed) {
+        (Some(start), Some(end)) if end >= start => Some(end - start),
+        _ => None,
+    };
+    let grill_s = match (first_source, decided) {
+        (Some(start), Some(end)) if end >= start => Some(end - start),
+        _ => None,
+    };
     Factory {
         orders_in,
         landed,
         escalated,
+        floor_s,
+        grill_s,
         orders,
     }
 }
@@ -246,7 +273,20 @@ fn attach_speech(window: &mut StatsWindow, dir: &Path) {
     let Ok(text) = fs::read_to_string(dir.join("SPEECH.tsv")) else {
         return;
     };
-    window.factory = Some(factory_from_speech(&text));
+    window.factory = Some(factory_from_speech(&text, decided_epoch(dir)));
+}
+
+fn decided_epoch(dir: &Path) -> Option<i64> {
+    let text = fs::read_to_string(dir.join("GRILL.md")).ok()?;
+    for line in text.lines() {
+        let Some(rest) = line.trim().strip_prefix("decided ") else {
+            continue;
+        };
+        if let Ok(epoch) = rest.parse::<i64>() {
+            return Some(epoch);
+        }
+    }
+    None
 }
 
 impl StatsWindow {
@@ -532,13 +572,15 @@ when\toutcome\tslices\tbound\tnote
 epoch\trole\tsentence\ttext
 10\tmanager\tsource\tfix the greeting
 not a speech line
-11\tmachine\tlanded\tshipped
+11\torchestrator\tdispatched\tshipped
+15\tmachine\tlanded\tshipped
 still\tbad
 12\tmachine\tescalated\tblocked
 13\torchestrator\tpaused\tneed the repo
 ",
         )
         .unwrap();
+        fs::write(tmp.root.join("GRILL.md"), "## sign\ndecided 14\n").unwrap();
         let wm = tmp.root.join(".wm");
         fs::create_dir_all(&wm).unwrap();
         let events = wm.join("EVENTS");
@@ -561,24 +603,26 @@ still\tbad
         assert_eq!(factory.landed, 1);
         assert_eq!(factory.escalated, 1);
         assert_eq!(factory.orders.len(), 1);
+        assert_eq!(factory.floor_s, Some(4));
+        assert_eq!(factory.grill_s, Some(4));
         let lines = &factory.orders[0].machines;
-        assert_eq!(lines.len(), 4);
+        assert_eq!(lines.len(), 5);
         assert_eq!(lines[0].role, "manager");
         assert_eq!(lines[0].sentence, "source");
         assert_eq!(lines[0].result, "fix the greeting");
-        assert_eq!(lines[1].role, "machine");
-        assert_eq!(lines[1].sentence, "landed");
-        assert_eq!(lines[1].result, "shipped");
-        assert!(lines[1].duration.is_none());
-        assert!(lines[1].evidence.is_none());
         assert_eq!(lines[2].role, "machine");
-        assert_eq!(lines[2].sentence, "escalated");
-        assert_eq!(lines[2].result, "blocked");
+        assert_eq!(lines[2].sentence, "landed");
+        assert_eq!(lines[2].result, "shipped");
         assert!(lines[2].duration.is_none());
         assert!(lines[2].evidence.is_none());
-        assert_eq!(lines[3].role, "orchestrator");
-        assert_eq!(lines[3].sentence, "paused");
-        assert_eq!(lines[3].result, "need the repo");
+        assert_eq!(lines[3].role, "machine");
+        assert_eq!(lines[3].sentence, "escalated");
+        assert_eq!(lines[3].result, "blocked");
+        assert!(lines[3].duration.is_none());
+        assert!(lines[3].evidence.is_none());
+        assert_eq!(lines[4].role, "orchestrator");
+        assert_eq!(lines[4].sentence, "paused");
+        assert_eq!(lines[4].result, "need the repo");
         let v = serde_json::to_value(&w).unwrap();
         assert!(v["factory"]["orders"][0]["machines"][1]
             .get("duration")
