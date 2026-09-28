@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -3707,6 +3708,208 @@ fn page_starts_records_and_checks_one_item() {
     let _ = serve.kill();
     let _ = web.wait();
     let _ = serve.wait();
+}
+
+fn plant_guided_program(root: &Path) -> PathBuf {
+    init_git_product(root);
+    let prog = root.join(".crucible").join("work");
+    fs::create_dir_all(&prog).unwrap();
+    let repo = fs::canonicalize(root).unwrap();
+    fs::write(
+        prog.join("PROGRAM"),
+        format!(
+            "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    prog
+}
+
+fn grill_bin(root: &Path, args: &[&str]) -> std::process::Output {
+    bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(args)
+        .output()
+        .expect("grill")
+}
+
+fn write_order_verify(path: &Path) {
+    fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut perm = fs::metadata(path).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(path, perm).unwrap();
+}
+
+#[test]
+fn grill_one_file_request_stays_one_order() {
+    let tmp = Tmp::new();
+    let prog = plant_guided_program(&tmp.root);
+    fs::write(
+        prog.join("CLAIMS.md"),
+        "\
+# CLAIMS
+
+### C1 greeting
+    scout: ABSENT
+    path: src/hello.txt
+    status: NEW
+",
+    )
+    .unwrap();
+    let request = tmp.root.join("REQUEST.md");
+    fs::write(
+        &request,
+        "\
+# Request
+
+## Owned files
+
+- src/hello.txt
+
+## Checks
+
+- hello is the greeting
+",
+    )
+    .unwrap();
+    let out = grill_bin(&tmp.root, &["grill", "decide", request.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout.matches("order:").count(), 1, "{stdout}");
+    assert!(stdout.contains("size: part\n"), "{stdout}");
+    assert!(stdout.contains("note: one item\n"), "{stdout}");
+    let grill_md = fs::read_to_string(prog.join("GRILL.md")).unwrap();
+    assert!(grill_md.contains("## vehicle\n"), "{grill_md}");
+    assert!(grill_md.contains("## source words\n"), "{grill_md}");
+    assert!(grill_md.contains("## scout\n"), "{grill_md}");
+    assert!(grill_md.contains("## frame\n"), "{grill_md}");
+    assert!(
+        grill_md.contains("## size\nsize: part\nnote: one item\n"),
+        "{grill_md}"
+    );
+    assert!(grill_md.contains("## cut\n"), "{grill_md}");
+    assert!(grill_md.contains("## sign\n"), "{grill_md}");
+    let size_at = grill_md.find("## size").unwrap();
+    let cut_at = grill_md.find("## cut").unwrap();
+    assert!(grill_md.find("## vehicle").unwrap() < grill_md.find("## source words").unwrap());
+    assert!(grill_md.find("## source words").unwrap() < grill_md.find("## scout").unwrap());
+    assert!(grill_md.find("## scout").unwrap() < grill_md.find("## frame").unwrap());
+    assert!(grill_md.find("## frame").unwrap() < size_at);
+    assert!(size_at < cut_at);
+    assert!(cut_at < grill_md.find("## sign").unwrap());
+    assert_eq!(grill_md.matches("order:").count(), 1, "{grill_md}");
+    assert!(!prog.join("items").exists());
+}
+
+#[test]
+fn grill_two_paths_need_a_vehicle_graph() {
+    let tmp = Tmp::new();
+    let prog = plant_guided_program(&tmp.root);
+    let request = tmp.root.join("REQUEST.md");
+    fs::write(
+        &request,
+        "\
+# Request
+
+## Owned files
+
+- src/door.txt
+- src/frame.txt
+
+## Checks
+
+- door opens
+- frame holds
+",
+    )
+    .unwrap();
+    let denied = grill_bin(&tmp.root, &["grill", "decide", request.to_str().unwrap()]);
+    assert_eq!(denied.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&denied.stderr);
+    assert!(err.contains("crucible: vehicle graph required"), "{err}");
+    assert!(!prog.join("GRILL.md").exists());
+    assert!(!prog.join("items").exists());
+    fs::create_dir_all(prog.join("orders")).unwrap();
+    fs::write(
+        prog.join("ORDERS.tsv"),
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+door\t-\torders/door.paths\torders/door.verify.sh
+frame\t-\torders/frame.paths\torders/frame.verify.sh
+assembly\tdoor,frame\t-\torders/assembly.verify.sh
+",
+    )
+    .unwrap();
+    fs::write(prog.join("orders/door.paths"), "src/door.txt\n").unwrap();
+    fs::write(prog.join("orders/frame.paths"), "src/frame.txt\n").unwrap();
+    for name in ["door", "frame", "assembly"] {
+        write_order_verify(&prog.join(format!("orders/{name}.verify.sh")));
+    }
+    let accepted = grill_bin(&tmp.root, &["grill", "decide", request.to_str().unwrap()]);
+    assert!(
+        accepted.status.success(),
+        "stderr {}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&accepted.stdout);
+    assert!(stdout.contains("size: vehicle\n"), "{stdout}");
+    assert!(stdout.contains("order: assembly\n"), "{stdout}");
+    let grill_md = fs::read_to_string(prog.join("GRILL.md")).unwrap();
+    assert!(grill_md.contains("size: vehicle\n"), "{grill_md}");
+    assert!(!prog.join("items").exists());
+}
+
+#[test]
+fn grill_fully_exists_path_is_dropped() {
+    let tmp = Tmp::new();
+    let prog = plant_guided_program(&tmp.root);
+    fs::write(
+        prog.join("CLAIMS.md"),
+        "\
+# CLAIMS
+
+### C1 greeting
+    scout: FULLY-EXISTS
+    path: src/hello.txt
+    status: CLOSED
+",
+    )
+    .unwrap();
+    let request = tmp.root.join("REQUEST.md");
+    fs::write(
+        &request,
+        "\
+# Request
+
+## Owned files
+
+- src/hello.txt
+
+## Checks
+
+- hello is the greeting
+",
+    )
+    .unwrap();
+    let out = grill_bin(&tmp.root, &["grill", "decide", request.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "dropped: src/hello.txt\n");
+    let grill_md = fs::read_to_string(prog.join("GRILL.md")).unwrap();
+    assert!(grill_md.contains("dropped: src/hello.txt\n"), "{grill_md}");
+    assert!(!grill_md.contains("order:"), "{grill_md}");
+    assert!(!grill_md.contains("size: part"), "{grill_md}");
+    assert!(!prog.join("items").exists());
 }
 
 fn wait_listen(child: &mut Child) {
