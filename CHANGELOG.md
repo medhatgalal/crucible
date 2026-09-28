@@ -12,6 +12,12 @@ All notable changes to this project are documented here. This project follows
 - Where a guided program is installed, `go` and `POST /act/go` run `drive`.
   `go --next` is that same call. A working-mode tree with no guided program
   still uses the kernel walk. Kernel `POST /go` stays 405.
+- `crucible.stats/v1` shows every factory sentence already stored in the program
+  `SPEECH.tsv`: orders in (`source`), landed, and escalated, with each line
+  nested under its order. The sentence text is the result. Duration and
+  evidence stay absent when the line does not carry them. One bad line does
+  not drop the rest. The `since` window still applies only to `.wm/EVENTS`
+  and `.wm/METRICS.tsv`. No VERSION bump.
 
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`

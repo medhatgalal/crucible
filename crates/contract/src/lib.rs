@@ -19,5 +19,7 @@ pub use json::canonical_json;
 pub use layout::resolve as resolve_wm;
 pub use snapshot::{Closed, Floor, TraceRow, WalkSnapshot, WALK_SCHEMA};
 pub use speech::{speech_line, SPEECH_HEADER};
-pub use stats::{Halt, StatsCounts, StatsError, StatsWindow, STATS_SCHEMA};
+pub use stats::{
+    Factory, FactoryLine, FactoryOrder, Halt, StatsCounts, StatsError, StatsWindow, STATS_SCHEMA,
+};
 pub use timeutil::{format_rfc3339_z, parse_rfc3339_z};
