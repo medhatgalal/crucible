@@ -61,6 +61,12 @@ All notable changes to this project are documented here. This project follows
   process bind and VERSION. Missing `.wm` is `available: false`. Non-loopback
   bind is refused (no listen). `POST /go` is 405/404 — start `go` as a process.
 
+## [1.27.1] - 2026-09-28
+
+### Fixed
+
+- A maker re-verification can record `PASS` when its evidence names the current commit and that commit is still the dispatch work id. Evidence that names an older work id is still refused.
+
 ## [1.27.0] - 2026-09-28
 
 ### Fixed

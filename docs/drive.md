@@ -81,7 +81,8 @@ item's owned files fails the close (`product porcelain outside owned files`). Li
 `.wm`, repo-root `START.md`, or `.grok/` beside a correct owned file does not fail that check.
 `crucible run` hides those paths from the command it records, so a frozen check that itself runs
 `git status` is not failed by that listing alone. The evidence work id must still equal the
-post-change work id.
+work id at `result` time. A re-verification whose evidence names the current commit can record
+PASS without a newer commit. Evidence that names an older id is refused.
 
 A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation is resumed when every remaining porcelain path is
 harness or an owned file. Drive then follows the item's stage instead of stopping on that same line.

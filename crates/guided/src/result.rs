@@ -279,11 +279,9 @@ fn maker_wid(
     if current_wid == "EMPTY" || current_wid == "NOBRANCH" {
         return Err(message("maker result requires current work"));
     }
-    if current_wid == dispatch_wid {
-        return Err(message(
-            "maker result requires work to change after dispatch",
-        ));
-    }
+    // A re-verification runs at the commit already under review. Evidence must
+    // still name that same work id. A later commit is not required when HEAD
+    // has not moved.
     let item = item_dir(root, slug);
     if item.join("TARGET").is_file() {
         let item_text = fs::read_to_string(item.join("ITEM.md")).unwrap_or_default();
@@ -590,6 +588,57 @@ mod tests {
             .unwrap_err()
             .to_string(),
             format!("attempt result is immutable: {id}")
+        );
+    }
+
+    #[test]
+    fn maker_reverification_at_the_dispatch_commit_records_pass() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        let id = "A1700000000.5.1";
+        let item = root.join("items/alpha");
+        fs::create_dir_all(item.join("work")).unwrap();
+        fs::create_dir_all(item.join("evidence")).unwrap();
+        fs::write(item.join("work/note.txt"), "changed\n").unwrap();
+        let wid = workid(root, "alpha").unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tBUILD\t{wid}\tLOW\t{id}\t-\t1\n"),
+        )
+        .unwrap();
+        let ad = root.join("attempts").join(id);
+        fs::create_dir_all(&ad).unwrap();
+        fs::write(
+            ad.join("meta.tsv"),
+            format!(
+                "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\talpha\t-\t{wid}\tmaker\tbea\tcodex\tA1\tFOCUSED\tRETURNED\t1\t2\t-\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            ad.join("events.tsv"),
+            "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tseed\nRETURNED\t2\t9\tobserved\n",
+        )
+        .unwrap();
+        fs::write(
+            item.join("evidence").join("check.txt"),
+            format!("{MARK}\nagent: bea\nwork-id: {wid}\nattempt-id: {id}\n"),
+        )
+        .unwrap();
+        let out = result(
+            root,
+            &[id, "PASS", "check.txt", "CLOSE"],
+            &FixedClock::new(1_700_000_060),
+        )
+        .unwrap();
+        assert_eq!(out, format!("{}/result.md\n", ad.display()));
+        let body = fs::read_to_string(ad.join("result.md")).unwrap();
+        assert!(body.contains("OUTCOME: PASS\n"), "{body}");
+        assert!(body.contains(&format!("WORK-ID: {wid}\n")), "{body}");
+        assert!(
+            body.contains(&format!("DISPATCH-WORK-ID: {wid}\n")),
+            "{body}"
         );
     }
 }
