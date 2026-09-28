@@ -1008,7 +1008,7 @@ exit 0
         assert!(!stdout.contains("go orchestrator"), "{stdout}");
         assert!(!stdout.contains("go waiting"), "{stdout}");
         assert!(!stdout.contains("go not started (orchestrator"), "{stdout}");
-        assert!(stdout.contains("1.27.1"), "{stdout}");
+        assert!(stdout.contains("1.28.0"), "{stdout}");
         assert!(
             stdout.contains("standing roles: terminal, chat, orchestrator, dashboard"),
             "{stdout}"
