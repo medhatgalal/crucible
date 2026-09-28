@@ -4558,7 +4558,7 @@ fn plant_factory_panel(root: &Path, prog: &Path) {
     fs::write(
         &maker,
         format!(
-            "#!/bin/sh\nslug=$(cat current-item)\nprintf hello > \"$slug.txt\"\ni=0\nwhile [ \"$i\" -lt 50 ]; do\n  if \"{exe}\" run \"$slug\" mk1 -- true; then\n    exit 0\n  fi\n  i=$((i+1))\n  sleep 0.05\ndone\nexit 1\n"
+            "#!/bin/sh\nprog=\"$CRUCIBLE_ROOT/.crucible/work\"\nslug=$(awk -F '\\t' 'NR>1 && $2==\"ACTIVE\" {{ print $1; exit }}' \"$prog/STATE.tsv\")\nprintf hello > \"$slug.txt\"\ni=0\nwhile [ \"$i\" -lt 50 ]; do\n  if \"{exe}\" run \"$slug\" mk1 -- true; then\n    exit 0\n  fi\n  i=$((i+1))\n  sleep 0.05\ndone\nexit 1\n"
         ),
     )
     .unwrap();
@@ -4670,48 +4670,90 @@ fn activate_only(prog: &Path, slug: &str) {
     fs::write(path, out).unwrap();
 }
 
-fn drive_maker_until_landed(root: &Path, prog: &Path, slug: &str) {
-    fs::write(root.join("current-item"), format!("{slug}\n")).unwrap();
-    let speech_path = prog.join("SPEECH.tsv");
-    let before = fs::read_to_string(&speech_path).unwrap_or_default();
-    let landed = format!("\tmachine\tlanded\t{slug}\n");
-    assert!(!before.contains(&landed), "{before}");
-    let dispatched = factory_ok(root, &["dispatch", slug, "maker", "mk1"]);
-    let id = Path::new(dispatched.trim())
-        .parent()
+fn plant_closed(prog: &Path, slug: &str) {
+    plant_build_item(prog, slug);
+    let path = prog.join("STATE.tsv");
+    let mut text = fs::read_to_string(&path).unwrap();
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!("{slug}\tCLOSED\tBUILD\tEMPTY\tLOW\t-\t-\t1\n"));
+    fs::write(path, text).unwrap();
+}
+
+fn write_assembly(prog: &Path, body: &str) {
+    let script = prog.join("assembly.sh");
+    fs::write(&script, body).unwrap();
+    let mut perm = fs::metadata(&script).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(&script, perm).unwrap();
+}
+
+fn orch_output(root: &Path) -> std::process::Output {
+    bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(["orchestrate", "run"])
+        .output()
         .unwrap()
-        .file_name()
+}
+
+fn spawn_orch(root: &Path) -> Child {
+    bin()
+        .current_dir(root)
+        .env("CRUCIBLE_ROOT", root)
+        .args(["orchestrate", "run"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .unwrap()
-        .to_string_lossy()
-        .into_owned();
-    factory_ok(root, &["attempt", "transport", &id, "multi-agent"]);
-    factory_ok(root, &["contract-audit", &id, "j2", "PASS"]);
-    let drove = factory_ok(root, &["drive", "tick"]);
-    assert!(drove.contains("finish recorded"), "{drove}");
-    assert_eq!(fs::read(root.join(format!("{slug}.txt"))).unwrap(), b"hello");
-    let after_drive = fs::read_to_string(&speech_path).unwrap_or_default();
-    assert!(
-        !after_drive.contains(&landed),
-        "drive must not plant landed: {after_drive}"
-    );
-    let evidence = fs::read_dir(prog.join("items").join(slug).join("evidence"))
-        .unwrap()
-        .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
-        .find(|name| name.ends_with(".txt"))
-        .expect("maker run wrote evidence");
-    factory_ok(root, &["result", &id, "PASS", &evidence, "CLOSE"]);
-    let speech = fs::read_to_string(&speech_path).unwrap();
-    assert_eq!(
-        speech.lines().filter(|line| line.ends_with(landed.trim_end())).count(),
-        1,
-        "{speech}"
-    );
+}
+
+fn wait_until(prog: &Path, want: impl Fn(&[(String, String, String)]) -> bool) {
+    let start = Instant::now();
+    loop {
+        let facts = speech_facts(&prog.join("SPEECH.tsv"));
+        if want(&facts) {
+            return;
+        }
+        if start.elapsed() > Duration::from_secs(45) {
+            panic!("timed out waiting for speech: {facts:?}");
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn assert_shell_landed(prog: &Path, slug: &str) {
+    let attempts = prog.join("attempts");
+    let mut found = false;
+    for ent in fs::read_dir(&attempts).unwrap() {
+        let dir = ent.unwrap().path();
+        let result = fs::read_to_string(dir.join("result.md")).unwrap_or_default();
+        let events = fs::read_to_string(dir.join("events.tsv")).unwrap_or_default();
+        if result.contains(&format!("ITEM: {slug}\n"))
+            && result.contains("OUTCOME: PASS\n")
+            && result.contains("NEXT: CLOSE\n")
+            && events.contains("drive worker exit 0")
+        {
+            found = true;
+        }
+    }
+    assert!(found, "no maker shell result for {slug}");
+}
+
+fn plant_run_graph(root: &Path, orders: &str, assembly: &str) -> PathBuf {
+    let prog = factory_program(root, orders);
+    write_assembly(&prog, assembly);
+    plant_factory_panel(root, &prog);
+    plant_build_item(&prog, "A");
+    activate_only(&prog, "A");
+    prog
 }
 
 #[test]
-fn orchestrate_run_assembles_and_stops_when_it_must_ask() {
+fn orchestrate_run_lands_orders_through_drive_and_result() {
     let tmp = Tmp::new();
-    let prog = factory_program(
+    let prog = plant_run_graph(
         &tmp.root,
         "\
 order_id\tdepends_on\tpaths_file\tverify_script
@@ -4719,74 +4761,30 @@ A\t-\ta.paths\ta.sh
 B\t-\tb.paths\tb.sh
 assembly\tA,B\t-\tassembly.sh
 ",
+        "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
-    let script = prog.join("assembly.sh");
-    fs::write(&script, "#!/bin/sh\necho once >> stamp\nexit 0\n").unwrap();
-    let mut perm = fs::metadata(&script).unwrap().permissions();
-    perm.set_mode(0o755);
-    fs::set_permissions(&script, perm).unwrap();
-    plant_factory_panel(&tmp.root, &prog);
-    plant_build_item(&prog, "A");
-    activate_only(&prog, "A");
-    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
-    factory_ok(&tmp.root, &["orchestrate", "run"]);
-    let facts = speech_facts(&prog.join("SPEECH.tsv"));
-    assert!(
-        facts.iter().any(|row| row.1 == "asking" && row.2 == "A"),
-        "{facts:?}"
-    );
-    assert!(
-        !facts.iter().any(|row| row.1 == "landed"),
-        "{facts:?}"
-    );
-    assert!(
-        !facts
-            .iter()
-            .any(|row| row.1 == "dispatched" && row.2 == "A"),
-        "{facts:?}"
-    );
-    assert!(!prog.join("stamp").exists());
-    assert_eq!(
-        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
-        b"leave me\n"
-    );
-    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
-    drive_maker_until_landed(&tmp.root, &prog, "A");
-    plant_build_item(&prog, "B");
-    activate_only(&prog, "B");
-    drive_maker_until_landed(&tmp.root, &prog, "B");
-    let owned_a = fs::read(tmp.root.join("A.txt")).unwrap();
-    let owned_b = fs::read(tmp.root.join("B.txt")).unwrap();
-    factory_ok(&tmp.root, &["orchestrate", "run"]);
+    plant_closed(&prog, "B");
+    let out = orch_output(&tmp.root);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stdout={stdout} stderr={stderr}");
+    assert_eq!(stdout, "idle\n");
+    assert_eq!(fs::read(tmp.root.join("A.txt")).unwrap(), b"hello");
+    assert_eq!(fs::read(tmp.root.join("B.txt")).unwrap(), b"hello");
+    assert_shell_landed(&prog, "A");
+    assert_shell_landed(&prog, "B");
     assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
+    assert_eq!(fs::read(tmp.root.join("PRODUCT.txt")).unwrap(), b"leave me\n");
     let facts = speech_facts(&prog.join("SPEECH.tsv"));
-    assert!(
-        facts
-            .iter()
-            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "A"),
-        "{facts:?}"
-    );
-    assert!(
-        facts
-            .iter()
-            .any(|row| row.0 == "machine" && row.1 == "landed" && row.2 == "B"),
-        "{facts:?}"
-    );
-    assert_eq!(
-        facts
-            .iter()
-            .filter(|row| row.1 == "landed" && row.2 == "assembly")
-            .count(),
-        1,
-        "{facts:?}"
-    );
-    assert_eq!(fs::read(tmp.root.join("A.txt")).unwrap(), owned_a);
-    assert_eq!(fs::read(tmp.root.join("B.txt")).unwrap(), owned_b);
-    assert_eq!(
-        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
-        b"leave me\n"
-    );
-    factory_ok(&tmp.root, &["orchestrate", "run"]);
+    for slug in ["A", "B", "assembly"] {
+        assert_eq!(
+            facts.iter().filter(|row| row.1 == "landed" && row.2 == slug).count(),
+            1,
+            "{facts:?}"
+        );
+    }
+    let again = orch_output(&tmp.root);
+    assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
     assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
     assert_eq!(
         speech_facts(&prog.join("SPEECH.tsv"))
@@ -4795,6 +4793,175 @@ assembly\tA,B\t-\tassembly.sh
             .count(),
         1
     );
+
+    let three = Tmp::new();
+    let prog = plant_run_graph(
+        &three.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\tA\tb.paths\tb.sh
+C\t-\tc.paths\tc.sh
+assembly\tA,B,C\t-\tassembly.sh
+",
+        "#!/bin/sh\necho once >> stamp\nexit 0\n",
+    );
+    plant_closed(&prog, "B");
+    plant_closed(&prog, "C");
+    let out = orch_output(&three.root);
+    assert!(
+        out.status.success(),
+        "stdout={} stderr={}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    let pos = |sentence: &str, id: &str| {
+        facts.iter().position(|row| row.1 == sentence && row.2 == id).unwrap()
+    };
+    assert!(pos("landed", "A") < pos("dispatched", "B"), "{facts:?}");
+    assert!(pos("landed", "B") < pos("dispatched", "C"), "{facts:?}");
+    assert_eq!(fs::read(three.root.join("C.txt")).unwrap(), b"hello");
+    assert_eq!(fs::read(three.root.join("PRODUCT.txt")).unwrap(), b"leave me\n");
+}
+
+#[test]
+fn orchestrate_run_asks_and_does_not_land_the_paused_order() {
+    let tmp = Tmp::new();
+    let prog = plant_run_graph(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+assembly\tA,B\t-\tassembly.sh
+",
+        "#!/bin/sh\necho once >> stamp\nexit 0\n",
+    );
+    plant_closed(&prog, "B");
+    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
+    let mut child = spawn_orch(&tmp.root);
+    wait_until(&prog, |facts| {
+        facts.iter().any(|row| row.1 == "asking" && row.2 == "A")
+    });
+    let mid = fs::read(prog.join("SPEECH.tsv")).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    assert_eq!(fs::read(prog.join("SPEECH.tsv")).unwrap(), mid);
+    assert!(child.try_wait().unwrap().is_none(), "run exited before the answer");
+    assert!(!tmp.root.join("A.txt").exists());
+    assert!(!tmp.root.join("B.txt").exists());
+    assert!(!prog.join("stamp").exists());
+    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
+    let finished = child.wait_with_output().unwrap();
+    assert!(
+        finished.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&finished.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&finished.stdout), "idle\n");
+    assert_eq!(fs::read(tmp.root.join("B.txt")).unwrap(), b"hello");
+    assert_shell_landed(&prog, "B");
+    assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
+}
+
+#[test]
+fn orchestrate_run_refuses_idle_when_the_maker_shell_fails() {
+    let tmp = Tmp::new();
+    let prog = plant_run_graph(
+        &tmp.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+assembly\tA\t-\tassembly.sh
+",
+        "#!/bin/sh\nexit 0\n",
+    );
+    fs::write(tmp.root.join("maker.sh"), "#!/bin/sh\nexit 1\n").unwrap();
+    let mut perm = fs::metadata(tmp.root.join("maker.sh")).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(tmp.root.join("maker.sh"), perm).unwrap();
+    let out = orch_output(&tmp.root);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("maker shell exited nonzero"), "{stderr}");
+    assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
+    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap_or_default();
+    assert!(!speech.contains("\tlanded\t"), "{speech}");
+    assert!(!speech.contains("\tescalated\t"), "{speech}");
+    assert!(!speech.contains("\tasking\t"), "{speech}");
+    let again = orch_output(&tmp.root);
+    let again_err = String::from_utf8_lossy(&again.stderr);
+    assert_eq!(again.status.code(), Some(2), "{again_err}");
+    assert!(again_err.contains("maker shell exited nonzero"), "{again_err}");
+    assert!(!again_err.contains("idle without outcome"), "{again_err}");
+}
+
+#[test]
+fn orchestrate_run_refuses_a_planted_landed_line() {
+    let bare = Tmp::new();
+    let prog = plant_run_graph(
+        &bare.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+assembly\tA,B\t-\tassembly.sh
+",
+        "#!/bin/sh\necho once >> stamp\nexit 0\n",
+    );
+    plant_closed(&prog, "B");
+    factory_ok(&bare.root, &["speech", "machine", "landed", "A"]);
+    factory_ok(&bare.root, &["speech", "machine", "landed", "B"]);
+    factory_ok(&bare.root, &["speech", "machine", "landed", "assembly"]);
+    let out = orch_output(&bare.root);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("has no PASS CLOSE result"), "{stderr}");
+    assert!(!bare.root.join("A.txt").exists());
+    assert!(!prog.join("stamp").exists());
+
+    let forged = Tmp::new();
+    let prog = plant_run_graph(
+        &forged.root,
+        "\
+order_id\tdepends_on\tpaths_file\tverify_script
+A\t-\ta.paths\ta.sh
+B\t-\tb.paths\tb.sh
+assembly\tA,B\t-\tassembly.sh
+",
+        "#!/bin/sh\necho once >> stamp\nexit 0\n",
+    );
+    plant_closed(&prog, "B");
+    factory_ok(&forged.root, &["speech", "machine", "landed", "A"]);
+    factory_ok(&forged.root, &["speech", "machine", "landed", "B"]);
+    factory_ok(&forged.root, &["speech", "machine", "landed", "assembly"]);
+    for (n, slug) in [("1", "A"), ("2", "B")] {
+        let id = format!("A1700000000.1.{n}");
+        let dir = prog.join("attempts").join(&id);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("meta.tsv"),
+            format!(
+                "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\t{slug}\t-\twid\tmaker\tmk1\tkindA\tA1\tFOCUSED\tRETURNED\t1\t2\t-\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("events.tsv"),
+            "state\tepoch\tpid\treason\nRETURNED\t1\t1\thand-finished\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("result.md"),
+            format!("OUTCOME: PASS\nITEM: {slug}\nNEXT: CLOSE\n"),
+        )
+        .unwrap();
+    }
+    let out = orch_output(&forged.root);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("has no maker shell"), "{stderr}");
+    assert!(out.stdout.is_empty());
 }
 
 #[test]

@@ -76,7 +76,7 @@ not drive the cycle with them.
   speech ROLE SENTENCE TEXT           append one factory sentence to SPEECH.tsv
   grill decide [REQUEST]              one owned path is one order; a vehicle needs ORDERS.tsv
   orchestrate step                    one factory step: dispatch, ask, or idle
-  orchestrate run                     repeat that step until idle or asking
+  orchestrate run                     deliver dispatched orders through drive tick; wait when asking; exit on idle
 
 Independence ladder: multi-agent preferred, then ACP, then subagent after ACP probe failure.
 If no independent agent can be invoked, STOP and warn — do not continue as solo theatre.
