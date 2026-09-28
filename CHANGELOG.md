@@ -9,6 +9,9 @@ All notable changes to this project are documented here. This project follows
 - `crucible speech ROLE SENTENCE TEXT` appends one sentence to the program
   `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
   cannot say another speaker's sentence. No VERSION bump.
+- Where a guided program is installed, `go` and `POST /act/go` run `drive`.
+  `go --next` is that same call. A working-mode tree with no guided program
+  still uses the kernel walk. Kernel `POST /go` stays 405.
 
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`

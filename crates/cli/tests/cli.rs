@@ -1883,6 +1883,192 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     assert_eq!(fs::read_to_string(&path).unwrap(), after_http);
 }
 
+#[test]
+fn guided_go_is_drive_and_reaches_done() {
+    let tmp = Tmp::new();
+    init_git_product(&tmp.root);
+    let bare = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_ROOT", &tmp.root)
+        .args(["go", "--next"])
+        .output()
+        .unwrap();
+    assert_eq!(bare.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&bare.stderr).contains("go --next is not ported"),
+        "{}",
+        String::from_utf8_lossy(&bare.stderr)
+    );
+    let prog = tmp.root.join(".crucible").join("work");
+    fs::create_dir_all(&prog).unwrap();
+    let repo = fs::canonicalize(&tmp.root).unwrap();
+    fs::write(
+        prog.join("PROGRAM"),
+        format!(
+            "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+            repo.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prog.join("STATE.tsv"),
+        "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("agents.tsv"),
+        "\
+c0\tkindA\tm\thigh\ttrue\n\
+a1\tkindA\tm\thigh\ttrue\n\
+a2\tkindB\tm\thigh\ttrue\n\
+mk1\tkindA\tm\thigh\ttrue\n\
+j1\tkindB\tm\thigh\ttrue\n\
+j2\tkindB\tm\thigh\ttrue\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.md"),
+        "\
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+
+## Waivers
+
+NONE for this fixture.
+",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.ASSIGN.tsv"),
+        "\
+role\tagent\trequired\tnotes
+coordinator\tc0\tyes\tthis session
+claim-auditor\ta1\tyes\t
+claim-auditor\ta2\tyes\t
+scout\ta1\tno\t
+maker\tmk1\tyes\t
+reviewer\tj1\tyes\t
+contract-auditor\tj2\tyes\t
+",
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        let out = bin()
+            .current_dir(&tmp.root)
+            .env("CRUCIBLE_ROOT", &tmp.root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?} stderr {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    run(&["cycle", "approve-panel"]);
+    fs::write(
+        prog.join("PROBLEM.md"),
+        "# Broken behavior\n\nThe greeting is wrong.\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("CLAIMS.md"),
+        "\
+# CLAIMS
+
+### C1 greeting
+    scout: FULLY-EXISTS
+    item: hello-file
+    status: CLOSED
+",
+    )
+    .unwrap();
+    let verdicts = prog.join("claims").join("C1").join("verdicts");
+    fs::create_dir_all(&verdicts).unwrap();
+    fs::write(verdicts.join("a1.md"), "CLAIM-VERDICT: TRUE\n").unwrap();
+    let attempt = prog.join("attempts").join("A1.2.3");
+    fs::create_dir_all(&attempt).unwrap();
+    fs::write(
+        attempt.join("meta.tsv"),
+        "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
+",
+    )
+    .unwrap();
+    fs::write(attempt.join("transport"), "multi-agent\n").unwrap();
+    fs::write(attempt.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+    fs::write(
+        attempt.join("events.tsv"),
+        "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PROPOSAL.md"),
+        "\
+# Proposal
+## Verified problem
+The greeting is wrong.
+## Proposed outcome
+HELLO.txt says hello.
+## Non-goals
+No other file.
+## Backlog
+None.
+## Verification
+The file contains hello.
+",
+    )
+    .unwrap();
+    run(&["cycle", "approve"]);
+    let went = run(&["go"]);
+    assert!(went.contains("HUMAN — cycle is DONE"), "{went}");
+    let card = fs::read_to_string(prog.join("STATUS.md")).unwrap();
+    assert!(
+        card.contains("DONE — no admittable claim remains"),
+        "{card}"
+    );
+    fs::remove_file(prog.join("STATUS.md")).unwrap();
+    let web = start_web(&tmp.root);
+    let (code, _, body) = post(&web.addr, "/act/go", "{}");
+    assert_eq!(code, 200, "{body}");
+    let start = Instant::now();
+    let status = loop {
+        if let Ok(text) = fs::read_to_string(prog.join("STATUS.md")) {
+            if text.contains("DONE — no admittable claim remains") {
+                break text;
+            }
+        }
+        if start.elapsed() > Duration::from_secs(8) {
+            panic!("page go did not write the DONE line");
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.contains("line: DONE —"), "{status}");
+}
+
 fn start_web(dir: &Path) -> ServeProc {
     let mut child = bin()
         .current_dir(dir)

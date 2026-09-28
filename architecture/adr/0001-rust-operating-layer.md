@@ -4,7 +4,7 @@
 - **Status:** Accepted
 - **Product VERSION:** 1.27.1. Guided `adopt` / `cycle` / `drive` are Rust (`crates/guided`), dispatched by the `crucible` binary. This page change bumps `VERSION` because the ADR ships in the tarball. It adds no verb.
 
-Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run `/crucible` intake and `go` until `CLOSED` / `STOP-ASK` / `ESCALATE`.
+Crucible is the operating layer for other git repos: adopt into a product tree, then worker CLIs run intake and one delivery walker until `DONE`, `CLOSED`, `STOP-ASK`, or `ESCALATE`. Where a guided program is installed, `go` and `POST /act/go` run `drive`. Kernel `POST /go` stays 405.
 
 One Rust architecture, one walker. Versioned contracts (`crucible.walk/v1`) make CLI, room, web, and tmux **clients of the same snapshot**. `crucible serve` is GET-only and never writes. Files remain the source of truth: a human can `cat .wm/FLOOR.md` with no daemon.
 
@@ -36,7 +36,7 @@ Non-goals of this correction: do not implement a new kernel, do not dump `wm.sh`
 | Role | Name | Where |
 | --- | --- | --- |
 | Working-mode **kernel binary** | **`crucible`** | Engine tarball root; copied to `.crucible/work/crucible` |
-| Guided verbs | **`crucible`** (Rust) | Engine git tree: repo-root `./crucible` is a finder (`#!/bin/sh`) and execs `CRUCIBLE_BIN` or `target/release/crucible`. Release tarball: `crucible` is the host-built release binary. `crucible-guided` is `#!/bin/sh` and only execs the sibling `crucible`. Not a second implementation. Not the walker. `adopt` / `cycle` / `drive` / `help`. |
+| Guided verbs | **`crucible`** (Rust) | Engine git tree: repo-root `./crucible` is a finder (`#!/bin/sh`) and execs `CRUCIBLE_BIN` or `target/release/crucible`. Release tarball: `crucible` is the host-built release binary. `crucible-guided` is `#!/bin/sh` and only execs the sibling `crucible`. Not a second implementation. Where a guided program is installed, `drive` is the delivery walker and `go` calls it. `adopt` / `cycle` / `drive` / `help`. |
 | Wrapper | **`wm.sh`** | `WM_WRAPPER=$0`; `exec` absolute sibling `crucible`. Copied to `.crucible/<program>/wm.sh`. |
 | `exec` target | Absolute path **next to the wrapper** | Never a bare `crucible` or `wm` on `PATH` |
 

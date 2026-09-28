@@ -541,7 +541,8 @@ fn post_go(stream: &mut TcpStream, cwd: &Path, exe: &Path, body: &[u8]) -> Resul
         return write_resp(stream, 400, "text/plain", msg, false);
     }
     // 200 means the process group exists, not that the walk succeeded.
-    if !crucible_contract::intake_ready(cwd) {
+    // A guided program is ready without IDEA.md: go runs drive.
+    if !crucible_contract::intake_ready(cwd) && !guided_checkout(cwd) {
         return write_resp(stream, 409, "text/plain", "not ready\n", false);
     }
     match spawn_go(exe, cwd) {
@@ -809,6 +810,21 @@ fn chat_text(cwd: &Path) -> Result<String, String> {
 
 fn pid_json(pid: u32) -> String {
     format!("{{\"pid\":{pid}}}\n")
+}
+
+fn guided_checkout(cwd: &Path) -> bool {
+    let Ok(rd) = fs::read_dir(cwd.join(".crucible")) else {
+        return false;
+    };
+    for ent in rd.flatten() {
+        let Ok(text) = fs::read_to_string(ent.path().join("PROGRAM")) else {
+            continue;
+        };
+        if text.lines().any(|line| line.trim() == "cycle: guided") {
+            return true;
+        }
+    }
+    false
 }
 
 fn spawn_go(exe: &Path, cwd: &Path) -> Result<u32, ()> {

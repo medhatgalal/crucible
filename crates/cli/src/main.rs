@@ -449,7 +449,23 @@ fn guided_usage(root: &Path) -> String {
     out
 }
 
+fn guided_program_here() -> bool {
+    match crucible_guided::program_root() {
+        Ok(root) => crucible_guided::uses_guided_cycle(&root).unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
 fn cmd_go(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
+    if guided_program_here() {
+        if args.iter().any(|arg| arg != "--next") {
+            let _ = writeln!(io::stderr(), "usage: go [--next]");
+            return 2;
+        }
+        return with_program_root(|root| {
+            guided_ok(crucible_guided::drive::drive(root, &[], clock))
+        });
+    }
     let mut idea_src: Option<&str> = None;
     for a in args {
         if a == "--next" {
