@@ -8,6 +8,10 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.
 
+## 1.27.1 — re-verify the current commit
+
+A maker `result PASS` is allowed when the evidence work id is the current commit and HEAD has not moved since dispatch. Evidence stamped with an older work id is refused.
+
 ## 1.27.0 — harness paths are not product porcelain
 
 A `.wm` projection write is not an edit of an owned product path. `crucible check` does not fail a correct owned file only because `git status` also lists `.crucible`, `.wm`, repo-root `START.md`, or the adopted `.grok/` router. `crucible run` hides those paths from the command it records. The evidence work id must still be the post-change work id. A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation whose remaining porcelain is only harness paths, or an owned file, resumes at the item's stage.

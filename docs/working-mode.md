@@ -1,6 +1,6 @@
 # Working-mode (opt-in)
 
-On **1.27.0**, default adopt is still the guided cycle layout: no `wm.sh`
+On **1.27.1**, default adopt is still the guided cycle layout: no `wm.sh`
 unless `--working-mode`. Guided `adopt` / `cycle` / `drive` are the Rust
 `crucible` binary (`crates/guided`), not a separate shell. Working-mode `go`
 is that same binary. `wm.sh` is the exec shim (`WM_WRAPPER`, then exec the
