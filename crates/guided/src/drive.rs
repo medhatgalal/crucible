@@ -582,7 +582,7 @@ fn coordinator_agent(root: &Path) -> Result<Option<String>, GuidedError> {
     cast_agents(root, "coordinator").map(|agents| agents.into_iter().next())
 }
 
-fn cast_agents(root: &Path, role: &str) -> Result<Vec<String>, GuidedError> {
+pub(crate) fn cast_agents(root: &Path, role: &str) -> Result<Vec<String>, GuidedError> {
     let path = root.join("PANEL.ASSIGN.tsv");
     if !path.is_file() {
         return Ok(Vec::new());

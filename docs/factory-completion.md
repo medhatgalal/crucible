@@ -2,7 +2,7 @@
 
 Pickup after the 2026-09-28 reboot. This file is the remaining work. The session plan is not required.
 
-Verified on `main` after `509f5a4`. Orders O1–O7, corrections C1–C7, F1, F2, and F3 are merged. Do not redo them. F4 bumps `VERSION` to `1.28.0` in this change. Tag `v1.28.0` after this pull request merges.
+Verified on `main` at tag `v1.28.0` (`c453cac`). Orders O1–O7, corrections C1–C7, and F1–F4 are merged. `crucible orchestrate run` now delivers maker shells through `drive` and waits when it asks. Do not install into a product until the operator names a path.
 
 ## Done
 
@@ -10,7 +10,7 @@ Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, `o
 
 ## Still open
 
-F1 is on `main` at `6cd1900`. F2 is on `main` at `efcf310`. F3 is on `main` at `509f5a4`. F4 is this change. The tag waits until this pull request is on `main`.
+F1–F4 are tagged at `v1.28.0` (`c453cac`). This change makes `crucible orchestrate run` start the maker shells and wait for an answer. No new command. No product install.
 
 ## Orders
 
@@ -28,9 +28,9 @@ Depends on F1. A fixture `agents.tsv` maker is a shell that writes the owned fil
 
 ### F3 — The orchestrator keeps going
 
-Depends on F2. `crucible orchestrate run` repeats `step` until the step prints `idle` or appended `asking`. It does not edit product files. On a guided checkout, `crucible room` pane-runs `orchestrate run` instead of `orchestrate step`. The dashboard still runs `speech queue` once.
+Depends on F2. `crucible orchestrate run` is the existing command a guided room pane-runs. It delivers each dispatched order through `drive` and waits in that process when it asks. It does not edit product files. `orchestrate step` stays one pass. The dashboard still runs `speech queue` once.
 
-Proof: a two-order graph whose maker shells succeed, then `orchestrate run`, leaves both orders `landed` and one `landed assembly` when the assembly script exits 0. A `need-a-fact` planted before the run stops on `asking` and does not land the paused order.
+Proof: one `crucible orchestrate run` starts the maker shells. Idle requires `drive worker exit 0` and a `PASS`/`CLOSE` result for each order. A `need-a-fact` keeps that same process waiting until the manager answers. A planted `landed` line is not idle.
 
 ### F4 — Tag the factory
 

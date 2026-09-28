@@ -4,6 +4,8 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+`crucible orchestrate run` delivers dispatched orders through the existing `drive` tick. It waits in that same process when it asks, and a failed assembly check asks instead of ending as a success. No new command.
+
 `crucible serve --bind 127.0.0.1:PORT` (default `127.0.0.1:1734`) GET `/walk`,
 `/stats?since=`, `/health` on loopback only. Same JSON as `status --json` /
 `stats --json`. Missing `.wm` is `available: false`. No `POST /go`.

@@ -5,6 +5,12 @@ All notable changes to this project are documented here. This project follows
 
 ## Unreleased
 
+### Factory
+- `crucible orchestrate run` delivers one dispatched order through the existing
+  `drive` tick and `result`. It waits in that process for a manager `answer`
+  after `asking`, including a failed assembly check. A maker-shell failure is
+  not idle. No new command. No VERSION bump.
+
 ### Skills
 - Engine repo harness directories (`.grok`, `.claude`, `.agents`, `.kiro`
   `/skills/<name>`) are real copies of `skills/<name>`, not symlinks.

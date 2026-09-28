@@ -3,6 +3,8 @@
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
+use std::time::Duration;
 
 use crucible_contract::Clock;
 
@@ -22,22 +24,104 @@ pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<Stri
 }
 
 fn orchestrate_run(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
+    let orders = read_orders(root)?;
+    let initial = read_speech(root)?;
+    check_existing_landed(root, &orders, &initial)?;
+    let prior_complete = prior_success(root, &orders, &initial)?;
+    let mut assembly_ran_here = false;
     for _ in 0..64 {
+        refuse_stopped_awaiting(root, &orders)?;
         let before = read_speech(root)?;
         let last = orchestrate_step(root, clock)?;
-        if last == "idle\n" || asked_new(&before, &read_speech(root)?) {
-            return Ok(last);
+        let after = read_speech(root)?;
+        let fresh = fresh_rows(&before, &after);
+        if fresh.iter().any(|row| {
+            row.role == "machine"
+                && row.text == "assembly"
+                && (row.sentence == "landed" || row.sentence == "escalated")
+        }) {
+            assembly_ran_here = true;
+        }
+        if let Some(id) = fresh.iter().find_map(|row| {
+            (row.role == "orchestrator" && row.sentence == "asking").then(|| row.text.clone())
+        }) {
+            wait_for_answer(root, &id)?;
+            continue;
+        }
+        if let Some(id) = fresh.iter().find_map(|row| {
+            (row.role == "orchestrator" && row.sentence == "dispatched").then(|| row.text.clone())
+        }) {
+            deliver(root, clock, &id)?;
+            continue;
+        }
+        if fresh.iter().any(|row| {
+            row.role == "machine" && row.sentence == "escalated" && row.text == "assembly"
+        }) {
+            speech(root, &["orchestrator", "asking", "assembly"], clock)?;
+            wait_for_answer(root, "assembly")?;
+            continue;
+        }
+        if fresh
+            .iter()
+            .any(|row| row.role == "machine" && row.sentence == "landed" && row.text == "assembly")
+        {
+            continue;
+        }
+        if last == "idle\n" {
+            let said = read_speech(root)?;
+            let makers_done = all_makers_landed(root, &orders, &said)?;
+            let has_assembly = orders.iter().any(|row| row.id == "assembly");
+            if makers_done && has_assembly && !assembly_ran_here && !prior_complete {
+                return Err(message("assembly was not run by this process"));
+            }
+            if outcome_idle(root, &orders, &said, assembly_ran_here, prior_complete)? {
+                return Ok("idle\n".to_string());
+            }
+            if let Some(id) = deliver_awaiting(root, clock, &orders, &said)? {
+                deliver(root, clock, &id)?;
+                continue;
+            }
+            if let Some(id) = open_ask(&orders, &said) {
+                wait_for_answer(root, &id)?;
+                continue;
+            }
+            let id = orders
+                .iter()
+                .find(|row| row.id != "assembly" && !landed(&said, &row.id))
+                .map(|row| row.id.as_str())
+                .unwrap_or("order");
+            return Err(message(format!(
+                "orchestrate run idle without outcome for {id}"
+            )));
         }
     }
     Err(message("orchestrate run exceeded 64 steps"))
 }
 
-fn asked_new(before: &[Said], after: &[Said]) -> bool {
-    after.len() > before.len()
-        && after
-            .iter()
-            .skip(before.len())
-            .any(|row| row.sentence == "asking")
+fn fresh_rows<'a>(before: &'a [Said], after: &'a [Said]) -> &'a [Said] {
+    if after.len() > before.len() {
+        &after[before.len()..]
+    } else {
+        &[]
+    }
+}
+
+fn wait_for_answer(root: &Path, id: &str) -> Result<(), GuidedError> {
+    loop {
+        let said = read_speech(root)?;
+        let asking_at = said.iter().rposition(|row| {
+            row.role == "orchestrator" && row.sentence == "asking" && row.text == id
+        });
+        if let Some(at) = asking_at {
+            let answered = said.iter().enumerate().any(|(idx, row)| {
+                idx > at && row.role == "manager" && row.sentence == "answer" && row.text == id
+            });
+            if answered {
+                return Ok(());
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn orchestrate_step(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
@@ -308,6 +392,498 @@ fn run_assembly_once(
 
 fn deps_landed(deps: &str, said: &[Said]) -> bool {
     deps == "-" || deps.split(',').all(|id| landed(said, id))
+}
+
+fn check_existing_landed(
+    root: &Path,
+    orders: &[TaskRow],
+    said: &[Said],
+) -> Result<(), GuidedError> {
+    for order in orders.iter().filter(|row| row.id != "assembly") {
+        if landed(said, &order.id) {
+            require_maker_landed(root, &order.id)?;
+        }
+    }
+    Ok(())
+}
+
+fn prior_success(root: &Path, orders: &[TaskRow], said: &[Said]) -> Result<bool, GuidedError> {
+    let makers: Vec<&TaskRow> = orders.iter().filter(|row| row.id != "assembly").collect();
+    if makers.is_empty() || !orders.iter().any(|row| row.id == "assembly") {
+        return Ok(false);
+    }
+    if !landed(said, "assembly") {
+        return Ok(false);
+    }
+    for order in makers {
+        if !landed(said, &order.id) || !maker_landed(root, &order.id)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn all_makers_landed(root: &Path, orders: &[TaskRow], said: &[Said]) -> Result<bool, GuidedError> {
+    for order in orders.iter().filter(|row| row.id != "assembly") {
+        if !landed(said, &order.id) {
+            return Ok(false);
+        }
+        if !maker_landed(root, &order.id)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn outcome_idle(
+    root: &Path,
+    orders: &[TaskRow],
+    said: &[Said],
+    assembly_ran_here: bool,
+    prior_complete: bool,
+) -> Result<bool, GuidedError> {
+    if !all_makers_landed(root, orders, said)? {
+        return Ok(false);
+    }
+    if orders
+        .iter()
+        .any(|row| row.id != "assembly" && awaiting(said, &row.id))
+    {
+        return Ok(false);
+    }
+    let has_assembly = orders.iter().any(|row| row.id == "assembly");
+    if !has_assembly {
+        return Ok(true);
+    }
+    if escalated_open(said, "assembly") {
+        return Ok(false);
+    }
+    let assembly_landed = said.iter().any(|row| {
+        row.role == "machine" && row.sentence == "landed" && row.text == "assembly"
+    });
+    Ok(assembly_landed && (assembly_ran_here || prior_complete))
+}
+
+fn maker_landed(root: &Path, id: &str) -> Result<bool, GuidedError> {
+    Ok(classify_landed(root, id)? == LandedClass::Real)
+}
+
+fn require_maker_landed(root: &Path, id: &str) -> Result<(), GuidedError> {
+    match classify_landed(root, id)? {
+        LandedClass::Real => Ok(()),
+        LandedClass::NoResult => Err(message(format!("landed {id} has no PASS CLOSE result"))),
+        LandedClass::NoShell => Err(message(format!("landed {id} has no maker shell"))),
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LandedClass {
+    Real,
+    NoResult,
+    NoShell,
+}
+
+fn classify_landed(root: &Path, id: &str) -> Result<LandedClass, GuidedError> {
+    let mut saw_result = false;
+    for attempt in maker_attempts(root, id)? {
+        let result_path = crate::cycle::attempt_dir(root, &attempt)?.join("result.md");
+        if !result_path.is_file() {
+            continue;
+        }
+        let body = fs::read_to_string(&result_path)?;
+        if crate::attempt::result_field(&body, "OUTCOME") == "PASS"
+            && crate::attempt::result_field(&body, "NEXT") == "CLOSE"
+            && crate::attempt::result_field(&body, "ITEM") == id
+        {
+            saw_result = true;
+            if crate::cycle::attempt_state(root, &attempt)? == "RETURNED"
+                && last_reason(root, &attempt)? == "drive worker exit 0"
+            {
+                return Ok(LandedClass::Real);
+            }
+        }
+    }
+    if saw_result {
+        Ok(LandedClass::NoShell)
+    } else {
+        Ok(LandedClass::NoResult)
+    }
+}
+
+fn maker_attempts(root: &Path, id: &str) -> Result<Vec<String>, GuidedError> {
+    let mut out = Vec::new();
+    for path in crate::cycle::attempt_dirs_a(root) {
+        let attempt = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+        if attempt.is_empty() {
+            continue;
+        }
+        if crate::cycle::attempt_meta(root, &attempt, 2).unwrap_or_default() == id
+            && crate::cycle::attempt_meta(root, &attempt, 5).unwrap_or_default() == "maker"
+        {
+            out.push(attempt);
+        }
+    }
+    Ok(out)
+}
+
+fn newest_maker(root: &Path, id: &str) -> Result<Option<String>, GuidedError> {
+    let mut best: Option<(i64, u64, String)> = None;
+    for attempt in maker_attempts(root, id)? {
+        let epoch = crate::cycle::attempt_meta(root, &attempt, 11)?
+            .parse::<i64>()
+            .unwrap_or(0);
+        let n = attempt
+            .rsplit('.')
+            .next()
+            .and_then(|part| part.parse::<u64>().ok())
+            .unwrap_or(0);
+        let replace = match &best {
+            None => true,
+            Some((best_epoch, best_n, _)) => epoch > *best_epoch || (epoch == *best_epoch && n > *best_n),
+        };
+        if replace {
+            best = Some((epoch, n, attempt));
+        }
+    }
+    Ok(best.map(|(_, _, attempt)| attempt))
+}
+
+fn last_reason(root: &Path, id: &str) -> Result<String, GuidedError> {
+    let text = fs::read_to_string(crate::cycle::attempt_dir(root, id)?.join("events.tsv"))?;
+    let mut reason = String::new();
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        if let Some(field) = split_tabs(rec).get(3) {
+            reason = (*field).to_string();
+        }
+    }
+    Ok(reason)
+}
+
+fn refuse_stopped_awaiting(root: &Path, orders: &[TaskRow]) -> Result<(), GuidedError> {
+    let said = read_speech(root)?;
+    for order in orders.iter().filter(|row| row.id != "assembly") {
+        if !awaiting(&said, &order.id) {
+            continue;
+        }
+        let Some(attempt) = newest_maker(root, &order.id)? else {
+            continue;
+        };
+        let state = crate::cycle::attempt_state(root, &attempt)?;
+        if state == "STOPPED" {
+            return Err(message(format!(
+                "maker shell exited nonzero for {}",
+                order.id
+            )));
+        }
+        if state == "TIMEOUT" {
+            return Err(message(format!("drive tick timed out for {}", order.id)));
+        }
+    }
+    Ok(())
+}
+
+fn speech_next(orders: &[TaskRow], said: &[Said]) -> Option<String> {
+    orders.iter().find_map(|row| {
+        let id = row.id.as_str();
+        (id != "assembly"
+            && !landed(said, id)
+            && !paused(said, id)
+            && !escalated_open(said, id)
+            && !awaiting(said, id)
+            && deps_landed(&row.deps, said))
+        .then(|| row.id.clone())
+    })
+}
+
+fn open_ask(orders: &[TaskRow], said: &[Said]) -> Option<String> {
+    orders.iter().find_map(|row| {
+        let id = row.id.as_str();
+        let open = (paused(said, id) || escalated_open(said, id))
+            && said.iter().any(|speech_row| {
+                speech_row.role == "orchestrator"
+                    && speech_row.sentence == "asking"
+                    && speech_row.text == id
+            });
+        open.then(|| row.id.clone())
+    })
+}
+
+fn current_slug(root: &Path) -> Result<Option<String>, GuidedError> {
+    let text = match fs::read_to_string(root.join("STATE.tsv")) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let fields = split_tabs(rec);
+        let status = fields.get(1).copied().unwrap_or("");
+        if status == "ACTIVE" || status == "BLOCKED" {
+            return Ok(fields.first().map(|slug| (*slug).to_string()));
+        }
+    }
+    Ok(None)
+}
+
+fn state_fields(root: &Path, slug: &str) -> Result<Vec<String>, GuidedError> {
+    let text = fs::read_to_string(root.join("STATE.tsv"))?;
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 {
+            continue;
+        }
+        let fields: Vec<String> = split_tabs(rec).into_iter().map(str::to_string).collect();
+        if fields.first().map(String::as_str) == Some(slug) && fields.len() == 8 {
+            return Ok(fields);
+        }
+    }
+    Err(message(format!("item missing from STATE.tsv: {slug}")))
+}
+
+fn deliver_awaiting(
+    root: &Path,
+    clock: &dyn Clock,
+    orders: &[TaskRow],
+    said: &[Said],
+) -> Result<Option<String>, GuidedError> {
+    let Some(order) = orders.iter().find(|row| row.id != "assembly" && awaiting(said, &row.id))
+    else {
+        return Ok(None);
+    };
+    if paused(said, &order.id) || escalated_open(said, &order.id) {
+        return Ok(None);
+    }
+    let current = current_slug(root)?;
+    if current.as_deref() == Some(order.id.as_str()) {
+        let fields = state_fields(root, &order.id)?;
+        if fields.get(1).map(String::as_str) == Some("ACTIVE") {
+            return Ok(Some(order.id.clone()));
+        }
+    }
+    if current.is_none() || current.as_deref().is_some_and(|slug| landed(said, slug)) {
+        handoff(root, clock, said, &order.id)?;
+        return Ok(Some(order.id.clone()));
+    }
+    Ok(None)
+}
+
+fn handoff(root: &Path, clock: &dyn Clock, said: &[Said], activate: &str) -> Result<(), GuidedError> {
+    let row = state_fields(root, activate)?;
+    if row.get(1).map(String::as_str) != Some("CLOSED") || row.get(2).map(String::as_str) != Some("BUILD")
+    {
+        return Err(message("refused: next order is not a closed item"));
+    }
+    let item = root.join("items").join(activate);
+    if !item.is_dir()
+        || !item.join("evidence").is_dir()
+        || !item.join("plan-audit.md").is_file()
+        || !fs::read_to_string(item.join("plan-audit.md"))
+            .unwrap_or_default()
+            .contains("VERDICT: PASS")
+        || !fs::read_to_string(item.join("ITEM.md"))
+            .unwrap_or_default()
+            .contains("A1")
+        || item.join("TASKS.tsv").exists()
+        || !root.join("roles/maker.md").is_file()
+    {
+        return Err(message("refused: next order is not a closed item"));
+    }
+    let current = current_slug(root)?;
+    match current {
+        None => {
+            crate::state_update_item(
+                root,
+                clock,
+                activate,
+                "ACTIVE",
+                "BUILD",
+                row.get(3).map(String::as_str).unwrap_or("EMPTY"),
+                row.get(4).map(String::as_str).unwrap_or("LOW"),
+                "-",
+                "-",
+            )?;
+        }
+        Some(slug) if landed(said, &slug) => {
+            let current_row = state_fields(root, &slug)?;
+            crate::state_update_item(
+                root,
+                clock,
+                &slug,
+                "CLOSED",
+                current_row.get(2).map(String::as_str).unwrap_or("BUILD"),
+                current_row.get(3).map(String::as_str).unwrap_or("EMPTY"),
+                current_row.get(4).map(String::as_str).unwrap_or("LOW"),
+                "-",
+                "-",
+            )?;
+            crate::state_update_item(
+                root,
+                clock,
+                activate,
+                "ACTIVE",
+                "BUILD",
+                row.get(3).map(String::as_str).unwrap_or("EMPTY"),
+                row.get(4).map(String::as_str).unwrap_or("LOW"),
+                "-",
+                "-",
+            )?;
+        }
+        Some(slug) => {
+            return Err(message(format!(
+                "refused: {slug} is still the current item"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedError> {
+    if !root.join("items").join(order).is_dir() {
+        return Err(message(format!("no such item: {order}")));
+    }
+    let said = read_speech(root)?;
+    if paused(&said, order) || escalated_open(&said, order) {
+        return Err(message(format!("refused: {order} is still the current item")));
+    }
+    let current = current_slug(root)?;
+    if current.as_deref() != Some(order) {
+        let promotable = current.is_none() || current.as_deref().is_some_and(|slug| landed(&said, slug));
+        if !promotable {
+            let slug = current.unwrap_or_default();
+            return Err(message(format!("refused: {slug} is still the current item")));
+        }
+        handoff(root, clock, &said, order)?;
+    }
+    let maker = crate::drive::cast_agents(root, "maker")?
+        .into_iter()
+        .next()
+        .ok_or_else(|| message(format!("no such item: {order}")))?;
+    let attempt = match newest_maker(root, order)? {
+        Some(id) => id,
+        None => {
+            let dispatched = crate::dispatch::dispatch(root, &[order, "maker", &maker], clock)?;
+            Path::new(dispatched.trim())
+                .parent()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .unwrap_or("")
+                .to_string()
+        }
+    };
+    if attempt.is_empty() {
+        return Err(message(format!("drive tick did not start {order}")));
+    }
+    let state = crate::cycle::attempt_state(root, &attempt)?;
+    if state == "STOPPED" {
+        return Err(message(format!("maker shell exited nonzero for {order}")));
+    }
+    if state == "TIMEOUT" {
+        return Err(message(format!("drive tick timed out for {order}")));
+    }
+    if state == "RETURNED" {
+        if last_reason(root, &attempt)? != "drive worker exit 0" {
+            return Err(message(format!("landed {order} has no maker shell")));
+        }
+        return record_result(root, clock, order, &attempt);
+    }
+    if state == "RUNNING" {
+        return Err(message(format!("drive tick did not start {order}")));
+    }
+    let contract = crate::cycle::attempt_dir(root, &attempt)?.join("contract.md");
+    let invoked = crate::dispatch::invocation(root, &maker, &contract.display().to_string())?;
+    let first = invoked.split_whitespace().next().unwrap_or("");
+    if invoked.is_empty() || invoked.starts_with("(no command registered") || first == "true" {
+        return Err(message(format!("drive tick did not start {order}")));
+    }
+    if !crate::claims::claim_attempt_is_sealed(root, &attempt) {
+        if !contract.with_file_name("transport").is_file()
+            && !crate::cycle::attempt_dir(root, &attempt)?.join("transport").is_file()
+        {
+            crate::attempt::attempt(root, &["transport", &attempt, "multi-agent"], clock)?;
+        }
+        let auditor = crate::claims::suggest_contract_auditor(root)?;
+        if auditor.is_empty() || auditor == "<auditor-name>" || auditor == maker {
+            return Err(message(format!("drive tick did not start {order}")));
+        }
+        crate::audit::contract_audit(
+            root,
+            &[
+                &attempt,
+                &auditor,
+                "PASS",
+                "factory orchestrate run sealed the maker shell; the shell starts only in drive tick",
+            ],
+            clock,
+        )?;
+        if !crate::claims::claim_attempt_is_sealed(root, &attempt) {
+            return Err(message(format!("drive tick did not start {order}")));
+        }
+    }
+    if let Err(err) = crate::drive::drive(root, &["tick"], clock) {
+        return Err(message(format!("drive tick failed for {order}: {err}")));
+    }
+    let state = crate::cycle::attempt_state(root, &attempt)?;
+    let reason = last_reason(root, &attempt).unwrap_or_default();
+    if state == "RETURNED" && reason == "drive worker exit 0" {
+        return record_result(root, clock, order, &attempt);
+    }
+    if state == "STOPPED" || (reason.starts_with("drive worker exit ") && reason != "drive worker exit 0")
+    {
+        return Err(message(format!("maker shell exited nonzero for {order}")));
+    }
+    if state == "TIMEOUT" {
+        return Err(message(format!("drive tick timed out for {order}")));
+    }
+    Err(message(format!("drive tick did not start {order}")))
+}
+
+fn record_result(root: &Path, clock: &dyn Clock, order: &str, attempt: &str) -> Result<(), GuidedError> {
+    let before = read_speech(root)?;
+    let evidence = evidence_name(root, order, attempt)?;
+    crate::result::result(root, &[attempt, "PASS", &evidence, "CLOSE"], clock)?;
+    let after = read_speech(root)?;
+    let landed_now = fresh_rows(&before, &after).iter().any(|row| {
+        row.role == "machine" && row.sentence == "landed" && row.text == order
+    });
+    if !landed_now {
+        return Err(message(format!("result did not land {order}")));
+    }
+    let said = read_speech(root)?;
+    if let Some(next) = speech_next(read_orders(root)?.as_slice(), &said) {
+        handoff(root, clock, &said, &next)?;
+    }
+    Ok(())
+}
+
+fn evidence_name(root: &Path, order: &str, attempt: &str) -> Result<String, GuidedError> {
+    let dir = root.join("items").join(order).join("evidence");
+    let mut hits = Vec::new();
+    let entries = fs::read_dir(&dir).map_err(|_| message(format!("result did not land {order}")))?;
+    for ent in entries {
+        let ent = ent.map_err(|_| message(format!("result did not land {order}")))?;
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".txt") {
+            continue;
+        }
+        let body = fs::read_to_string(ent.path()).unwrap_or_default();
+        if body.starts_with(crate::cycle::MARK)
+            && body.lines().any(|line| line == format!("attempt-id: {attempt}"))
+        {
+            hits.push(name);
+        }
+    }
+    if hits.len() != 1 {
+        return Err(message(format!("result did not land {order}")));
+    }
+    Ok(hits.remove(0))
 }
 
 #[cfg(test)]

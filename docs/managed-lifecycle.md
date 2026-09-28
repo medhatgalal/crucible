@@ -422,7 +422,7 @@ $CP orchestrate step
 $CP orchestrate run
 ```
 
-`orchestrate run` repeats `step` until a step prints `idle` or appends `asking`. On a guided checkout, `crucible room` pane-runs `orchestrate run`.
+`crucible orchestrate run` is the command a guided room already pane-runs. It delivers each newly dispatched order through one `drive tick` and `result`, so `landed` is written only after that maker shell. When a step appends `asking`, the same process waits for a manager `answer` and then continues. A failed assembly script appends `machine escalated assembly` and `orchestrator asking assembly`, and that wait is not a finished vehicle. `orchestrate step` still does one pass and does not wait.
 
 ## Session cleanup
 
