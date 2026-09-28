@@ -26,7 +26,7 @@ pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<Stri
         return Ok(format!("{paused_at}{asking_at}"));
     }
     for order in &kept {
-        if landed(&said, &order.id) {
+        if landed(&said, &order.id) || paused(&said, &order.id) || awaiting(&said, &order.id) {
             continue;
         }
         if deps_landed(&order.deps, &said) {
@@ -161,6 +161,21 @@ fn landed(said: &[Said], id: &str) -> bool {
         .any(|row| row.sentence == "landed" && row.text == id)
 }
 
+/// A dispatch stands until the order lands or the manager answers.
+fn awaiting(said: &[Said], id: &str) -> bool {
+    let Some(at) = said
+        .iter()
+        .rposition(|row| row.sentence == "dispatched" && row.text == id)
+    else {
+        return false;
+    };
+    !said.iter().enumerate().any(|(idx, row)| {
+        idx > at
+            && row.text == id
+            && (row.sentence == "landed" || (row.role == "manager" && row.sentence == "answer"))
+    })
+}
+
 fn paused(said: &[Said], id: &str) -> bool {
     let Some(need) = said
         .iter()
@@ -213,13 +228,12 @@ assembly\tA,B\t-\tassembly.sh
         let clock = FixedClock::new(7);
         let before = fs::read(path.join("ORDERS.tsv")).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
-        orchestrate(&path, &["step"], &clock).unwrap();
+        assert_eq!(orchestrate(&path, &["step"], &clock).unwrap(), "idle\n");
         let mid = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
         assert_eq!(
             mid,
             "\
 epoch\trole\tsentence\ttext
-7\torchestrator\tdispatched\tA
 7\torchestrator\tdispatched\tA
 "
         );

@@ -4123,14 +4123,14 @@ assembly\tA,B\t-\tassembly.sh
     let mid = tree_bytes(&tmp.root);
     assert_only_speech_grew(&before, &mid);
     let second = factory_ok(&tmp.root, &["orchestrate", "step"]);
-    assert_ne!(second, "idle\n", "{second}");
+    assert_eq!(second, "idle\n", "{second}");
     assert_eq!(
         speech_facts(&speech)
             .into_iter()
             .filter(|(_, sentence, _)| sentence == "dispatched")
             .map(|(_, _, text)| text)
             .collect::<Vec<_>>(),
-        vec!["A".to_string(), "A".to_string()]
+        vec!["A".to_string()]
     );
     assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
     factory_ok(&tmp.root, &["speech", "machine", "landed", "A"]);
