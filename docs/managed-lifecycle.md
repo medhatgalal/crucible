@@ -403,6 +403,8 @@ path, and it is the only assembly check. A missing assembly row is refused.
 $CP grill decide REQUEST.md
 ```
 
+A program file named `ticket` lets that same command read a two-line ticket when its entire text is the word `on`. The ticket is `path: <owned>` then `check: <command>`. It records the same `size: part` order and owned path as a hand-written request whose Owned files list is `- <owned>` and whose Checks list is `- <command>`. `off`, or a missing `ticket` file, does not read that shape. The manifest is `modules/ticket/module.txt` (`values: off, on`; `writes` empty). It adds no verb.
+
 ## Factory orchestrator
 
 `crucible orchestrate step` is one pass of the outer loop. It reads `ORDERS.tsv` in the program directory and appends factory speech by the same record as `speech`. It does not edit a product file outside that directory and it does not start a maker.

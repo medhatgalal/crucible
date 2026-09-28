@@ -6,6 +6,11 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- A program file `ticket` whose text is the word `on` lets `crucible grill decide`
+  read a two-line ticket (`path:` then `check:`) as the same unsigned part as a
+  hand-written request with that owned path and check. `off` or a missing file
+  leaves the request parser unchanged. The manifest is `modules/ticket/module.txt`
+  (`values: off, on`; writes nothing). No VERSION bump.
 - `crucible orchestrate step` reads program `ORDERS.tsv` and appends one
   factory step to `SPEECH.tsv`: `paused` and `asking`, one `dispatched`
   order, or it prints `idle`. `assembly` is not dispatched. It does not

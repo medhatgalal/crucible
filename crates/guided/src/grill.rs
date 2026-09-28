@@ -31,8 +31,7 @@ pub fn grill(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, Gu
     }
     let request = request_path(root, rest)?;
     let text = fs::read_to_string(&request)?;
-    let owned = owned_paths(&text)?;
-    let checks = check_lines(&text)?;
+    let (owned, checks) = request_parts(root, &text)?;
     let claims = match fs::read_to_string(root.join("CLAIMS.md")) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -113,6 +112,56 @@ fn request_path(root: &Path, args: &[&str]) -> Result<PathBuf, GuidedError> {
         }
         _ => Err(message("usage: crucible grill decide [REQUEST]")),
     }
+}
+
+fn request_parts(root: &Path, text: &str) -> Result<(Vec<String>, Vec<String>), GuidedError> {
+    if ticket_on(root) {
+        if let Some(parts) = ticket_parts(text)? {
+            return Ok(parts);
+        }
+    }
+    Ok((owned_paths(text)?, check_lines(text)?))
+}
+
+/// Program file `ticket`: a regular file whose trimmed text is `on`.
+/// `off`, a missing file, or a symlink leaves the request parser unchanged.
+fn ticket_on(root: &Path) -> bool {
+    let path = root.join("ticket");
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return false;
+    };
+    if !meta.file_type().is_file() {
+        return false;
+    }
+    let Ok(bytes) = fs::read(&path) else {
+        return false;
+    };
+    let Ok(text) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    text.trim_matches(|c: char| c.is_ascii_whitespace()) == "on"
+}
+
+/// Two lines, `path: <owned>` then `check: <command>`. Any other shape is not a ticket.
+fn ticket_parts(text: &str) -> Result<Option<(Vec<String>, Vec<String>)>, GuidedError> {
+    let lines = records(text);
+    if lines.len() != 2 {
+        return Ok(None);
+    }
+    let Some(path) = lines[0].strip_prefix("path: ") else {
+        return Ok(None);
+    };
+    let Some(check) = lines[1].strip_prefix("check: ") else {
+        return Ok(None);
+    };
+    if path.is_empty() || unsafe_owned(path) {
+        return Err(message(format!("unsafe owned path {path}")));
+    }
+    let check = check.trim();
+    if check.is_empty() {
+        return Err(message("checks must be list items"));
+    }
+    Ok(Some((vec![path.to_string()], vec![check.to_string()])))
 }
 
 fn owned_paths(text: &str) -> Result<Vec<String>, GuidedError> {
@@ -576,6 +625,61 @@ frame\t-\torders/frame.paths\torders/frame.verify.sh
                 .to_string();
             assert!(err.contains(needle), "{err} wanted {needle}");
             assert!(!dir.join("items").exists());
+            assert!(!dir.join("GRILL.md").exists());
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn ticket_file_matches_handwritten_part() {
+        let clock = FixedClock::new(42);
+        let handwritten = {
+            let dir = tmp();
+            let path = dir.join("REQUEST.md");
+            fs::write(&path, request(&["src/hello.rs"], &["cargo test hello"])).unwrap();
+            grill(&dir, &["decide", path.to_str().unwrap()], &clock).unwrap();
+            let grill_md = fs::read_to_string(dir.join("GRILL.md")).unwrap();
+            let _ = fs::remove_dir_all(&dir);
+            grill_md
+        };
+        let dir = tmp();
+        fs::write(dir.join("ticket"), "on\n").unwrap();
+        let path = dir.join("intake.txt");
+        fs::write(&path, "path: src/hello.rs\ncheck: cargo test hello\n").unwrap();
+        let out = grill(&dir, &["decide", path.to_str().unwrap()], &clock).unwrap();
+        let ticket_md = fs::read_to_string(dir.join("GRILL.md")).unwrap();
+        assert_eq!(ticket_md, handwritten, "{ticket_md}");
+        assert!(
+            ticket_md.contains("## size\nsize: part\nnote: one item\n"),
+            "{ticket_md}"
+        );
+        assert!(ticket_md.contains("owned: src/hello.rs\n"), "{ticket_md}");
+        assert!(out.contains("order: src/hello.rs\n"), "{out}");
+        assert!(out.contains("size: part\n"), "{out}");
+        let request_path = dir.join("REQUEST.md");
+        fs::write(
+            &request_path,
+            request(&["src/hello.rs"], &["cargo test hello"]),
+        )
+        .unwrap();
+        grill(&dir, &["decide", request_path.to_str().unwrap()], &clock).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("GRILL.md")).unwrap(),
+            handwritten
+        );
+        let _ = fs::remove_dir_all(&dir);
+
+        for value in [None, Some("off\n"), Some("on extra\n")] {
+            let dir = tmp();
+            if let Some(text) = value {
+                fs::write(dir.join("ticket"), text).unwrap();
+            }
+            let path = dir.join("intake.txt");
+            fs::write(&path, "path: src/hello.rs\ncheck: cargo test hello\n").unwrap();
+            let err = grill(&dir, &["decide", path.to_str().unwrap()], &clock)
+                .unwrap_err()
+                .to_string();
+            assert_eq!(err, "request names no owned path");
             assert!(!dir.join("GRILL.md").exists());
             let _ = fs::remove_dir_all(&dir);
         }
