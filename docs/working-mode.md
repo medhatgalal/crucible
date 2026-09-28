@@ -25,8 +25,11 @@ source, `adopt <program> --managed` writes a state-only record under
 `.crucible/<program>/` and does not copy the engine; `./crucible drive` uses
 that record; `--refresh` from this same checkout is refused.
 
-Guided loop (default `adopt work --managed`): `cycle` / `drive`. Working-mode
-(`adopt work --managed --working-mode`): `/crucible` then `go`. Do not mix.
+Guided loop (default `adopt work --managed`): `cycle` / `drive`. In that
+layout `go` and `go --next` call `drive`. Working-mode
+(`adopt work --managed --working-mode`): `/crucible` then `go`, and that `go`
+is still the kernel walk because no guided program is installed. Do not mix
+the two layouts in one repository.
 
 After `adopt work --managed --working-mode`, `<program>` is `work`. Invoke
 `.crucible/<program>/wm.sh` from the target root (not a bare `wm` on `PATH`).
