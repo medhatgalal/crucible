@@ -71,6 +71,7 @@ pub fn check(root: &Path, args: &[&str]) -> Result<CheckReport, GuidedError> {
     } else {
         check_item_falsifier(&dir, &mut out, &mut bad)?;
     }
+    check_product_porcelain(root, &dir, &mut out, &mut bad)?;
     if !maker_recorded(&dir) {
         say(
             &mut out,
@@ -201,6 +202,31 @@ fn walk_faults(dir: &Path, root: &Path, symlinks: &mut Vec<String>, newline: &mu
             *newline = true;
         }
     }
+}
+
+fn check_product_porcelain(
+    root: &Path,
+    dir: &Path,
+    out: &mut String,
+    bad: &mut bool,
+) -> Result<(), GuidedError> {
+    let Some(repo) = crate::cycle::program_field(root, "repo") else {
+        return Ok(());
+    };
+    let repo = Path::new(&repo);
+    if !repo.is_dir() {
+        return Ok(());
+    }
+    let item = fs::read_to_string(dir.join("ITEM.md")).unwrap_or_default();
+    let owned = crate::harness::owned_file_tokens(&item);
+    for path in crate::harness::porcelain_outside_owned(repo, &owned) {
+        say(
+            out,
+            bad,
+            &format!("FAIL product porcelain outside owned files: {path}"),
+        );
+    }
+    Ok(())
 }
 
 fn check_item_falsifier(dir: &Path, out: &mut String, bad: &mut bool) -> Result<(), GuidedError> {
@@ -1122,6 +1148,95 @@ Undo the change to src/widget.rs and confirm the focused check then fails loudly
                 .unwrap_err()
                 .to_string(),
             "alpha is already closed"
+        );
+    }
+
+    #[test]
+    fn harness_porcelain_does_not_fail_a_closeable_check() {
+        let _lock = env_lock();
+        let _judges = unset_env("CRUCIBLE_MIN_JUDGES");
+        let _kinds = unset_env("CRUCIBLE_MIN_KINDS");
+        let tmp = Tmp::new();
+        let repo = tmp.0.join("repo");
+        let root = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        let init = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .arg("init")
+            .status()
+            .unwrap();
+        assert!(init.success());
+        let dir = root.join("items/alpha");
+        fs::create_dir_all(dir.join("work")).unwrap();
+        fs::create_dir_all(dir.join("evidence")).unwrap();
+        fs::create_dir_all(dir.join("verdicts")).unwrap();
+        fs::create_dir_all(dir.join("briefs")).unwrap();
+        fs::write(dir.join("work/note.txt"), "body\n").unwrap();
+        fs::write(dir.join("MAKER"), "mk1\n").unwrap();
+        fs::write(
+            dir.join("ITEM.md"),
+            format!("{ITEM}\n## Owned files\n\n- HELLO.txt\n"),
+        )
+        .unwrap();
+        fs::write(root.join("PROGRAM"), format!("repo: {}\n", repo.display())).unwrap();
+        fs::write(
+            root.join("agents.tsv"),
+            "mk1\tkindA\tm\thigh\ttrue\nj1\tkindB\tm\thigh\ttrue\nj2\tkindB\tm\thigh\ttrue\n",
+        )
+        .unwrap();
+        fs::write(repo.join("HELLO.txt"), "hello\n").unwrap();
+        fs::create_dir_all(repo.join(".wm")).unwrap();
+        fs::write(repo.join(".wm/FLOOR.md"), "card\n").unwrap();
+        fs::write(repo.join("START.md"), "coordinator card\n").unwrap();
+        fs::create_dir_all(repo.join(".grok/rules")).unwrap();
+        fs::write(repo.join(".grok/rules/loop-router.md"), "router\n").unwrap();
+        let clock = FixedClock::new(0);
+        let wid = workid(&root, "alpha").unwrap();
+        let o1 = run(&root, &["alpha", "j1", "--", "/bin/echo", "one"], &clock).unwrap();
+        let o2 = run(&root, &["alpha", "j2", "--", "/bin/echo", "two"], &clock).unwrap();
+        let n1 = Path::new(o1.split_whitespace().next().unwrap())
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        let n2 = Path::new(o2.split_whitespace().next().unwrap())
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        fs::write(
+            dir.join("verdicts/j1.md"),
+            format!("VERDICT: PASS\nWORK-ID: {wid}\ncites {n1} from judge one\n"),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("verdicts/j2.md"),
+            format!("VERDICT: PASS\nWORK-ID: {wid}\ncites {n2} from judge two\n"),
+        )
+        .unwrap();
+        // `run` hides harness paths from git status. This check must still pass
+        // when those paths are listed beside the owned file.
+        let _ = fs::remove_file(repo.join(".git/info/exclude"));
+        let report = check(&root, &["alpha"]).unwrap();
+        assert_eq!(report.status, 0, "{}", report.text);
+        assert!(
+            report.text.ends_with(&format!("CLOSEABLE {wid}\n")),
+            "{}",
+            report.text
+        );
+        assert!(
+            !report.text.contains("product porcelain"),
+            "{}",
+            report.text
+        );
+        fs::write(repo.join("OTHER.txt"), "not owned\n").unwrap();
+        let dirty = check(&root, &["alpha"]).unwrap();
+        assert_eq!(dirty.status, 1, "{}", dirty.text);
+        assert!(
+            dirty
+                .text
+                .contains("FAIL product porcelain outside owned files: OTHER.txt"),
+            "{}",
+            dirty.text
         );
     }
 

@@ -23,10 +23,13 @@ use crate::cycle::{
     program_field, read_dir_paths, self_path, write_cycle_status,
 };
 use crate::dispatch::{dispatch, invocation};
+use crate::harness::{
+    conceal_harness, owned_file_tokens, path_is_harness, porcelain_outside_owned, porcelain_path,
+};
 use crate::panel::{h12, hash_file, is_posint, kind_of, split_tabs};
 use crate::phase::{judge_requested_fix, phase};
 use crate::program::{uses_guided_cycle, uses_managed_lifecycle};
-use crate::state::state_value;
+use crate::state::{state_update_item, state_value};
 use crate::{message, records, GuidedError};
 
 struct Ctx<'a> {
@@ -115,8 +118,13 @@ fn drive_loop(ctx: &mut Ctx, tick: bool, max: u64) -> Result<(), GuidedError> {
             return Err(message("drive requires PROGRAM repo:"));
         }
         let repo = PathBuf::from(repo);
-        let line = captured(write_cycle_status(root, clock)?);
-        let state = drive_state_name(&line);
+        conceal_harness(&repo);
+        let mut line = captured(write_cycle_status(root, clock)?);
+        let mut state = drive_state_name(&line);
+        if state == "ESCALATE" && resume_harness_escalation(root, clock, &repo, &line)? {
+            line = captured(write_cycle_status(root, clock)?);
+            state = drive_state_name(&line);
+        }
         if is_human_gate(state) {
             print_human(ctx, state, &line);
             return Ok(());
@@ -1100,6 +1108,34 @@ fn state_col(root: &Path, slug: &str, column: usize) -> String {
         .unwrap_or_default()
 }
 
+fn resume_harness_escalation(
+    root: &Path,
+    clock: &dyn Clock,
+    repo: &Path,
+    line: &str,
+) -> Result<bool, GuidedError> {
+    let Some(rest) = line.strip_prefix("ESCALATE ") else {
+        return Ok(false);
+    };
+    let Some((slug, code)) = rest.split_once(" — ") else {
+        return Ok(false);
+    };
+    if slug.is_empty() || !matches!(code, "SCOPE_CONFLICT" | "NEEDS_CONTEXT") {
+        return Ok(false);
+    }
+    let item =
+        fs::read_to_string(root.join("items").join(slug).join("ITEM.md")).unwrap_or_default();
+    let owned = owned_file_tokens(&item);
+    if !porcelain_outside_owned(repo, &owned).is_empty() {
+        return Ok(false);
+    }
+    let stage = state_value(root, slug, 3)?.unwrap_or_default();
+    let wid = state_value(root, slug, 4)?.unwrap_or_default();
+    let risk = state_value(root, slug, 5)?.unwrap_or_default();
+    state_update_item(root, clock, slug, "ACTIVE", &stage, &wid, &risk, "-", "-")?;
+    Ok(true)
+}
+
 fn check_discipline(root: &Path, repo: &Path) -> Result<(), GuidedError> {
     if repo.as_os_str().is_empty() || !repo.is_dir() {
         return Ok(());
@@ -1142,7 +1178,7 @@ fn check_discipline(root: &Path, repo: &Path) -> Result<(), GuidedError> {
             continue;
         }
         let path = porcelain_path(line);
-        if path_is_program(&path) {
+        if path_is_harness(&path) {
             continue;
         }
         if before_lines.contains(&line) {
@@ -1274,7 +1310,7 @@ fn restore_all(root: &Path, repo: &Path) -> Result<(), GuidedError> {
             continue;
         }
         let path = porcelain_path(line);
-        if path.is_empty() || path_is_program(&path) {
+        if path.is_empty() || path_is_harness(&path) {
             continue;
         }
         if before_lines.contains(&line) {
@@ -1401,7 +1437,7 @@ fn product_hash_body(repo: &Path, porcelain: &str) -> Result<String, GuidedError
             continue;
         }
         let path = porcelain_path(line);
-        if path_is_program(&path) {
+        if path_is_harness(&path) {
             continue;
         }
         let full = repo.join(&path);
@@ -1432,29 +1468,6 @@ fn hash_field(lines: &[String], path: &str) -> Option<String> {
         }
     }
     None
-}
-
-fn porcelain_path(line: &str) -> String {
-    let chars: Vec<char> = line.chars().collect();
-    let rest = if chars.len() >= 3 && chars[2] == ' ' {
-        chars[3..].iter().collect()
-    } else {
-        line.to_string()
-    };
-    match rest.split_once(" -> ") {
-        Some((_, new)) => new.to_string(),
-        None => rest,
-    }
-}
-
-fn path_is_program(path: &str) -> bool {
-    if path.ends_with("worktrees") || path.contains("worktrees/") {
-        return false;
-    }
-    path == ".crucible"
-        || path.ends_with("/.crucible")
-        || path.starts_with(".crucible/")
-        || path.contains("/.crucible/")
 }
 
 fn copy_rel(root: &Path, files: &[PathBuf], dest_root: &Path) -> Result<(), GuidedError> {
@@ -1687,11 +1700,132 @@ contract-auditor\tj2\tyes\t
         assert_eq!(worker_budget("0", 1, 900), 900);
         assert_eq!(worker_budget("nope", 1, 900), 900);
         assert_eq!(worker_budget("01", 0, 900), 1);
-        assert!(path_is_program(".crucible/work/PROGRAM"));
-        assert!(!path_is_program(".crucible/work/worktrees/file"));
-        assert!(!path_is_program("src/main.rs"));
-        assert_eq!(porcelain_path("?? src/a.rs"), "src/a.rs");
-        assert_eq!(porcelain_path("R  old -> new"), "new");
+        assert!(crate::harness::path_is_harness(".crucible/work/PROGRAM"));
+        assert!(!crate::harness::path_is_harness(
+            ".crucible/work/worktrees/file"
+        ));
+        assert!(!crate::harness::path_is_harness("src/main.rs"));
+        assert!(crate::harness::path_is_harness(".wm/FLOOR.md"));
+        assert!(crate::harness::path_is_harness("START.md"));
+        assert!(crate::harness::path_is_harness(
+            ".grok/rules/loop-router.md"
+        ));
+        assert_eq!(crate::harness::porcelain_path("?? src/a.rs"), "src/a.rs");
+        assert_eq!(crate::harness::porcelain_path("R  old -> new"), "new");
+    }
+
+    #[test]
+    fn cycle_floor_projection_is_not_a_product_edit() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        git_init(&repo);
+        program(&prog, &repo, "");
+        agents(&prog, "printf x >> .wm/FLOOR.md; printf y >> START.md");
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        fs::write(prog.join("PROBLEM.md"), "# Title\n\nA real gap.\n").unwrap();
+        let out = drive(&prog, &["tick"], &clock).unwrap();
+        assert!(
+            !out.contains("coordinator edited owned product path"),
+            "{out}"
+        );
+        assert!(repo.join(".wm").join("FLOOR.md").is_file());
+        assert_eq!(fs::read_to_string(repo.join("START.md")).unwrap(), "y");
+    }
+
+    #[test]
+    fn harness_scope_conflict_is_not_left_as_the_escalation() {
+        let tmp = Tmp::new();
+        let repo = tmp.root.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        git_init(&repo);
+        program(&prog, &repo, "");
+        agents(&prog, "true");
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Broken behavior\n\nThe program does not preserve approved scope.\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "\
+# CLAIMS
+
+### C1 scope is wrong
+    scout: FULLY-EXISTS
+    item: done
+    status: CLOSED
+",
+        )
+        .unwrap();
+        let verdicts = prog.join("claims").join("C1").join("verdicts");
+        fs::create_dir_all(&verdicts).unwrap();
+        fs::write(verdicts.join("a1.md"), "CLAIM-VERDICT: TRUE\n").unwrap();
+        let claim = prog.join("attempts").join("A1.2.3");
+        fs::create_dir_all(&claim).unwrap();
+        fs::write(
+            claim.join("meta.tsv"),
+            "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+A1.2.3\tC1\t-\tCLAIM\tclaim-auditor\ta1\tkindA\t-\tFOCUSED\tDISPATCHED\t1\t2\t-
+",
+        )
+        .unwrap();
+        fs::write(claim.join("transport"), "multi-agent\n").unwrap();
+        fs::write(claim.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+        fs::write(
+            claim.join("events.tsv"),
+            "state\tepoch\tpid\treason\nSTOPPED\t1\t-\tfixture\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("PROPOSAL.md"),
+            "\
+# Proposal
+## Verified problem
+The scope was not preserved.
+## Proposed outcome
+Preserve it.
+## Non-goals
+No extra product.
+## Backlog
+None.
+## Verification
+Two recorded checks.
+",
+        )
+        .unwrap();
+        cycle(&prog, &["approve"], &clock).unwrap();
+        fs::create_dir_all(prog.join("items/alpha")).unwrap();
+        fs::write(
+            prog.join("items/alpha/ITEM.md"),
+            "# alpha\n\n## Owned files\n\n- HELLO.txt\n",
+        )
+        .unwrap();
+        fs::write(repo.join("HELLO.txt"), "hello\n").unwrap();
+        fs::create_dir_all(repo.join(".wm")).unwrap();
+        fs::write(repo.join(".wm/FLOOR.md"), "card\n").unwrap();
+        fs::write(repo.join("START.md"), "card\n").unwrap();
+        fs::write(
+            prog.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tBLOCKED\tBUILD\tw1\tLOW\t-\tSCOPE_CONFLICT\t1\n"),
+        )
+        .unwrap();
+        let out = drive(&prog, &["tick"], &clock).unwrap_or_else(|err| err.to_string());
+        assert!(!out.contains("ESCALATE alpha — SCOPE_CONFLICT"), "{out}");
+        let status = fs::read_to_string(prog.join("STATUS.md")).unwrap();
+        assert!(
+            !status.contains("ESCALATE alpha — SCOPE_CONFLICT"),
+            "{status}"
+        );
+        assert!(status.contains("line: NEXT EXECUTE alpha"), "{status}");
     }
 
     #[test]

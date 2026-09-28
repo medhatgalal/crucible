@@ -316,7 +316,7 @@ fn maker_wid(
                     ],
                 );
                 for changed_path in changed.split('\n') {
-                    if changed_path.is_empty() {
+                    if changed_path.is_empty() || crate::harness::path_is_harness(changed_path) {
                         continue;
                     }
                     let ok = owned.iter().any(|op| {
