@@ -17,6 +17,7 @@ mod project;
 pub mod result;
 mod root;
 pub mod run;
+pub mod speech;
 mod state;
 pub mod task;
 pub mod triage;
