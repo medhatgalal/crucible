@@ -403,6 +403,8 @@ path, and it is the only assembly check. A missing assembly row is refused.
 $CP grill decide REQUEST.md
 ```
 
+A program file named `ticket` lets that same command read a two-line ticket when its entire text is the word `on`. The ticket is `path: <owned>` then `check: <command>`. It records the same `size: part` order and owned path as a hand-written request whose Owned files list is `- <owned>` and whose Checks list is `- <command>`. `off`, or a missing `ticket` file, does not read that shape. The manifest is `modules/ticket/module.txt` (`values: off, on`; `writes` empty). It adds no verb.
+
 ## Session cleanup
 
 Cleanup runs in the **target repository**, from its root, on the installed program:
