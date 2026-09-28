@@ -67,12 +67,23 @@ wrote, and [CONFIGURE.md](../CONFIGURE.md) states the interface it must satisfy.
 Refuse + restore when the coordinator process, during a tick:
 
 - moves product `HEAD` (`git commit` or a completed merge) or leaves `MERGE_HEAD`
-- adds product porcelain outside `.crucible/`, or **changes the contents** of an already-dirty
-  product file (same porcelain line is not enough to hide it)
+- adds product porcelain outside harness paths, or **changes the contents** of an already-dirty
+  product file (same porcelain line is not enough to hide it). Harness paths are `.crucible/`
+  except `worktrees/`, a `.wm/` projection, and the repo-root `START.md`. A `.wm` write is the
+  cycle card, not an edit of an owned product path
 - writes under `worktrees/` (task worktrees are product work even though they sit in `.crucible/`)
 - creates or **overwrites** `items/*/verdicts/*.md` or `claims/*/verdicts/*.md`
 - deletes `cycle: guided` from `PROGRAM`
 - introduces a **new** live attempt id while the cycle line is WAIT inflight
+
+`crucible check` reads `git status --porcelain`. A path that is not harness and not one of the
+item's owned files fails the close (`product porcelain outside owned files`). Listing `.crucible`,
+`.wm`, or repo-root `START.md` beside a correct owned file does not fail that check. `crucible run`
+hides those paths from the command it records, so a frozen check that itself runs `git status` is
+not failed by that listing alone. The evidence work id must still equal the post-change work id.
+
+A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation is resumed when every remaining porcelain path is
+harness or an owned file. Drive then follows the item's stage instead of stopping on that same line.
 
 Drive **does** start a sealed worker (one per tick) after the coordinator exits. That start
 is the parent, not the coordinator child, so a maker `TARGET` write during the coordinator

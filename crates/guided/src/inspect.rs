@@ -870,6 +870,9 @@ pub fn run(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, Guid
     }
     header.push_str("\n--- output ---\n");
     fs::write(&tmp, header)?;
+    if let Some(repo) = program_field(root, "repo") {
+        crate::harness::conceal_harness(Path::new(&repo));
+    }
     let rc = match append_command(&tmp, cmd) {
         Ok(code) => code,
         Err(err) if err.kind() == ErrorKind::NotFound => 127,

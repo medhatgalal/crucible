@@ -8,6 +8,7 @@ pub mod close;
 mod cycle;
 pub mod dispatch;
 pub mod drive;
+mod harness;
 pub mod inspect;
 mod panel;
 pub mod phase;
