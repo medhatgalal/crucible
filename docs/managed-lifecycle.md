@@ -374,6 +374,35 @@ task verifier against the returned commit, and refuses changes outside task owne
 requires every task PASS, applies commits in stable dependency order, records `INTEGRATION.tsv`, and
 blocks on ancestry or cherry-pick conflict. These are agent protocol primitives, not operator steps.
 
+## Factory grill
+
+`crucible grill decide` reads the program `CLAIMS.md` and one request file. With no path, it reads
+`GRILL.md` when that file is already in the program. The decision is written back to `GRILL.md` in
+this order: vehicle, source words, scout, frame, size, cut, sign.
+
+A request with one owned path and one check, and no claim whose scout is `FULLY-EXISTS` for that
+path, is one order. The size section is `size: part` with a single item note. A path a claim marks
+`scout: FULLY-EXISTS` is not a new order: the command exits 0 and prints `dropped: <path>`.
+
+More than one owned path is a vehicle. Without `ORDERS.tsv` the command exits 2 with
+`crucible: vehicle graph required` and does not create an item. The graph has the same columns as
+`TASKS.tsv`:
+
+```text
+order_id	depends_on	paths_file	verify_script
+door	-	orders/door.paths	orders/door.verify.sh
+frame	-	orders/frame.paths	orders/frame.verify.sh
+assembly	door,frame	-	orders/assembly.verify.sh
+```
+
+It refuses a dependency cycle, an unknown id, and an overlapping owned path the same way `TASKS.tsv`
+does. The row `assembly` depends on every other order, its `paths_file` is `-` because it owns no
+path, and it is the only assembly check. A missing assembly row is refused.
+
+```sh
+$CP grill decide REQUEST.md
+```
+
 ## Session cleanup
 
 Cleanup runs in the **target repository**, from its root, on the installed program:

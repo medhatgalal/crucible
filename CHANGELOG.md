@@ -6,6 +6,11 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- `crucible grill decide` records one part or a vehicle in `GRILL.md`
+  (vehicle, source words, scout, frame, size, cut, sign). One owned path
+  and one check is one order. More than one path needs `ORDERS.tsv` or
+  exits 2 with `vehicle graph required`. A `scout: FULLY-EXISTS` path is
+  dropped. No VERSION bump.
 - `crucible speech ROLE SENTENCE TEXT` appends one sentence to the program
   `SPEECH.tsv`. The page does the same through `POST /act/speech`. A role
   cannot say another speaker's sentence. No VERSION bump.

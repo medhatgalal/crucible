@@ -1,4 +1,4 @@
-//! `ready`, `task`, and task integration.
+//! `ready`, `task`, task integration, and the vehicle `ORDERS.tsv` graph.
 //!
 //! `validate_task_dag` stays in dispatch. This module calls it.
 
@@ -11,12 +11,13 @@ use crucible_contract::Clock;
 
 use crate::cycle::{state_attempt_update, workid};
 use crate::dispatch::{
-    dispatch_managed, git_quiet, item_dir, need, section_lines, task_all_pass, task_assert_frozen,
-    task_contract_id, task_dependencies_pass, task_live_attempt, task_live_count, task_pass_exists,
-    task_render_file, task_result_file, task_retry_available, task_topological_order, tgt,
-    validate_managed_item, validate_task_dag,
+    dispatch_managed, git_quiet, graph_error, is_executable, item_dir, need, overlap_error,
+    section_lines, task_all_pass, task_assert_frozen, task_contract_id, task_dependencies_pass,
+    task_live_attempt, task_live_count, task_pass_exists, task_render_file, task_result_file,
+    task_retry_available, task_topological_order, tgt, validate_managed_item, validate_task_dag,
+    TaskRow,
 };
-use crate::panel::split_tabs;
+use crate::panel::{is_regular, split_tabs};
 use crate::phase::phase_of;
 use crate::program::uses_managed_lifecycle;
 use crate::state::{state_update_item, state_validate_file, state_value};
@@ -420,6 +421,203 @@ fn rel_under(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .map(|rest| rest.display().to_string())
         .unwrap_or_else(|_| path.display().to_string())
+}
+
+const ORDER_HEADER: &str = "order_id\tdepends_on\tpaths_file\tverify_script";
+
+/// Validate `ORDERS.tsv` with the task-graph cycle, unknown-id, and overlap refusals.
+///
+/// `assembly` depends on every other order and owns no path (`paths_file` is `-`):
+/// it is the only assembly check. Returned ids follow the file order.
+pub fn validate_vehicle(root: &Path, request_paths: &[String]) -> Result<Vec<String>, GuidedError> {
+    let path = root.join("ORDERS.tsv");
+    if !is_regular(&path) {
+        return Err(message("invalid ORDERS.tsv: missing regular file"));
+    }
+    let text = fs::read_to_string(&path)?;
+    let rows = records(&text);
+    if rows.first().copied() != Some(ORDER_HEADER) {
+        return Err(message("invalid ORDERS.tsv: header mismatch"));
+    }
+    let mut orders = Vec::new();
+    for (idx, rec) in rows.iter().enumerate().skip(1) {
+        let row_no = idx + 1;
+        let fields = split_tabs(rec);
+        if fields.len() != 4 {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: row {row_no} has {} fields, need 4",
+                fields.len()
+            )));
+        }
+        let id = fields[0];
+        if !order_id_ok(id) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: invalid order id at row {row_no}"
+            )));
+        }
+        if orders.iter().any(|row: &TaskRow| row.id == id) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: duplicate order id {id}"
+            )));
+        }
+        if !order_deps_ok(fields[1]) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: invalid dependencies for {id}"
+            )));
+        }
+        if id == "assembly" {
+            if fields[2] != "-" {
+                return Err(message(
+                    "invalid ORDERS.tsv: assembly is the only assembly check",
+                ));
+            }
+        } else if !relative_file_ok(fields[2]) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: invalid paths file for {id}"
+            )));
+        }
+        if !relative_file_ok(fields[3]) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: invalid verify script for {id}"
+            )));
+        }
+        orders.push(TaskRow {
+            id: id.to_string(),
+            deps: fields[1].to_string(),
+            paths_file: fields[2].to_string(),
+            verify_script: fields[3].to_string(),
+        });
+    }
+    if orders.is_empty() {
+        return Err(message("invalid ORDERS.tsv: no orders"));
+    }
+    if orders.len() > 32 {
+        return Err(message("invalid ORDERS.tsv: more than 32 orders"));
+    }
+    if let Some(err) = graph_error(&orders) {
+        return Err(message(format!("invalid ORDERS.tsv: {err}")));
+    }
+    let others: Vec<String> = orders
+        .iter()
+        .filter(|row| row.id != "assembly")
+        .map(|row| row.id.clone())
+        .collect();
+    if others.is_empty() {
+        return Err(message("invalid ORDERS.tsv: assembly is the only order"));
+    }
+    let Some(assembly) = orders.iter().find(|row| row.id == "assembly") else {
+        return Err(message("invalid ORDERS.tsv: missing assembly row"));
+    };
+    if !assembly_depends_on_all(&assembly.deps, &others) {
+        return Err(message(
+            "invalid ORDERS.tsv: assembly must depend on every other order",
+        ));
+    }
+    for order in &orders {
+        let verify = root.join(&order.verify_script);
+        if !is_regular(&verify) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {}: missing regular {}",
+                order.id, order.verify_script
+            )));
+        }
+        if !is_executable(&verify) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {}: {} is not executable",
+                order.id, order.verify_script
+            )));
+        }
+        let shebang = fs::read_to_string(&verify)
+            .ok()
+            .and_then(|text| records(&text).first().copied().map(str::to_string))
+            .unwrap_or_default();
+        if shebang != "#!/bin/sh" {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {}: {} must start with #!/bin/sh",
+                order.id, order.verify_script
+            )));
+        }
+    }
+    let mut owned = Vec::new();
+    for order in orders.iter().filter(|row| row.id != "assembly") {
+        let paths = root.join(&order.paths_file);
+        if !is_regular(&paths) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {}: missing regular {}",
+                order.id, order.paths_file
+            )));
+        }
+        let text = fs::read_to_string(&paths)?;
+        let mut count = 0usize;
+        for line in records(&text) {
+            if line.is_empty() || line.contains('\t') {
+                return Err(message("invalid ORDERS.tsv: blank or malformed owned path"));
+            }
+            owned.push((order.id.clone(), line.to_string()));
+            count += 1;
+        }
+        if count == 0 {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {}: empty {}",
+                order.id, order.paths_file
+            )));
+        }
+    }
+    if let Some(err) = overlap_error(&owned) {
+        return Err(message(format!("invalid ORDERS.tsv: {err}")));
+    }
+    for path in request_paths {
+        if !owned.iter().any(|(_, got)| got == path) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: request path {path} is not owned"
+            )));
+        }
+    }
+    for (id, path) in &owned {
+        if !request_paths.iter().any(|req| req == path) {
+            return Err(message(format!(
+                "invalid ORDERS.tsv: order {id} owns path {path} outside the request"
+            )));
+        }
+    }
+    Ok(orders.into_iter().map(|row| row.id).collect())
+}
+
+fn order_id_ok(id: &str) -> bool {
+    let mut chars = id.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+fn order_deps_ok(deps: &str) -> bool {
+    if deps == "-" {
+        return true;
+    }
+    !deps.is_empty() && deps.split(',').all(order_id_ok)
+}
+
+fn relative_file_ok(path: &str) -> bool {
+    !path.is_empty()
+        && path != "-"
+        && !path.starts_with('/')
+        && !path
+            .split('/')
+            .any(|seg| seg.is_empty() || seg == "." || seg == "..")
+        && !path.contains('*')
+        && !path.contains('?')
+        && !path.contains('[')
+}
+
+fn assembly_depends_on_all(deps: &str, others: &[String]) -> bool {
+    let listed: Vec<&str> = if deps == "-" {
+        Vec::new()
+    } else {
+        deps.split(',').collect()
+    };
+    listed.len() == others.len() && others.iter().all(|id| listed.contains(&id.as_str()))
 }
 
 #[cfg(test)]

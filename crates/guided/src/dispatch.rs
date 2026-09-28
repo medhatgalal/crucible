@@ -1614,7 +1614,7 @@ fn owned_error(lines: &[String]) -> Option<String> {
     }
 }
 
-fn unsafe_owned(path: &str) -> bool {
+pub(crate) fn unsafe_owned(path: &str) -> bool {
     path.is_empty()
         || path.starts_with('/')
         || path.contains("//")
@@ -1778,11 +1778,11 @@ pub(crate) fn validate_task_dag(root: &Path, slug: &str) -> Result<(), GuidedErr
     Ok(())
 }
 
-struct TaskRow {
-    id: String,
-    deps: String,
-    paths_file: String,
-    verify_script: String,
+pub(crate) struct TaskRow {
+    pub id: String,
+    pub deps: String,
+    pub paths_file: String,
+    pub verify_script: String,
 }
 
 fn task_id_ok(id: &str) -> bool {
@@ -1828,7 +1828,7 @@ fn verify_ok(path: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-fn graph_error(tasks: &[TaskRow]) -> Option<String> {
+pub(crate) fn graph_error(tasks: &[TaskRow]) -> Option<String> {
     let ids: Vec<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
     let mut edges = 0usize;
     for task in tasks {
@@ -1879,7 +1879,7 @@ fn graph_error(tasks: &[TaskRow]) -> Option<String> {
     }
 }
 
-fn overlap_error(owned: &[(String, String)]) -> Option<String> {
+pub(crate) fn overlap_error(owned: &[(String, String)]) -> Option<String> {
     for (idx, (task, path)) in owned.iter().enumerate() {
         if path.is_empty() {
             return Some("blank or malformed owned path".to_string());
@@ -1901,7 +1901,7 @@ fn overlap_error(owned: &[(String, String)]) -> Option<String> {
     None
 }
 
-fn is_executable(path: &Path) -> bool {
+pub(crate) fn is_executable(path: &Path) -> bool {
     Command::new("test")
         .arg("-x")
         .arg(path)
