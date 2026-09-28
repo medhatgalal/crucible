@@ -248,9 +248,64 @@ fn drive(
     let _ = writeln!(out, "{body}");
     let _ = writeln!(out, "workspace {}", report.workspace_id);
     let _ = writeln!(out, "tabs {}", report.labels.join(" "));
-    let _ = writeln!(out, "go not started");
+    if guided_checkout(cwd) {
+        if let Err(e) = start_floor(&herdr, exe, &report.workspace_id) {
+            let _ = writeln!(err, "room: {e}");
+            return 1;
+        }
+        let _ = writeln!(out, "orchestrator started");
+    } else {
+        let _ = writeln!(out, "go not started");
+    }
     let _ = out.flush();
     0
+}
+
+fn guided_checkout(cwd: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(cwd.join(".crucible")) else {
+        return false;
+    };
+    for ent in rd.flatten() {
+        let Ok(text) = std::fs::read_to_string(ent.path().join("PROGRAM")) else {
+            continue;
+        };
+        if text.lines().any(|line| line.trim() == "cycle: guided") {
+            return true;
+        }
+    }
+    false
+}
+
+fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), String> {
+    let listed = herdr_ok(herdr, &["pane", "list", "--workspace", workspace_id])?;
+    let exe_s = exe.to_string_lossy();
+    if let Some(pane) = pane_for_tab(&listed, "tab-orchestrator") {
+        herdr_ok(
+            herdr,
+            &["pane", "run", &pane, exe_s.as_ref(), "orchestrate", "step"],
+        )?;
+    }
+    if let Some(pane) = pane_for_tab(&listed, "tab-dashboard") {
+        herdr_ok(
+            herdr,
+            &["pane", "run", &pane, exe_s.as_ref(), "speech", "queue"],
+        )?;
+    }
+    Ok(())
+}
+
+fn pane_for_tab(text: &str, tab: &str) -> Option<String> {
+    let value = parse_json(text).ok()?;
+    let panes = value.get("result")?.get("panes")?.as_array()?;
+    for pane in panes {
+        if pane.get("tab_id").and_then(|item| item.as_str()) == Some(tab) {
+            return pane
+                .get("pane_id")
+                .and_then(|item| item.as_str())
+                .map(str::to_string);
+        }
+    }
+    None
 }
 
 fn spawn_serve(exe: &Path, cwd: &Path, bind: &str) -> Result<(String, u32, ChildGuard), String> {
@@ -884,7 +939,6 @@ exit 0
             "--session",
             "session stop",
             "session delete",
-            "pane run",
             "HERDR_CONFIG_PATH",
             "XDG_CONFIG_HOME",
             "HERDR_SESSION",
@@ -967,6 +1021,47 @@ exit 0
         assert!(log.contains("workspace list"), "{log}");
         assert_join_log(&log);
         assert!(!tmp.root.join(".wm").exists(), "room must not write TRACE");
+    }
+
+    #[test]
+    fn guided_room_starts_the_orchestrator_and_not_go() {
+        let tmp = Tmp::new();
+        plant_layout(&tmp.root);
+        let prog = tmp.root.join(".crucible").join("work");
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(prog.join("PROGRAM"), "cycle: guided\n").unwrap();
+        let body = serde_json::json!({
+            "ok": true,
+            "version": product_version()
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        let herdr = fake_herdr(&tmp);
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        let stdout = String::from_utf8(out).unwrap();
+        let stderr = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("orchestrator started"), "{stdout}");
+        assert!(!stdout.contains("go not started"), "{stdout}");
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("pane run pane-orchestrator"), "{log}");
+        assert!(log.contains("orchestrate step"), "{log}");
+        assert!(log.contains("pane run pane-dashboard"), "{log}");
+        assert!(log.contains("speech queue"), "{log}");
+        assert!(!log.contains(" go"), "{log}");
+        assert!(!log.contains("workspace create"), "{log}");
+        assert!(!log.contains("config.toml"), "{log}");
     }
 
     #[test]
