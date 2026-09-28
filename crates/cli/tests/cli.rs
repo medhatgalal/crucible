@@ -4049,6 +4049,121 @@ fn wait_listen(child: &mut Child) {
     panic!("server did not listen: {}", String::from_utf8_lossy(&buf));
 }
 
+#[test]
+fn result_pass_appends_one_landed_line() {
+    let tmp = Tmp::new();
+    let prog = plant_guided_program(&tmp.root);
+    fs::write(
+        prog.join("agents.tsv"),
+        "\
+c0\tkindA\tm\thigh\ttrue\n\
+a1\tkindA\tm\thigh\ttrue\n\
+a2\tkindB\tm\thigh\ttrue\n\
+mk1\tkindA\tm\thigh\ttrue\n\
+j1\tkindB\tm\thigh\ttrue\n\
+j2\tkindB\tm\thigh\ttrue\n",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.md"),
+        "\
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+
+## Waivers
+
+NONE for this fixture.
+",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.ASSIGN.tsv"),
+        "\
+role\tagent\trequired\tnotes
+coordinator\tc0\tyes\tthis session
+claim-auditor\ta1\tyes\t
+claim-auditor\ta2\tyes\t
+scout\ta1\tno\t
+maker\tmk1\tyes\t
+reviewer\tj1\tyes\t
+contract-auditor\tj2\tyes\t
+",
+    )
+    .unwrap();
+    factory_ok(&tmp.root, &["cycle", "approve-panel"]);
+    let item = prog.join("items/alpha");
+    fs::create_dir_all(item.join("work")).unwrap();
+    fs::create_dir_all(item.join("evidence")).unwrap();
+    fs::write(item.join("work/note.txt"), "changed\n").unwrap();
+    let wid = run_out(&tmp.root, &["workid", "alpha"]).trim().to_string();
+    let id = "A1700000000.8.1";
+    fs::write(
+        prog.join("STATE.tsv"),
+        format!(
+            "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\nalpha\tACTIVE\tBUILD\t{wid}\tLOW\t{id}\t-\t1\n"
+        ),
+    )
+    .unwrap();
+    let ad = prog.join("attempts").join(id);
+    fs::create_dir_all(&ad).unwrap();
+    fs::write(
+        ad.join("meta.tsv"),
+        format!(
+            "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\talpha\t-\t{wid}\tmaker\tmk1\tkindA\tA1\tFOCUSED\tRETURNED\t1\t2\t-\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        ad.join("events.tsv"),
+        "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tseed\nRETURNED\t2\t9\tobserved\n",
+    )
+    .unwrap();
+    fs::write(ad.join("transport"), "multi-agent\n").unwrap();
+    fs::write(ad.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+    fs::write(
+        item.join("evidence/check.txt"),
+        format!("crucible-run/1\nagent: mk1\nwork-id: {wid}\nattempt-id: {id}\n"),
+    )
+    .unwrap();
+    let first = factory_ok(&tmp.root, &["result", id, "PASS", "check.txt", "CLOSE"]);
+    assert!(first.contains("result.md"), "{first}");
+    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap();
+    assert_eq!(
+        speech.lines().filter(|line| line.ends_with("\tmachine\tlanded\talpha")).count(),
+        1,
+        "{speech}"
+    );
+    let again = factory_bin(&tmp.root, &["result", id, "PASS", "check.txt", "CLOSE"]);
+    assert_eq!(again.status.code(), Some(2), "{again:?}");
+    assert!(
+        String::from_utf8_lossy(&again.stderr).contains("attempt result is immutable"),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert_eq!(fs::read_to_string(prog.join("SPEECH.tsv")).unwrap(), speech);
+}
+
 fn run_out(root: &Path, args: &[&str]) -> String {
     let out = bin()
         .current_dir(root)

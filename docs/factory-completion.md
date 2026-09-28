@@ -2,7 +2,7 @@
 
 Pickup after the 2026-09-28 reboot. This file is the remaining work. The session plan is not required.
 
-Verified on `main` at `a89ecc0` (`VERSION` `1.27.1`). `crates/guided/src/result.rs` does not call `speech`. There is no `orchestrate run`. Orders O1–O7 and corrections C1–C7 are merged. Do not redo them.
+Verified on `main` after `a84b943` (`VERSION` `1.27.1`). Orders O1–O7 and corrections C1–C7 are merged. Do not redo them. F1 is the `result` speech wire. F2, F3, and F4 are still open. There is no `orchestrate run`.
 
 ## Done
 
@@ -10,7 +10,7 @@ Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, as
 
 ## Still open
 
-A finished attempt does not become a `landed` sentence. Tests plant that sentence. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged.
+F2 must still run a real maker shell. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged. F1 is the `result` wire in this change: do not redo it once this pull request is on `main`.
 
 ## Orders
 

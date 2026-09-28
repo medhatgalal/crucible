@@ -148,6 +148,7 @@ pub fn result(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, G
             fingerprint,
             &task,
         )?;
+        record_order_speech(root, clock, &slug, outcome, next)?;
         return Ok(format!(
             "{}/result.md (reconciled publication)\n",
             ad.display()
@@ -185,7 +186,46 @@ pub fn result(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, G
         fingerprint,
         &task,
     )?;
+    record_order_speech(root, clock, &slug, outcome, next)?;
     Ok(format!("{}/result.md\n", ad.display()))
+}
+
+fn record_order_speech(
+    root: &Path,
+    clock: &dyn Clock,
+    slug: &str,
+    outcome: &str,
+    next: &str,
+) -> Result<(), GuidedError> {
+    let sentence = match (outcome, next) {
+        ("PASS", "CLOSE") => "landed",
+        (_, "ESCALATE") => "escalated",
+        _ => return Ok(()),
+    };
+    if factory_sentence_exists(root, "machine", sentence, slug)? {
+        return Ok(());
+    }
+    crate::speech::speech(root, &["machine", sentence, slug], clock)?;
+    Ok(())
+}
+
+fn factory_sentence_exists(
+    root: &Path,
+    role: &str,
+    sentence: &str,
+    text: &str,
+) -> Result<bool, GuidedError> {
+    let path = root.join("SPEECH.tsv");
+    let body = match fs::read_to_string(&path) {
+        Ok(body) => body,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    Ok(records(&body).iter().any(|line| {
+        let mut fields = line.split('\t');
+        fields.next();
+        fields.next() == Some(role) && fields.next() == Some(sentence) && fields.next() == Some(text)
+    }))
 }
 
 fn pair_ok(outcome: &str, next: &str) -> bool {
@@ -640,5 +680,22 @@ mod tests {
             body.contains(&format!("DISPATCH-WORK-ID: {wid}\n")),
             "{body}"
         );
+        let speech = fs::read_to_string(root.join("SPEECH.tsv")).unwrap();
+        assert_eq!(
+            speech.lines().filter(|line| line.ends_with("\tmachine\tlanded\talpha")).count(),
+            1,
+            "{speech}"
+        );
+        let again = result(
+            root,
+            &[id, "PASS", "check.txt", "CLOSE"],
+            &FixedClock::new(1_700_000_061),
+        )
+        .unwrap_err();
+        assert!(
+            again.to_string().contains("attempt result is immutable"),
+            "{again}"
+        );
+        assert_eq!(fs::read_to_string(root.join("SPEECH.tsv")).unwrap(), speech);
     }
 }

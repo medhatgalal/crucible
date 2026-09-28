@@ -6,6 +6,10 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- `crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`
+  to `SPEECH.tsv`. `ESCALATE` appends `machine escalated <slug>`. Other
+  outcomes do not. A second identical result does not append again.
+  No VERSION bump.
 - A program file `ticket` whose text is the word `on` lets `crucible grill decide`
   read a two-line ticket (`path:` then `check:`) as the same unsigned part as a
   hand-written request with that owned path and check. `off` or a missing file
