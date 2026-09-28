@@ -403,6 +403,16 @@ path, and it is the only assembly check. A missing assembly row is refused.
 $CP grill decide REQUEST.md
 ```
 
+## Factory orchestrator
+
+`crucible orchestrate step` is one pass of the outer loop. It reads `ORDERS.tsv` in the program directory and appends factory speech by the same record as `speech`. It does not edit a product file outside that directory and it does not start a maker.
+
+An order is landed when `SPEECH.tsv` contains a `landed` sentence whose text is that order id. It is paused when the file contains `need-a-fact` for that id and no later manager `answer` for that id. While any order other than `assembly` is paused, the step appends `paused` and `asking` and does not dispatch. Otherwise it dispatches the first order whose dependencies are already landed. An empty dependency list means none. The `assembly` row is not dispatched, and a dependency named `assembly` does not count. One step dispatches at most one order. When none is ready the command exits 0 and prints `idle`.
+
+```sh
+$CP orchestrate step
+```
+
 ## Session cleanup
 
 Cleanup runs in the **target repository**, from its root, on the installed program:

@@ -75,6 +75,7 @@ not drive the cycle with them.
   panes / selftest                    optional observation and engine verification
   speech ROLE SENTENCE TEXT           append one factory sentence to SPEECH.tsv
   grill decide [REQUEST]              one owned path is one order; a vehicle needs ORDERS.tsv
+  orchestrate step                    one factory step: dispatch, ask, or idle
 
 Independence ladder: multi-agent preferred, then ACP, then subagent after ACP probe failure.
 If no independent agent can be invoked, STOP and warn — do not continue as solo theatre.
@@ -174,6 +175,11 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         "grill" => {
             with_program_root(|root| guided_ok(crucible_guided::grill::grill(root, &args, clock)))
         }
+        "orchestrate" => with_program_root(|root| {
+            guided_ok(crucible_guided::orchestrate::orchestrate(
+                root, &args, clock,
+            ))
+        }),
         "ready" => {
             with_program_root(|root| guided_ok(crucible_guided::task::ready(root, &args, clock)))
         }

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- `crucible orchestrate step` reads program `ORDERS.tsv` and appends one
+  factory step to `SPEECH.tsv`: `paused` and `asking`, one `dispatched`
+  order, or it prints `idle`. `assembly` is not dispatched. It does not
+  edit a product file and it does not start a maker. No VERSION bump.
 - `crucible grill decide` records one part or a vehicle in `GRILL.md`
   (vehicle, source words, scout, frame, size, cut, sign). One owned path
   and one check is one order. More than one path needs `ORDERS.tsv` or
