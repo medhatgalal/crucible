@@ -6,6 +6,9 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- A shipped `drive` tick starts the `agents.tsv` maker shell. The shell
+  writes the owned file. `crucible result` then appends `landed`. The
+  test does not plant that sentence. No VERSION bump.
 - `crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`
   to `SPEECH.tsv`. `ESCALATE` appends `machine escalated <slug>`. Other
   outcomes do not. A second identical result does not append again.

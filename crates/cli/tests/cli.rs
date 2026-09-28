@@ -4164,6 +4164,137 @@ contract-auditor\tj2\tyes\t
     assert_eq!(fs::read_to_string(prog.join("SPEECH.tsv")).unwrap(), speech);
 }
 
+#[test]
+fn drive_runs_the_maker_shell_and_result_records_landed() {
+    let tmp = Tmp::new();
+    let prog = plant_guided_program(&tmp.root);
+    fs::write(
+        prog.join("agents.tsv"),
+        format!(
+            "\
+c0\tkindA\tm\thigh\ttrue\n\
+a1\tkindA\tm\thigh\ttrue\n\
+a2\tkindB\tm\thigh\ttrue\n\
+mk1\tkindA\tm\thigh\t{root}/maker.sh\n\
+j1\tkindB\tm\thigh\ttrue\n\
+j2\tkindB\tm\thigh\ttrue\n",
+            root = tmp.root.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.md"),
+        "\
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+
+## Waivers
+
+NONE for this fixture.
+",
+    )
+    .unwrap();
+    fs::write(
+        prog.join("PANEL.ASSIGN.tsv"),
+        "\
+role\tagent\trequired\tnotes
+coordinator\tc0\tyes\tthis session
+claim-auditor\ta1\tyes\t
+claim-auditor\ta2\tyes\t
+scout\ta1\tno\t
+maker\tmk1\tyes\t
+reviewer\tj1\tyes\t
+contract-auditor\tj2\tyes\t
+",
+    )
+    .unwrap();
+    factory_ok(&tmp.root, &["cycle", "approve-panel"]);
+    fs::create_dir_all(prog.join("roles")).unwrap();
+    fs::write(prog.join("roles/maker.md"), "Make the owned file.\n").unwrap();
+    let item = prog.join("items/alpha");
+    fs::create_dir_all(item.join("work")).unwrap();
+    fs::create_dir_all(item.join("evidence")).unwrap();
+    fs::write(item.join("work/note.txt"), "base\n").unwrap();
+    fs::write(
+        item.join("ITEM.md"),
+        "# alpha\n\n- [ ] A1: greeting file exists\n",
+    )
+    .unwrap();
+    fs::write(item.join("plan-audit.md"), "VERDICT: PASS\n").unwrap();
+    fs::write(
+        prog.join("STATE.tsv"),
+        "item\tstatus\tstage\twork_id\trisk\tinflight_attempt\tblock_code\tupdated_epoch\nalpha\tACTIVE\tBUILD\tEMPTY\tLOW\t-\t-\t1\n",
+    )
+    .unwrap();
+    let exe = env!("CARGO_BIN_EXE_crucible");
+    fs::write(
+        tmp.root.join("maker.sh"),
+        format!(
+            "#!/bin/sh\nprintf hello > HELLO.txt\ni=0\nwhile [ \"$i\" -lt 50 ]; do\n  if \"{exe}\" run alpha mk1 -- true; then\n    exit 0\n  fi\n  i=$((i+1))\n  sleep 0.05\ndone\nexit 1\n"
+        ),
+    )
+    .unwrap();
+    let mut perm = fs::metadata(tmp.root.join("maker.sh")).unwrap().permissions();
+    perm.set_mode(0o755);
+    fs::set_permissions(tmp.root.join("maker.sh"), perm).unwrap();
+    let dispatched = factory_ok(&tmp.root, &["dispatch", "alpha", "maker", "mk1"]);
+    let id = Path::new(dispatched.trim())
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    factory_ok(
+        &tmp.root,
+        &["attempt", "transport", &id, "multi-agent"],
+    );
+    factory_ok(&tmp.root, &["contract-audit", &id, "j2", "PASS"]);
+    assert!(!prog.join("SPEECH.tsv").exists());
+    let drove = factory_ok(&tmp.root, &["drive", "tick"]);
+    assert!(drove.contains("finish recorded"), "{drove}");
+    assert_eq!(fs::read(tmp.root.join("HELLO.txt")).unwrap(), b"hello");
+    assert!(
+        !fs::read_to_string(prog.join("SPEECH.tsv")).unwrap_or_default().contains("landed"),
+        "drive must not plant landed"
+    );
+    let evidence = fs::read_dir(item.join("evidence"))
+        .unwrap()
+        .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
+        .find(|name| name.ends_with(".txt"))
+        .expect("maker run wrote evidence");
+    factory_ok(
+        &tmp.root,
+        &["result", &id, "PASS", &evidence, "CLOSE"],
+    );
+    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap();
+    assert!(
+        speech.contains("\tmachine\tlanded\talpha\n"),
+        "{speech}"
+    );
+}
+
 fn run_out(root: &Path, args: &[&str]) -> String {
     let out = bin()
         .current_dir(root)
