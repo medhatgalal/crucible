@@ -24,6 +24,10 @@ other role or sentence is refused and the file is left unchanged.
 $CP speech manager source "the greeting is wrong"
 ```
 
+`crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`.
+`ESCALATE` appends `machine escalated <slug>`. A second identical result
+does not append again.
+
 Managed lifecycle makes program state machine-readable and gives the agent one deterministic resume
 behavior. It is selected by behavior in `PROGRAM`:
 
