@@ -1,0 +1,47 @@
+# Factory completion
+
+Pickup after the 2026-09-28 reboot. This file is the remaining work. The session plan is not required.
+
+Verified on `main` at `a89ecc0` (`VERSION` `1.27.1`). `crates/guided/src/result.rs` does not call `speech`. There is no `orchestrate run`. Orders O1–O7 and corrections C1–C7 are merged. Do not redo them.
+
+## Done
+
+Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, assembly script once, and the room pane-run of that step on a guided checkout. `go` calls `drive` only when `cycle: guided` is present. Kernel `POST /go` stays 405.
+
+## Still open
+
+A finished attempt does not become a `landed` sentence. Tests plant that sentence. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged.
+
+## Orders
+
+F1, then F2, then F3, then F4. They share `result.rs`, `orchestrate.rs`, and `crates/room`. Do not run them side by side.
+
+### F1 — Landed speech comes from result
+
+In `crates/guided/src/result.rs`, `PASS` with `CLOSE` appends `machine landed <slug>` through `speech::speech`. `ESCALATE` appends `machine escalated <slug>`. No other outcome writes speech. The slug is the order id.
+
+Proof: shipped `crucible result` on a returned maker attempt writes that one line. A second result does not write another.
+
+### F2 — One real inner loop
+
+Depends on F1. A fixture `agents.tsv` maker is a shell that writes the owned file and exits 0. Shipped `drive` starts it. The test does not plant `landed`. After `crucible result`, `SPEECH.tsv` contains `landed` for that order. `guided_go_is_drive_and_reaches_done` stays the pre-seeded client test.
+
+### F3 — The orchestrator keeps going
+
+Depends on F2. `crucible orchestrate run` repeats `step` until the step prints `idle` or appended `asking`. It does not edit product files. On a guided checkout, `crucible room` pane-runs `orchestrate run` instead of `orchestrate step`. The dashboard still runs `speech queue` once.
+
+Proof: a two-order graph whose maker shells succeed, then `orchestrate run`, leaves both orders `landed` and one `landed assembly` when the assembly script exits 0. A `need-a-fact` planted before the run stops on `asking` and does not land the paused order.
+
+### F4 — Tag the factory
+
+Depends on F3. Bump `VERSION` to `1.28.0`. Update `scripts/verify-working-mode.sh`, `scripts/verify-working-mode-go.sh`, `scripts/verify-working-mode-blank-home.sh`, the CLI and room version assertions, and `docs/working-mode.md`. Merge only after Linux `refusals` and macOS `refusals-bsd`. Tag `v1.28.0` on that commit.
+
+## Not in this file
+
+A second dispatch in one step. A second speech verb. Jira or GitLab. A ticket help row. Replacing `GET /api/walk`. Porting working-mode `go --next`. Installing into a repository the operator has not named.
+
+## How to verify
+
+Each order is its own pull request. The proof is a test that runs the shipped `crucible` binary. `scripts/selftest.sh` must still see one verb table. Room tests must still show no `config.toml` write and no workspace create. Do not edit `~/.config/herdr/config.toml`. Do not create a Herdr workspace. Do not pop `stash@{0}`. Do not delete `reports/`.
+
+After F4, stop. The next order is a repository path from the operator.
