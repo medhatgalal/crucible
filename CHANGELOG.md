@@ -65,7 +65,7 @@ All notable changes to this project are documented here. This project follows
 
 ### Fixed
 
-- A `.wm` projection or repo-root `START.md` write is not an owned-product edit. `crucible check` does not fail a correct owned file only because `git status` also lists `.crucible`, `.wm`, or `START.md`. `crucible run` hides those paths from the recorded command's `git status`. Evidence work-id matching stays the post-change work id. A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation whose remaining porcelain is only those harness paths, or an owned file, resumes instead of staying on that escalation.
+- A `.wm` projection or repo-root `START.md` write is not an owned-product edit. `crucible check` does not fail a correct owned file only because `git status` also lists `.crucible`, `.wm`, `START.md`, or the adopted `.grok/` router. `crucible run` hides those paths from the recorded command's `git status`. Evidence work-id matching stays the post-change work id. A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation whose remaining porcelain is only those harness paths, or an owned file, resumes instead of staying on that escalation.
 
 ## [1.26.0] - 2026-09-26
 

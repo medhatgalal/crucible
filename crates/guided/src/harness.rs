@@ -12,15 +12,20 @@ const EXCLUDE_BLOCK: &str = "\
 .crucible/
 .wm/
 /START.md
+.grok/
 ";
 
-/// `.crucible/` (except task `worktrees/`), a `.wm` projection, or repo-root `START.md`.
+/// `.crucible/` (except task `worktrees/`), a `.wm` projection, repo-root `START.md`,
+/// or the adopted `.grok/` router and harness view.
 pub(crate) fn path_is_harness(path: &str) -> bool {
     let path = path.trim_start_matches("./");
     if path == "START.md" {
         return true;
     }
     if path == ".wm" || path.starts_with(".wm/") || path.contains("/.wm/") {
+        return true;
+    }
+    if path == ".grok" || path.starts_with(".grok/") || path.contains("/.grok/") {
         return true;
     }
     if path.ends_with("worktrees") || path.contains("worktrees/") {
@@ -113,7 +118,8 @@ pub(crate) fn conceal_harness(repo: &Path) {
     let _ = fs::create_dir_all(&info);
     let exclude = info.join("exclude");
     let existing = fs::read_to_string(&exclude).unwrap_or_default();
-    if !existing.contains("/START.md") || !existing.contains(".wm/") {
+    if !existing.contains("/START.md") || !existing.contains(".wm/") || !existing.contains(".grok/")
+    {
         let mut file = match OpenOptions::new().create(true).append(true).open(&exclude) {
             Ok(file) => file,
             Err(_) => return,
@@ -123,7 +129,15 @@ pub(crate) fn conceal_harness(repo: &Path) {
     let listed = Command::new("git")
         .arg("-C")
         .arg(repo)
-        .args(["ls-files", "-z", "--", ".crucible", ".wm", "START.md"])
+        .args([
+            "ls-files",
+            "-z",
+            "--",
+            ".crucible",
+            ".wm",
+            "START.md",
+            ".grok",
+        ])
         .stderr(Stdio::null())
         .output();
     let Ok(listed) = listed else {

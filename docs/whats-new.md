@@ -10,7 +10,7 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## 1.27.0 — harness paths are not product porcelain
 
-A `.wm` projection write is not an edit of an owned product path. `crucible check` does not fail a correct owned file only because `git status` also lists `.crucible`, `.wm`, or repo-root `START.md`. `crucible run` hides those paths from the command it records. The evidence work id must still be the post-change work id. A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation whose remaining porcelain is only harness paths, or an owned file, resumes at the item's stage.
+A `.wm` projection write is not an edit of an owned product path. `crucible check` does not fail a correct owned file only because `git status` also lists `.crucible`, `.wm`, repo-root `START.md`, or the adopted `.grok/` router. `crucible run` hides those paths from the command it records. The evidence work id must still be the post-change work id. A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation whose remaining porcelain is only harness paths, or an owned file, resumes at the item's stage.
 
 ## 1.26.0 — record one result from the page
 

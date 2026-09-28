@@ -1189,6 +1189,8 @@ Undo the change to src/widget.rs and confirm the focused check then fails loudly
         fs::create_dir_all(repo.join(".wm")).unwrap();
         fs::write(repo.join(".wm/FLOOR.md"), "card\n").unwrap();
         fs::write(repo.join("START.md"), "coordinator card\n").unwrap();
+        fs::create_dir_all(repo.join(".grok/rules")).unwrap();
+        fs::write(repo.join(".grok/rules/loop-router.md"), "router\n").unwrap();
         let clock = FixedClock::new(0);
         let wid = workid(&root, "alpha").unwrap();
         let o1 = run(&root, &["alpha", "j1", "--", "/bin/echo", "one"], &clock).unwrap();

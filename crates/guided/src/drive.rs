@@ -1707,6 +1707,9 @@ contract-auditor\tj2\tyes\t
         assert!(!crate::harness::path_is_harness("src/main.rs"));
         assert!(crate::harness::path_is_harness(".wm/FLOOR.md"));
         assert!(crate::harness::path_is_harness("START.md"));
+        assert!(crate::harness::path_is_harness(
+            ".grok/rules/loop-router.md"
+        ));
         assert_eq!(crate::harness::porcelain_path("?? src/a.rs"), "src/a.rs");
         assert_eq!(crate::harness::porcelain_path("R  old -> new"), "new");
     }

@@ -94,7 +94,7 @@ a RULE into a CHECK, do it and say so in the lesson.
     `.drive.lock` exists. After the child,
     these refuse (and restore): product `HEAD` movement (commit or completed merge), `MERGE_HEAD`,
     new or content-changed product porcelain (including already-dirty files; `.crucible/` except
-    `worktrees/`, a `.wm/` projection, and repo-root `START.md` are harness, not product porcelain), task-worktree
+    `worktrees/`, a `.wm/` projection, repo-root `START.md`, and `.grok/` are harness, not product porcelain), task-worktree
     writes, new or overwritten `items/*/verdicts` and `claims/*/verdicts` files, removing
     `cycle: guided`, and a new live attempt id while the cycle is WAIT inflight. INVESTIGATE
     fallback dispatches every unaudited claim to the first claim-auditor, records transport,
