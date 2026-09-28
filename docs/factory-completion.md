@@ -10,7 +10,7 @@ Speech, grill, ticket source, stats from `SPEECH.tsv`, one orchestrator step, as
 
 ## Still open
 
-F2 must still run a real maker shell. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged. F1 is the `result` wire in this change: do not redo it once this pull request is on `main`.
+F1 is on `main` at `6cd1900`. F2 is the maker-shell proof in this change. F3 and F4 remain. The orchestrator does not repeat until idle or asking. Nothing since `v1.27.1` is tagged.
 
 ## Orders
 
