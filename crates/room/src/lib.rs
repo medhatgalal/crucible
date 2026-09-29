@@ -288,7 +288,7 @@ fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), Strin
     if let Some(pane) = pane_for_tab(&listed, "tab-dashboard") {
         herdr_ok(
             herdr,
-            &["pane", "run", &pane, exe_s.as_ref(), "speech", "queue"],
+            &["pane", "run", &pane, exe_s.as_ref(), "message", "queue"],
         )?;
     }
     Ok(())
@@ -1058,7 +1058,7 @@ exit 0
         assert!(log.contains("pane run pane-orchestrator"), "{log}");
         assert!(log.contains("orchestrate run"), "{log}");
         assert!(log.contains("pane run pane-dashboard"), "{log}");
-        assert!(log.contains("speech queue"), "{log}");
+        assert!(log.contains("message queue"), "{log}");
         assert!(!log.contains(" go"), "{log}");
         assert!(!log.contains("workspace create"), "{log}");
         assert!(!log.contains("config.toml"), "{log}");

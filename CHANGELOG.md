@@ -6,6 +6,7 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
+- `crucible message ROLE KIND TEXT` appends one factory message to `MESSAGES.tsv`. It replaces `crucible speech`. The page uses `POST /act/message`. `message queue` is what the dashboard pane runs. No second command.
 - `crucible orchestrate run` delivers one dispatched order through the existing
   `drive` tick and `result`. It waits in that process for a manager `answer`
   after `asking`, including a failed assembly check. A maker-shell failure is

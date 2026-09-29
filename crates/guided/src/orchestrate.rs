@@ -9,8 +9,8 @@ use std::time::Duration;
 use crucible_contract::Clock;
 
 use crate::dispatch::{graph_error, is_executable, TaskRow};
+use crate::messages::append;
 use crate::panel::{is_regular, split_tabs};
-use crate::speech::speech;
 use crate::{message, records, GuidedError};
 
 const ORDER_HEADER: &str = "order_id\tdepends_on\tpaths_file\tverify_script";
@@ -25,50 +25,51 @@ pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<Stri
 
 fn orchestrate_run(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
     let orders = read_orders(root)?;
-    let initial = read_speech(root)?;
+    let initial = read_messages(root)?;
     check_existing_landed(root, &orders, &initial)?;
     let prior_complete = prior_success(root, &orders, &initial)?;
     let mut assembly_ran_here = false;
     for _ in 0..64 {
         refuse_stopped_awaiting(root, &orders)?;
-        let before = read_speech(root)?;
+        let before = read_messages(root)?;
         let last = orchestrate_step(root, clock)?;
-        let after = read_speech(root)?;
+        let after = read_messages(root)?;
         let fresh = fresh_rows(&before, &after);
         if fresh.iter().any(|row| {
             row.role == "machine"
                 && row.text == "assembly"
-                && (row.sentence == "landed" || row.sentence == "escalated")
+                && (row.kind == "landed" || row.kind == "escalated")
         }) {
             assembly_ran_here = true;
         }
         if let Some(id) = fresh.iter().find_map(|row| {
-            (row.role == "orchestrator" && row.sentence == "asking").then(|| row.text.clone())
+            (row.role == "orchestrator" && row.kind == "asking").then(|| row.text.clone())
         }) {
             wait_for_answer(root, &id)?;
             continue;
         }
         if let Some(id) = fresh.iter().find_map(|row| {
-            (row.role == "orchestrator" && row.sentence == "dispatched").then(|| row.text.clone())
+            (row.role == "orchestrator" && row.kind == "dispatched").then(|| row.text.clone())
         }) {
             deliver(root, clock, &id)?;
             continue;
         }
-        if fresh.iter().any(|row| {
-            row.role == "machine" && row.sentence == "escalated" && row.text == "assembly"
-        }) {
-            speech(root, &["orchestrator", "asking", "assembly"], clock)?;
+        if fresh
+            .iter()
+            .any(|row| row.role == "machine" && row.kind == "escalated" && row.text == "assembly")
+        {
+            append(root, &["orchestrator", "asking", "assembly"], clock)?;
             wait_for_answer(root, "assembly")?;
             continue;
         }
         if fresh
             .iter()
-            .any(|row| row.role == "machine" && row.sentence == "landed" && row.text == "assembly")
+            .any(|row| row.role == "machine" && row.kind == "landed" && row.text == "assembly")
         {
             continue;
         }
         if last == "idle\n" {
-            let said = read_speech(root)?;
+            let said = read_messages(root)?;
             let makers_done = all_makers_landed(root, &orders, &said)?;
             let has_assembly = orders.iter().any(|row| row.id == "assembly");
             if makers_done && has_assembly && !assembly_ran_here && !prior_complete {
@@ -108,13 +109,13 @@ fn fresh_rows<'a>(before: &'a [Said], after: &'a [Said]) -> &'a [Said] {
 
 fn wait_for_answer(root: &Path, id: &str) -> Result<(), GuidedError> {
     loop {
-        let said = read_speech(root)?;
-        let asking_at = said.iter().rposition(|row| {
-            row.role == "orchestrator" && row.sentence == "asking" && row.text == id
-        });
+        let said = read_messages(root)?;
+        let asking_at = said
+            .iter()
+            .rposition(|row| row.role == "orchestrator" && row.kind == "asking" && row.text == id);
         if let Some(at) = asking_at {
             let answered = said.iter().enumerate().any(|(idx, row)| {
-                idx > at && row.role == "manager" && row.sentence == "answer" && row.text == id
+                idx > at && row.role == "manager" && row.kind == "answer" && row.text == id
             });
             if answered {
                 return Ok(());
@@ -126,19 +127,19 @@ fn wait_for_answer(root: &Path, id: &str) -> Result<(), GuidedError> {
 
 fn orchestrate_step(root: &Path, clock: &dyn Clock) -> Result<String, GuidedError> {
     let orders = read_orders(root)?;
-    let mut said = read_speech(root)?;
+    let mut said = read_messages(root)?;
     let kept: Vec<&TaskRow> = orders.iter().filter(|row| row.id != "assembly").collect();
     let mut wrote = String::new();
     for order in &kept {
         let id = order.id.as_str();
         if paused(&said, id) && !asked_after(&said, id, "need-a-fact") {
-            wrote.push_str(&speech(root, &["orchestrator", "paused", id], clock)?);
-            wrote.push_str(&speech(root, &["orchestrator", "asking", id], clock)?);
+            wrote.push_str(&append(root, &["orchestrator", "paused", id], clock)?);
+            wrote.push_str(&append(root, &["orchestrator", "asking", id], clock)?);
         } else if escalated_open(&said, id) && !asked_after(&said, id, "escalated") {
-            wrote.push_str(&speech(root, &["orchestrator", "asking", id], clock)?);
+            wrote.push_str(&append(root, &["orchestrator", "asking", id], clock)?);
         }
     }
-    said = read_speech(root)?;
+    said = read_messages(root)?;
     for order in &kept {
         let id = order.id.as_str();
         if landed(&said, id)
@@ -149,7 +150,7 @@ fn orchestrate_step(root: &Path, clock: &dyn Clock) -> Result<String, GuidedErro
             continue;
         }
         if deps_landed(&order.deps, &said) {
-            wrote.push_str(&speech(root, &["orchestrator", "dispatched", id], clock)?);
+            wrote.push_str(&append(root, &["orchestrator", "dispatched", id], clock)?);
             return Ok(if wrote.is_empty() {
                 "idle\n".to_string()
             } else {
@@ -256,19 +257,19 @@ fn order_deps_ok(deps: &str) -> bool {
 
 struct Said {
     role: String,
-    sentence: String,
+    kind: String,
     text: String,
 }
 
-fn read_speech(root: &Path) -> Result<Vec<Said>, GuidedError> {
-    let text = match fs::read_to_string(root.join("SPEECH.tsv")) {
+fn read_messages(root: &Path) -> Result<Vec<Said>, GuidedError> {
+    let text = match fs::read_to_string(root.join("MESSAGES.tsv")) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err.into()),
     };
     let mut said = Vec::new();
     for (idx, rec) in records(&text).into_iter().enumerate() {
-        if idx == 0 && rec == "epoch\trole\tsentence\ttext" {
+        if idx == 0 && rec == "epoch\trole\tkind\ttext" {
             continue;
         }
         if rec.is_empty() {
@@ -280,7 +281,7 @@ fn read_speech(root: &Path) -> Result<Vec<Said>, GuidedError> {
         }
         said.push(Said {
             role: fields[1].to_string(),
-            sentence: fields[2].to_string(),
+            kind: fields[2].to_string(),
             text: fields[3].to_string(),
         });
     }
@@ -289,57 +290,57 @@ fn read_speech(root: &Path) -> Result<Vec<Said>, GuidedError> {
 
 fn landed(said: &[Said], id: &str) -> bool {
     said.iter()
-        .any(|row| row.sentence == "landed" && row.text == id)
+        .any(|row| row.kind == "landed" && row.text == id)
 }
 
 /// A dispatch stands until the order lands or the manager answers.
 fn awaiting(said: &[Said], id: &str) -> bool {
     let Some(at) = said
         .iter()
-        .rposition(|row| row.sentence == "dispatched" && row.text == id)
+        .rposition(|row| row.kind == "dispatched" && row.text == id)
     else {
         return false;
     };
     !said.iter().enumerate().any(|(idx, row)| {
         idx > at
             && row.text == id
-            && (row.sentence == "landed" || (row.role == "manager" && row.sentence == "answer"))
+            && (row.kind == "landed" || (row.role == "manager" && row.kind == "answer"))
     })
 }
 
 fn escalated_open(said: &[Said], id: &str) -> bool {
     let Some(at) = said
         .iter()
-        .rposition(|row| row.sentence == "escalated" && row.text == id)
+        .rposition(|row| row.kind == "escalated" && row.text == id)
     else {
         return false;
     };
     !said.iter().enumerate().any(|(idx, row)| {
-        idx > at && row.role == "manager" && row.sentence == "answer" && row.text == id
+        idx > at && row.role == "manager" && row.kind == "answer" && row.text == id
     })
 }
 
 fn asked_after(said: &[Said], id: &str, trigger: &str) -> bool {
     let Some(at) = said
         .iter()
-        .rposition(|row| row.sentence == trigger && row.text == id)
+        .rposition(|row| row.kind == trigger && row.text == id)
     else {
         return false;
     };
     said.iter().enumerate().any(|(idx, row)| {
-        idx > at && row.role == "orchestrator" && row.sentence == "asking" && row.text == id
+        idx > at && row.role == "orchestrator" && row.kind == "asking" && row.text == id
     })
 }
 
 fn paused(said: &[Said], id: &str) -> bool {
     let Some(need) = said
         .iter()
-        .rposition(|row| row.sentence == "need-a-fact" && row.text == id)
+        .rposition(|row| row.kind == "need-a-fact" && row.text == id)
     else {
         return false;
     };
     !said.iter().enumerate().any(|(idx, row)| {
-        idx > need && row.role == "manager" && row.sentence == "answer" && row.text == id
+        idx > need && row.role == "manager" && row.kind == "answer" && row.text == id
     })
 }
 
@@ -383,7 +384,7 @@ fn run_assembly_once(
         Err(_) => 127,
     };
     let sentence = if code == 0 { "landed" } else { "escalated" };
-    Ok(Some(speech(
+    Ok(Some(append(
         root,
         &["machine", sentence, "assembly"],
         clock,
@@ -458,9 +459,9 @@ fn outcome_idle(
     if escalated_open(said, "assembly") {
         return Ok(false);
     }
-    let assembly_landed = said.iter().any(|row| {
-        row.role == "machine" && row.sentence == "landed" && row.text == "assembly"
-    });
+    let assembly_landed = said
+        .iter()
+        .any(|row| row.role == "machine" && row.kind == "landed" && row.text == "assembly");
     Ok(assembly_landed && (assembly_ran_here || prior_complete))
 }
 
@@ -543,7 +544,9 @@ fn newest_maker(root: &Path, id: &str) -> Result<Option<String>, GuidedError> {
             .unwrap_or(0);
         let replace = match &best {
             None => true,
-            Some((best_epoch, best_n, _)) => epoch > *best_epoch || (epoch == *best_epoch && n > *best_n),
+            Some((best_epoch, best_n, _)) => {
+                epoch > *best_epoch || (epoch == *best_epoch && n > *best_n)
+            }
         };
         if replace {
             best = Some((epoch, n, attempt));
@@ -567,7 +570,7 @@ fn last_reason(root: &Path, id: &str) -> Result<String, GuidedError> {
 }
 
 fn refuse_stopped_awaiting(root: &Path, orders: &[TaskRow]) -> Result<(), GuidedError> {
-    let said = read_speech(root)?;
+    let said = read_messages(root)?;
     for order in orders.iter().filter(|row| row.id != "assembly") {
         if !awaiting(&said, &order.id) {
             continue;
@@ -589,7 +592,7 @@ fn refuse_stopped_awaiting(root: &Path, orders: &[TaskRow]) -> Result<(), Guided
     Ok(())
 }
 
-fn speech_next(orders: &[TaskRow], said: &[Said]) -> Option<String> {
+fn message_next(orders: &[TaskRow], said: &[Said]) -> Option<String> {
     orders.iter().find_map(|row| {
         let id = row.id.as_str();
         (id != "assembly"
@@ -606,10 +609,8 @@ fn open_ask(orders: &[TaskRow], said: &[Said]) -> Option<String> {
     orders.iter().find_map(|row| {
         let id = row.id.as_str();
         let open = (paused(said, id) || escalated_open(said, id))
-            && said.iter().any(|speech_row| {
-                speech_row.role == "orchestrator"
-                    && speech_row.sentence == "asking"
-                    && speech_row.text == id
+            && said.iter().any(|said_row| {
+                said_row.role == "orchestrator" && said_row.kind == "asking" && said_row.text == id
             });
         open.then(|| row.id.clone())
     })
@@ -654,7 +655,9 @@ fn deliver_awaiting(
     orders: &[TaskRow],
     said: &[Said],
 ) -> Result<Option<String>, GuidedError> {
-    let Some(order) = orders.iter().find(|row| row.id != "assembly" && awaiting(said, &row.id))
+    let Some(order) = orders
+        .iter()
+        .find(|row| row.id != "assembly" && awaiting(said, &row.id))
     else {
         return Ok(None);
     };
@@ -675,9 +678,15 @@ fn deliver_awaiting(
     Ok(None)
 }
 
-fn handoff(root: &Path, clock: &dyn Clock, said: &[Said], activate: &str) -> Result<(), GuidedError> {
+fn handoff(
+    root: &Path,
+    clock: &dyn Clock,
+    said: &[Said],
+    activate: &str,
+) -> Result<(), GuidedError> {
     let row = state_fields(root, activate)?;
-    if row.get(1).map(String::as_str) != Some("CLOSED") || row.get(2).map(String::as_str) != Some("BUILD")
+    if row.get(1).map(String::as_str) != Some("CLOSED")
+        || row.get(2).map(String::as_str) != Some("BUILD")
     {
         return Err(message("refused: next order is not a closed item"));
     }
@@ -749,16 +758,21 @@ fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedErro
     if !root.join("items").join(order).is_dir() {
         return Err(message(format!("no such item: {order}")));
     }
-    let said = read_speech(root)?;
+    let said = read_messages(root)?;
     if paused(&said, order) || escalated_open(&said, order) {
-        return Err(message(format!("refused: {order} is still the current item")));
+        return Err(message(format!(
+            "refused: {order} is still the current item"
+        )));
     }
     let current = current_slug(root)?;
     if current.as_deref() != Some(order) {
-        let promotable = current.is_none() || current.as_deref().is_some_and(|slug| landed(&said, slug));
+        let promotable =
+            current.is_none() || current.as_deref().is_some_and(|slug| landed(&said, slug));
         if !promotable {
             let slug = current.unwrap_or_default();
-            return Err(message(format!("refused: {slug} is still the current item")));
+            return Err(message(format!(
+                "refused: {slug} is still the current item"
+            )));
         }
         handoff(root, clock, &said, order)?;
     }
@@ -805,7 +819,9 @@ fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedErro
     }
     if !crate::claims::claim_attempt_is_sealed(root, &attempt) {
         if !contract.with_file_name("transport").is_file()
-            && !crate::cycle::attempt_dir(root, &attempt)?.join("transport").is_file()
+            && !crate::cycle::attempt_dir(root, &attempt)?
+                .join("transport")
+                .is_file()
         {
             crate::attempt::attempt(root, &["transport", &attempt, "multi-agent"], clock)?;
         }
@@ -835,7 +851,8 @@ fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedErro
     if state == "RETURNED" && reason == "drive worker exit 0" {
         return record_result(root, clock, order, &attempt);
     }
-    if state == "STOPPED" || (reason.starts_with("drive worker exit ") && reason != "drive worker exit 0")
+    if state == "STOPPED"
+        || (reason.starts_with("drive worker exit ") && reason != "drive worker exit 0")
     {
         return Err(message(format!("maker shell exited nonzero for {order}")));
     }
@@ -845,19 +862,24 @@ fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedErro
     Err(message(format!("drive tick did not start {order}")))
 }
 
-fn record_result(root: &Path, clock: &dyn Clock, order: &str, attempt: &str) -> Result<(), GuidedError> {
-    let before = read_speech(root)?;
+fn record_result(
+    root: &Path,
+    clock: &dyn Clock,
+    order: &str,
+    attempt: &str,
+) -> Result<(), GuidedError> {
+    let before = read_messages(root)?;
     let evidence = evidence_name(root, order, attempt)?;
     crate::result::result(root, &[attempt, "PASS", &evidence, "CLOSE"], clock)?;
-    let after = read_speech(root)?;
-    let landed_now = fresh_rows(&before, &after).iter().any(|row| {
-        row.role == "machine" && row.sentence == "landed" && row.text == order
-    });
+    let after = read_messages(root)?;
+    let landed_now = fresh_rows(&before, &after)
+        .iter()
+        .any(|row| row.role == "machine" && row.kind == "landed" && row.text == order);
     if !landed_now {
         return Err(message(format!("result did not land {order}")));
     }
-    let said = read_speech(root)?;
-    if let Some(next) = speech_next(read_orders(root)?.as_slice(), &said) {
+    let said = read_messages(root)?;
+    if let Some(next) = message_next(read_orders(root)?.as_slice(), &said) {
         handoff(root, clock, &said, &next)?;
     }
     Ok(())
@@ -866,7 +888,8 @@ fn record_result(root: &Path, clock: &dyn Clock, order: &str, attempt: &str) -> 
 fn evidence_name(root: &Path, order: &str, attempt: &str) -> Result<String, GuidedError> {
     let dir = root.join("items").join(order).join("evidence");
     let mut hits = Vec::new();
-    let entries = fs::read_dir(&dir).map_err(|_| message(format!("result did not land {order}")))?;
+    let entries =
+        fs::read_dir(&dir).map_err(|_| message(format!("result did not land {order}")))?;
     for ent in entries {
         let ent = ent.map_err(|_| message(format!("result did not land {order}")))?;
         let name = ent.file_name().to_string_lossy().into_owned();
@@ -875,7 +898,9 @@ fn evidence_name(root: &Path, order: &str, attempt: &str) -> Result<String, Guid
         }
         let body = fs::read_to_string(ent.path()).unwrap_or_default();
         if body.starts_with(crate::cycle::MARK)
-            && body.lines().any(|line| line == format!("attempt-id: {attempt}"))
+            && body
+                .lines()
+                .any(|line| line == format!("attempt-id: {attempt}"))
         {
             hits.push(name);
         }
@@ -889,7 +914,7 @@ fn evidence_name(root: &Path, order: &str, attempt: &str) -> Result<String, Guid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::speech::speech;
+    use crate::messages::append;
     use crucible_contract::FixedClock;
     use std::fs;
 
@@ -923,23 +948,23 @@ assembly\tA,B\t-\tassembly.sh
         let before = fs::read(path.join("ORDERS.tsv")).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
         assert_eq!(orchestrate(&path, &["step"], &clock).unwrap(), "idle\n");
-        let mid = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let mid = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert_eq!(
             mid,
             "\
-epoch\trole\tsentence\ttext
+epoch\trole\tkind\ttext
 7\torchestrator\tdispatched\tA
 "
         );
-        speech(&path, &["machine", "landed", "A"], &clock).unwrap();
+        append(&path, &["machine", "landed", "A"], &clock).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
-        let landed_b = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let landed_b = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert!(
             landed_b.ends_with("7\torchestrator\tdispatched\tB\n"),
             "{landed_b}"
         );
         assert!(!landed_b.contains("dispatched\tassembly"));
-        speech(&path, &["machine", "landed", "B"], &clock).unwrap();
+        append(&path, &["machine", "landed", "B"], &clock).unwrap();
         let script = path.join("assembly.sh");
         fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
         #[cfg(unix)]
@@ -950,14 +975,14 @@ epoch\trole\tsentence\ttext
             fs::set_permissions(&script, perm).unwrap();
         }
         orchestrate(&path, &["step"], &clock).unwrap();
-        let assembled = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let assembled = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert!(
             assembled.ends_with("7\tmachine\tlanded\tassembly\n"),
             "{assembled}"
         );
-        let held = fs::read(path.join("SPEECH.tsv")).unwrap();
+        let held = fs::read(path.join("MESSAGES.tsv")).unwrap();
         assert_eq!(orchestrate(&path, &["step"], &clock).unwrap(), "idle\n");
-        assert_eq!(fs::read(path.join("SPEECH.tsv")).unwrap(), held);
+        assert_eq!(fs::read(path.join("MESSAGES.tsv")).unwrap(), held);
         assert_eq!(fs::read(path.join("ORDERS.tsv")).unwrap(), before);
         assert_eq!(fs::read(base.join("PRODUCT.txt")).unwrap(), b"leave\n");
         let names = fs::read_dir(&path)
@@ -965,7 +990,7 @@ epoch\trole\tsentence\ttext
             .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
             .collect::<Vec<_>>();
         assert!(names.contains(&"ORDERS.tsv".to_string()));
-        assert!(names.contains(&"SPEECH.tsv".to_string()));
+        assert!(names.contains(&"MESSAGES.tsv".to_string()));
         assert!(names.contains(&"assembly.sh".to_string()));
         assert_eq!(names.len(), 3, "{names:?}");
         let _ = fs::remove_dir_all(&base);
@@ -983,27 +1008,27 @@ B\t-\tb.paths\tb.sh
 ",
         );
         let clock = FixedClock::new(9);
-        speech(&path, &["machine", "need-a-fact", "A"], &clock).unwrap();
+        append(&path, &["machine", "need-a-fact", "A"], &clock).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
-        let asked = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let asked = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert_eq!(
             asked,
             "\
-epoch\trole\tsentence\ttext
+epoch\trole\tkind\ttext
 9\tmachine\tneed-a-fact\tA
 9\torchestrator\tpaused\tA
 9\torchestrator\tasking\tA
 9\torchestrator\tdispatched\tB
 "
         );
-        let asked = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let asked = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert!(
             asked.contains("9\torchestrator\tdispatched\tB\n"),
             "{asked}"
         );
-        speech(&path, &["manager", "answer", "A"], &clock).unwrap();
+        append(&path, &["manager", "answer", "A"], &clock).unwrap();
         orchestrate(&path, &["step"], &clock).unwrap();
-        let went = fs::read_to_string(path.join("SPEECH.tsv")).unwrap();
+        let went = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert!(went.contains("9\torchestrator\tdispatched\tA\n"), "{went}");
         let _ = fs::remove_dir_all(&path);
     }

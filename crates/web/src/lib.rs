@@ -88,9 +88,9 @@ label { display: block; margin: 0.25rem 0; }
 <button id="backlog-add" type="button">Add backlog</button>
 <pre id="backlog"></pre>
 <h2>CHAT.md</h2>
-<label>sentence <input id="c-sentence" type="text" value="source"></label>
+<label>kind <input id="c-kind" type="text" value="source"></label>
 <label>text <input id="c-line" type="text"></label>
-<button id="chat-send" type="button">Send manager sentence</button>
+<button id="chat-send" type="button">Send</button>
 <pre id="chat"></pre>
 <pre id="go"></pre>
 <script>
@@ -135,8 +135,8 @@ document.getElementById("backlog-add").addEventListener("click", async () => {
 document.getElementById("chat-send").addEventListener("click", async () => {
   const el = document.getElementById("chat");
   try {
-    el.textContent = await postAct("/act/speech", {
-      args: ["manager", document.getElementById("c-sentence").value, document.getElementById("c-line").value]
+    el.textContent = await postAct("/act/message", {
+      args: ["manager", document.getElementById("c-kind").value, document.getElementById("c-line").value]
     });
   } catch (e) {
     el.textContent = String(e);
@@ -292,7 +292,7 @@ fn route(
         }
     }
     if req.path == "/api/factory" {
-        return match spawn_read(exe, cwd, "speech", &["queue".to_string()]) {
+        return match spawn_read(exe, cwd, "message", &["queue".to_string()]) {
             Ok(out) => {
                 let text = String::from_utf8_lossy(&out.stdout);
                 write_resp(stream, 200, "text/plain; charset=utf-8", &text, head)
@@ -358,12 +358,12 @@ pub const WEB_WRITERS: &[&str] = &[
     "drive",
     "evidence",
     "lifecycle",
+    "message",
     "phase",
     "plan-audit",
     "probe-acp",
     "ready",
     "result",
-    "speech",
     "state",
     "status",
     "target",
@@ -1490,7 +1490,7 @@ mod tests {
         assert!(!body.contains("cannot start"));
         assert!(body.contains("CHAT.md"));
         assert!(body.contains("/act/backlog"));
-        assert!(body.contains("/act/speech"));
+        assert!(body.contains("/act/message"));
         assert!(body.contains("/api/factory"));
         assert!(body.contains("<h2>Walk</h2>"));
         assert!(body.contains("<h2>Factory</h2>"));
@@ -2166,12 +2166,12 @@ mod tests {
                 "drive",
                 "evidence",
                 "lifecycle",
+                "message",
                 "phase",
                 "plan-audit",
                 "probe-acp",
                 "ready",
                 "result",
-                "speech",
                 "state",
                 "status",
                 "target",

@@ -1,26 +1,26 @@
-//! Append one factory sentence to the program record.
+//! Append one factory message to the program record.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-use crucible_contract::{speech_line, Clock, SPEECH_HEADER};
+use crucible_contract::{message_line, Clock, MESSAGE_HEADER};
 
 use crate::message;
 use crate::GuidedError;
 
-pub fn speech(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
+pub fn append(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
     if args == ["queue"] {
         return queue(root);
     }
-    let (role, sentence, text) = match args {
-        [role, sentence, text] => (*role, *sentence, *text),
-        _ => return Err(message("usage: crucible speech ROLE SENTENCE TEXT")),
+    let (role, kind, text) = match args {
+        [role, kind, text] => (*role, *kind, *text),
+        _ => return Err(message("usage: crucible message ROLE KIND TEXT")),
     };
-    let line = speech_line(clock.now_unix(), role, sentence, text).map_err(message)?;
-    let path = root.join("SPEECH.tsv");
+    let line = message_line(clock.now_unix(), role, kind, text).map_err(message)?;
+    let path = root.join("MESSAGES.tsv");
     if !path.is_file() {
-        fs::write(&path, SPEECH_HEADER)?;
+        fs::write(&path, MESSAGE_HEADER)?;
     }
     let mut file = OpenOptions::new().append(true).open(&path)?;
     file.write_all(line.as_bytes())?;
@@ -35,7 +35,7 @@ pub fn queue(root: &Path) -> Result<String, GuidedError> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok("idle\n".to_string()),
         Err(err) => return Err(err.into()),
     };
-    let speech = fs::read_to_string(root.join("SPEECH.tsv")).unwrap_or_default();
+    let messages = fs::read_to_string(root.join("MESSAGES.tsv")).unwrap_or_default();
     let mut out = String::new();
     for line in crate::records(&text).into_iter().skip(1) {
         if line.is_empty() {
@@ -50,7 +50,7 @@ pub fn queue(root: &Path) -> Result<String, GuidedError> {
         }
         out.push_str(id);
         out.push(' ');
-        out.push_str(order_status(&speech, id));
+        out.push_str(order_status(&messages, id));
         out.push('\n');
     }
     if out.is_empty() {
@@ -60,10 +60,10 @@ pub fn queue(root: &Path) -> Result<String, GuidedError> {
     }
 }
 
-fn order_status(speech: &str, id: &str) -> &'static str {
+fn order_status(messages: &str, id: &str) -> &'static str {
     let mut status = "waiting";
     let mut need_at = None;
-    for (idx, line) in speech.lines().enumerate() {
+    for (idx, line) in messages.lines().enumerate() {
         let mut fields = line.split('\t');
         let Some(_epoch) = fields.next() else {
             continue;
@@ -71,7 +71,7 @@ fn order_status(speech: &str, id: &str) -> &'static str {
         let Some(_role) = fields.next() else {
             continue;
         };
-        let Some(sentence) = fields.next() else {
+        let Some(kind) = fields.next() else {
             continue;
         };
         let Some(text) = fields.next() else {
@@ -80,7 +80,7 @@ fn order_status(speech: &str, id: &str) -> &'static str {
         if text != id {
             continue;
         }
-        match sentence {
+        match kind {
             "escalated" => status = "escalated",
             "landed" => status = "landed",
             "dispatched" => status = "dispatched",
@@ -109,22 +109,22 @@ mod tests {
     #[test]
     fn appends_one_record_and_a_refusal_does_not_change_it() {
         let dir = std::env::temp_dir().join(format!(
-            "crucible-speech-{}-{}",
+            "crucible-message-{}-{}",
             std::process::id(),
             line!()
         ));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let clock = FixedClock::new(42);
-        speech(&dir, &["manager", "source", "fix the greeting"], &clock).unwrap();
-        let before = fs::read(&dir.join("SPEECH.tsv")).unwrap();
+        append(&dir, &["manager", "source", "fix the greeting"], &clock).unwrap();
+        let before = fs::read(&dir.join("MESSAGES.tsv")).unwrap();
         assert_eq!(
             std::str::from_utf8(&before).unwrap(),
-            "epoch\trole\tsentence\ttext\n42\tmanager\tsource\tfix the greeting\n"
+            "epoch\trole\tkind\ttext\n42\tmanager\tsource\tfix the greeting\n"
         );
-        let err = speech(&dir, &["manager", "landed", "no"], &clock).unwrap_err();
-        assert!(err.to_string().contains("speech sentence refused"), "{err}");
-        assert_eq!(fs::read(&dir.join("SPEECH.tsv")).unwrap(), before);
+        let err = append(&dir, &["manager", "landed", "no"], &clock).unwrap_err();
+        assert!(err.to_string().contains("message refused"), "{err}");
+        assert_eq!(fs::read(&dir.join("MESSAGES.tsv")).unwrap(), before);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -140,8 +140,8 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            dir.join("SPEECH.tsv"),
-            "epoch\trole\tsentence\ttext\n1\torchestrator\tdispatched\tA\n2\tmachine\tescalated\tB\n",
+            dir.join("MESSAGES.tsv"),
+            "epoch\trole\tkind\ttext\n1\torchestrator\tdispatched\tA\n2\tmachine\tescalated\tB\n",
         )
         .unwrap();
         assert_eq!(queue(&dir).unwrap(), "A dispatched\nB escalated\n");
