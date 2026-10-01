@@ -13,7 +13,7 @@ use crate::messages::append;
 use crate::panel::{is_regular, split_tabs};
 use crate::{message, records, GuidedError};
 
-const ORDER_HEADER: &str = "order_id\tdepends_on\tpaths_file\tverify_script";
+pub(crate) const ORDER_HEADER: &str = "order_id\tdepends_on\tpaths_file\tverify_script";
 
 pub fn orchestrate(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, GuidedError> {
     match args {
@@ -239,7 +239,7 @@ fn normalize_deps(deps: &str) -> String {
     }
 }
 
-fn order_id_ok(id: &str) -> bool {
+pub(crate) fn order_id_ok(id: &str) -> bool {
     let mut chars = id.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() => {}

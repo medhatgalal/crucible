@@ -24,7 +24,52 @@ pub fn append(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, G
     }
     let mut file = OpenOptions::new().append(true).open(&path)?;
     file.write_all(line.as_bytes())?;
+    if kind == "source"
+        && crate::orchestrate::order_id_ok(text)
+        && text != "assembly"
+        && !orders_id_present(root, text)?
+    {
+        write_proposed_orders_row(root, text)?;
+    }
     Ok(format!("{}\n", path.display()))
+}
+
+fn orders_id_present(root: &Path, id: &str) -> Result<bool, GuidedError> {
+    let path = root.join("ORDERS.tsv");
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    Ok(crate::records(&text)
+        .into_iter()
+        .skip(1)
+        .any(|record| record.split('\t').next() == Some(id)))
+}
+
+fn write_proposed_orders_row(root: &Path, id: &str) -> Result<(), GuidedError> {
+    let path = root.join("ORDERS.tsv");
+    let row = format!("{id}\t-\torders/{id}.paths\torders/{id}.verify.sh\n");
+    match fs::read(&path) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut body = String::from(crate::orchestrate::ORDER_HEADER);
+            body.push('\n');
+            body.push_str(&row);
+            fs::write(&path, body)?;
+            Ok(())
+        }
+        Err(err) => Err(err.into()),
+        Ok(existing) => {
+            let mut file = OpenOptions::new().append(true).open(&path)?;
+            let mut bytes = Vec::new();
+            if !existing.is_empty() && !existing.ends_with(b"\n") {
+                bytes.push(b'\n');
+            }
+            bytes.extend_from_slice(row.as_bytes());
+            file.write_all(&bytes)?;
+            Ok(())
+        }
+    }
 }
 
 /// One line per order: `id status`. The dashboard and the page both print this.
@@ -125,6 +170,99 @@ mod tests {
         let err = append(&dir, &["manager", "landed", "no"], &clock).unwrap_err();
         assert!(err.to_string().contains("message refused"), "{err}");
         assert_eq!(fs::read(&dir.join("MESSAGES.tsv")).unwrap(), before);
+        assert!(!dir.join("ORDERS.tsv").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_legal_id_creates_an_orders_row_and_queue_prints_waiting() {
+        let dir = std::env::temp_dir().join(format!(
+            "crucible-message-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let clock = FixedClock::new(42);
+        let wrote = append(&dir, &["manager", "source", "door"], &clock).unwrap();
+        assert_eq!(wrote, format!("{}\n", dir.join("MESSAGES.tsv").display()));
+        assert_eq!(
+            fs::read_to_string(dir.join("MESSAGES.tsv")).unwrap(),
+            "epoch\trole\tkind\ttext\n42\tmanager\tsource\tdoor\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("ORDERS.tsv")).unwrap(),
+            "\
+order_id\tdepends_on\tpaths_file\tverify_script
+door\t-\torders/door.paths\torders/door.verify.sh
+"
+        );
+        assert!(!dir.join("orders").exists());
+        assert_eq!(append(&dir, &["queue"], &clock).unwrap(), "door waiting\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn repeated_source_send_adds_a_message_and_no_second_orders_row() {
+        let dir = std::env::temp_dir().join(format!(
+            "crucible-message-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let clock = FixedClock::new(42);
+        append(&dir, &["manager", "source", "door"], &clock).unwrap();
+        append(&dir, &["manager", "source", "door"], &clock).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("MESSAGES.tsv")).unwrap(),
+            "epoch\trole\tkind\ttext\n42\tmanager\tsource\tdoor\n42\tmanager\tsource\tdoor\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("ORDERS.tsv")).unwrap(),
+            "\
+order_id\tdepends_on\tpaths_file\tverify_script
+door\t-\torders/door.paths\torders/door.verify.sh
+"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_assembly_writes_no_orders_row() {
+        let dir = std::env::temp_dir().join(format!(
+            "crucible-message-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let clock = FixedClock::new(42);
+        append(&dir, &["manager", "source", "assembly"], &clock).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("MESSAGES.tsv")).unwrap(),
+            "epoch\trole\tkind\ttext\n42\tmanager\tsource\tassembly\n"
+        );
+        assert!(!dir.join("ORDERS.tsv").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn machine_landed_writes_no_orders_row() {
+        let dir = std::env::temp_dir().join(format!(
+            "crucible-message-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let clock = FixedClock::new(42);
+        append(&dir, &["machine", "landed", "door"], &clock).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.join("MESSAGES.tsv")).unwrap(),
+            "epoch\trole\tkind\ttext\n42\tmachine\tlanded\tdoor\n"
+        );
+        assert!(!dir.join("ORDERS.tsv").exists());
         let _ = fs::remove_dir_all(&dir);
     }
 

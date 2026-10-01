@@ -20,6 +20,16 @@ Factory messages are one record, `MESSAGES.tsv`, in the program directory. The m
 or `landed`. The orchestrator may record `dispatched`, `paused`, `advanced`, or `asking`. Any
 other role or kind is refused and the file is left unchanged.
 
+A manager `source` whose text passes the order-id rule and is not `assembly` also appends one
+`ORDERS.tsv` row when that id is absent. A text that fails the rule, including the existing
+example "the greeting is wrong", stays message-only. The two path files are not created. The
+appended row is the factory queue row `read_orders` stores, and it is not a grill vehicle.
+`validate_vehicle` returns `invalid ORDERS.tsv: missing assembly row` for that one-row file, and
+`invalid ORDERS.tsv: assembly must depend on every other order` when the file already has an
+assembly row. Creating the path files does not remove either refusal. The grill example that uses
+`orders/door.paths` and `orders/door.verify.sh` beside an assembly row stays the vehicle graph
+and is not this row.
+
 ```sh
 $CP message manager source "the greeting is wrong"
 ```
