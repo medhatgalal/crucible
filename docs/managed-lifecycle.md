@@ -425,7 +425,7 @@ A program file named `ticket` lets that same command read a two-line ticket when
 
 An order is landed when `MESSAGES.tsv` contains a `landed` kind whose text is that order id. A `need-a-fact` with no later manager `answer` pauses that order only: the step appends one `paused` and one `asking` for it, then may still dispatch one other ready order. An `escalated` kind with no later answer appends one `asking` and does not dispatch that order. A later step does not repeat those messages. When every order except `assembly` has landed, the step runs the assembly `verify_script` once. Exit 0 appends `machine landed assembly`. Any other exit appends `machine escalated assembly`. A second step does not run it again. One step still dispatches at most one order. When nothing was written it exits 0 and prints `idle`.
 
-Walk on the page is the kernel camera. Factory is the order queue from `message queue`. They are not the same payload.
+Walk on the page is the kernel camera. Factory is the order queue from `message queue`. They are not the same payload. When any order other than `assembly` exists, `message queue` prints four sections: `queue` (`id` then status), `graph` (`id` then `depends_on`, including `assembly`), `paused`, and `escalated` (one id per line). Otherwise it prints `idle`. `message show` prints `MESSAGES.tsv`, or nothing when that file is absent. The page chat is that show. `POST /act/chat` is not a route.
 
 ```sh
 $CP orchestrate step

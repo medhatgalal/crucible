@@ -45,3 +45,7 @@ The page may spawn the read-only pair `check` and `triage`, and the waited write
 ## Addendum (2026-09-26)
 
 The page may `POST /act/result` only for `ATTEMPT OUTCOME EVIDENCE NEXT` and an optional fingerprint. That body is not a shell command. `run` and `run-claim` stay off. `POST /go` on `crucible serve` stays 405.
+
+## Addendum (2026-10-01)
+
+The page does not append `.wm/CHAT.md`. `POST /act/chat` is not a route. `GET /api/chat` spawns `message show` and returns that stdout, which is `MESSAGES.tsv` or empty. `GET /api/factory` spawns `message queue`. The web process still appends only `BACKLOG.tsv`. `POST /go` on `crucible serve` stays 405. The page is still not a second kernel.

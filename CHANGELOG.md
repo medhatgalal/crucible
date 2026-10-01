@@ -6,7 +6,8 @@ All notable changes to this project are documented here. This project follows
 ## Unreleased
 
 ### Factory
-- `crucible message ROLE KIND TEXT` appends one factory message to `MESSAGES.tsv`. It replaces `crucible speech`. The page uses `POST /act/message`. `message queue` is what the dashboard pane runs. No second command.
+- `crucible message ROLE KIND TEXT` appends one factory message to `MESSAGES.tsv`. It replaces `crucible speech`. The page uses `POST /act/message`. `message queue` is what the dashboard pane runs. `message show` prints that file. No second command.
+- `message queue` prints `queue`, `graph`, `paused`, and `escalated` when an order other than `assembly` exists, and `idle` otherwise. The page factory is that same text. The page chat is `message show`. `POST /act/chat` does not write `.wm/CHAT.md`.
 - `crucible orchestrate run` delivers one dispatched order through the existing
   `drive` tick and `result`. It waits in that process for a manager `answer`
   after `asking`, including a failed assembly check. A maker-shell failure is
@@ -23,7 +24,7 @@ All notable changes to this project are documented here. This project follows
 ### Web
 - `crucible web` is a loopback page (default `127.0.0.1:1735`) that
   proxies GET `/walk`, `/stats`, and `/health` from `serve`. It may append
-  `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` only spawns `go`.
+  `BACKLOG.tsv`. `GET /api/chat` spawns `message show`. `POST /act/go` only spawns `go`.
   `POST /go` is 405. It does not start a walk. Operator override of D17:
   the UI is a camera, not a kernel. See `architecture/adr/0002-web-get-client.md`.
 

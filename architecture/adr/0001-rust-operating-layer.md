@@ -23,7 +23,7 @@ Honest snapshot of this repo at **1.28.0**. Rust working-mode has already cut ov
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
 | Room | Landed (`crates/room`): `crucible room` joins one existing Herdr workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, ensured only when absent. No pane-run. Serve on `127.0.0.1:1734` is unchanged: matching VERSION is reused; only connection refused spawns this binary's `serve`. Help lists `room` and `doctor`. |
 | Doctor | `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` when it is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15) and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Never `$HOME` in CI. |
-| Web | Landed (`crates/web`): `crucible web` proxies GET `/walk` `/stats` `/health`. The web process may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. Not a second kernel (ADR 0002). Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. `state`, `target`, `brief`, and `lifecycle` may run as waited children under the ADR 0002 addendum. |
+| Web | Landed (`crates/web`): `crucible web` proxies GET `/walk` `/stats` `/health`. The web process may append `BACKLOG.tsv` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. Not a second kernel (ADR 0002). Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. `state`, `target`, `brief`, and `lifecycle` may run as waited children under the ADR 0002 addendum. |
 | Skill copies | Canonical `skills/<name>`. Real copies, not symlinks: `.grok/skills`, `.claude/skills`, `.agents/skills`, `.kiro/skills`. Codex uses `.agents/skills` (no `.codex/skills` tree). |
 | WAL | Kernel writes `.wm/EVENTS` (JSONL, no `.jsonl` suffix). |
 | Stats | `crucible.stats/v1` reads `.wm/EVENTS` when that WAL file exists (`source: "events"`), else `.wm/METRICS.tsv` (`source: "metrics"`). |
@@ -63,7 +63,7 @@ crates/
   cli/        # argv → kernel/contract and `guided` (the `crucible` binary)
   http/       # GET serve; same types as cli; never writes
   room/       # probe GET /health; external herdr; join the four labels; do not pane-run
-  web/        # loopback page; append BACKLOG.tsv and .wm/CHAT.md; POST /act/go spawns go; read-only POST /act spawns that verb and waits.
+  web/        # loopback page; append BACKLOG.tsv; GET /api/chat spawns message show; POST /act/go spawns go; read-only POST /act spawns that verb and waits.
   guided/     # adopt, cycle, drive; library. The `crucible` binary dispatches it. Not a second binary.
 skills/                 # canonical skill trees
 .grok/skills/           # real copy of skills/ (not a symlink)
@@ -106,14 +106,12 @@ flowchart TB
     ARCH[".wm/archive/TRACE-*.tsv"]
     METRICS[".wm/METRICS.tsv"]
     BACKLOG["BACKLOG.tsv"]
-    CHAT[".wm/CHAT.md"]
   end
   WRAP -->|absolute sibling| BIN
   ROOM -->|probe GET /health| SERVE
   ROOM -->|spawn go process, not POST| BIN
   WEB -->|GET JSON| SERVE
   WEB -->|append only| BACKLOG
-  WEB -->|append only| CHAT
   WEB -->|POST /act/go spawns process group| BIN
   WEB -->|POST /act read-only verb, no process group| BIN
   GUIDED -.->|does not go| BIN
@@ -156,10 +154,10 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D14 | Identity: static `crucible` (working-mode kernel and guided verbs) + `wm.sh` exec shim + files + cargo for contributors. `crucible-guided` only execs the sibling binary. The 1.17.0 changelog section records the break from “POSIX sh is the **working-mode** engine.” The 1.18.0 changelog section records guided verbs on that same binary. |
 | D15 | **Grok router is required** as a real file `<repo>/.grok/rules/loop-router.md` (bytes identical to `testdata/loop-router.md`; not a symlink; not under `.crucible/`). Keep-current: `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` and does not write; `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Engine CI hashes the fixture against this ADR (never `$HOME`). Must **not** force `/execute-plan` inside `/crucible`. |
 | D16 | **No plans in `docs/`.** Operator how-to stays `WORKING-MODE.md` / `docs/working-mode.md`. Campaign design lands as **one ADR**. Campaign WIP stays gitignored under `architecture/wip/`. Rotting `docs/superpowers/plans/` deleted. |
-| D17 | Web is a **client of GET JSON**, not a second kernel. Timing is ADR 0002 and the web drive: the web process may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. No walker logic in the UI. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. Still no walker logic in the UI. |
+| D17 | Web is a **client of GET JSON**, not a second kernel. Timing is ADR 0002 and the web drive: the web process may append `BACKLOG.tsv` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. No walker logic in the UI. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. Still no walker logic in the UI. |
 | D18 | **Operator override:** one Rust product binary named **`crucible`**. Keep **concepts** (`adopt`, `go`, `status`, `debrief`, `stats`, `serve`, `room`, `doctor`). No `wm` binary. `wm.sh` stays the exec shim (absolute sibling). Engine-tree `./crucible` is the finder and is not overwritten by `cargo build`. The tarball installs the Rust release binary as `crucible`. `crucible-guided` stays the thin sibling exec, not a second implementation. |
 | D19 | Rust owns working-mode, `serve`, and guided `adopt` / `cycle` / `drive` (`crates/guided`, dispatched by the `crucible` binary). The deferral until a later tag already shipped: 1.18.0. Same schema. `room` has landed. This tag has no separate guided program. |
-| D20 | **Operator override:** `crucible serve` never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. `status --json` and GET `/walk` stay read-only. Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. Read-only act spawns do not write files. Bare `status`, `close`, `drive`, and `adopt` may be spawned from the page (ADR 0002 page-writer addendum). The web process still does not write FLOOR, BACKLOG, or CHAT except through the backlog and chat handlers. |
+| D20 | **Operator override:** `crucible serve` never writes. `crucible web` may append `BACKLOG.tsv` only. `status --json` and GET `/walk` stay read-only. Bare `status` writes `.wm/FLOOR.md` and does not append TRACE. Read-only act spawns do not write files. Bare `status`, `close`, `drive`, and `adopt` may be spawned from the page (ADR 0002 page-writer addendum). The web process still does not write FLOOR or BACKLOG except through the backlog handler. It does not write `.wm/CHAT.md`. |
 | D21 | Herdr is an **external process** (`herdr` on PATH). Default musl `crucible` has **zero** Herdr crates. |
 | D22 | WAL path is **`.wm/EVENTS`** (JSONL, no `.jsonl` suffix). |
 
@@ -214,7 +212,7 @@ Published language: **`crucible.walk/v1`**. Canonical JSON: UTF-8, sorted object
 | `crucible status --json` | **No** — `WalkSnapshot::from_wm_dir` only. |
 | GET `/walk` | **No** — same parser. |
 | `crucible serve` | **No** — never writes. |
-| `crucible web` | **Append only** `BACKLOG.tsv` and `.wm/CHAT.md`. The web process still does not write FLOOR, TRACE, or EVENTS. A spawned bare `status` child writes FLOOR and does not append TRACE. Spawned `close`, `drive`, and `adopt` write the guided tree. Read-only acts still do not write. `POST /act/go` spawns a process group; it is not a walk. `POST /go` stays 405. |
+| `crucible web` | **Append only** `BACKLOG.tsv`. `GET /api/chat` spawns `message show`. The web process still does not write FLOOR, TRACE, EVENTS, or `.wm/CHAT.md`. A spawned bare `status` child writes FLOOR and does not append TRACE. Spawned `close`, `drive`, and `adopt` write the guided tree. Read-only acts still do not write. `POST /act/go` spawns a process group; it is not a walk. `POST /go` stays 405. |
 | `crucible go` / station verbs | **Yes** — kernel writers. |
 
 Equality CHECK: `crucible status --json` ≡ GET `/walk` ≡ `WalkSnapshot::from_wm_dir`. **Do not** compare human `status` (write) to GET.
@@ -244,7 +242,7 @@ Bind **loopback only**. Default `127.0.0.1:1734`. `--bind` may change the **port
 | GET | `/health` | `{ "ok": true, "version": "<semver>", "bind": "127.0.0.1:1734" }` — process liveness, not walk success |
 | **forbidden** | **`POST /go`** | **Must 404/405.** Fake-fail of HTTP. |
 
-Loopback GET is **equivalent to reading `.wm`**, not an auth boundary (`SECURITY.md`). `go` is a **foreground OS process**. Room does not spawn that process in a tab. `crucible serve` never starts a walk and never writes. `crucible web` may append `BACKLOG.tsv` and `.wm/CHAT.md` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group and is not a walk. `POST /go` stays 405. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002.
+Loopback GET is **equivalent to reading `.wm`**, not an auth boundary (`SECURITY.md`). `go` is a **foreground OS process**. Room does not spawn that process in a tab. `crucible serve` never starts a walk and never writes. `crucible web` may append `BACKLOG.tsv` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group and is not a walk. `POST /go` stays 405. Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002.
 
 Second server: probe GET `/health` first. If `ok: true` and `version` matches, do not start another listener. If the port is busy with a non-health or wrong version, **fail** (no `SO_REUSEPORT`).
 
@@ -260,7 +258,7 @@ Second server: probe GET `/health` first. If `ok: true` and `version` matches, d
 | `.wm/CLOSED` | kernel | Work-level close. |
 | `.wm/t0` | kernel | Unix seconds; reset on each `go`. Bare `status` may create `t0` when FLOOR exists and `t0` does not. |
 | `BACKLOG.tsv` | `crucible web` (append only) | Not written by `serve`. |
-| `.wm/CHAT.md` | `crucible web` (append only) | Not written by `serve`. |
+| `.wm/CHAT.md` | none | Not a factory record. Not written by `web` or `serve`. |
 
 ## Room (landed)
 

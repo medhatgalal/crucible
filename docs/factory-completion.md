@@ -14,11 +14,13 @@ The desk is on `main` at `9f61800`. A legal source message writes one orders row
 
 ## Next
 
-Do not install this into another repository. The porcelain is not running.
+Do not install this into another repository.
 
-O6 is the remaining order. The room joins an existing Herdr workspace and can add the labels `terminal`, `chat`, `orchestrator`, and `dashboard`. `start_floor` used to look for the literal tab ids `tab-orchestrator` and `tab-dashboard`. A live room's tab id is not that string, so those panes were not started. Chat is not sent a manager sentence. The web page and the CLI are not yet one surface. Command cruft stays until a newer command covers it and the verb-table test is updated in that same change.
+The page and the CLI read one message file. `message queue` is the dashboard text: queue, graph, pauses, and escalations. `GET /api/factory` prints that same text. `message show` prints `MESSAGES.tsv`. `GET /api/chat` prints that same text. Send still posts a manager sentence to `POST /act/message`. `POST /act/chat` is not a route. Walk stays the kernel camera.
 
-After those surfaces agree, the proofs are three fixtures, not a product repository: a vague idea, a full system, and a bug. Join the existing workspace labeled `crucible`. Do not create a workspace. Do not edit `~/.config/herdr/config.toml`.
+The guided room still pane-runs `orchestrate run` and `message queue` by tab label. It does not pane-run the chat tab, `go`, `reap`, or `camera`. A person can type `crucible message` in that shell. The page Send is the same sentence.
+
+After this is on `main`, the proofs are three fixtures, not a product repository: a vague idea, a full system, and a bug. Join the existing workspace labeled `crucible`. Do not create a workspace. Do not edit `~/.config/herdr/config.toml`. Command cruft stays until a newer command covers it and the verb-table test is updated in that same change.
 
 ## Orders
 
@@ -52,4 +54,4 @@ A second dispatch in one step. A second message verb. Jira or GitLab. A ticket h
 
 Each order is its own pull request. The proof is a test that runs the shipped `crucible` binary. `scripts/selftest.sh` must still see one verb table. Room tests must still show no `config.toml` write and no workspace create. Do not edit `~/.config/herdr/config.toml`. Do not create a Herdr workspace. Do not pop `stash@{0}`. Do not delete `reports/`.
 
-F1–F4 are done and tagged `v1.28.0`. The desk commit is `9f61800`. The next order is a repository path from the operator.
+F1–F4 are done and tagged `v1.28.0`. The desk commit is `9f61800`. The room label fix is `fc15034`. The next proofs are three fixtures, not a repository path.
