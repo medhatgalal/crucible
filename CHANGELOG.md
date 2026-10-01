@@ -8,6 +8,7 @@ All notable changes to this project are documented here. This project follows
 ### Factory
 - `crucible message ROLE KIND TEXT` appends one factory message to `MESSAGES.tsv`. It replaces `crucible speech`. The page uses `POST /act/message`. `message queue` is what the dashboard pane runs. `message show` prints that file. No second command.
 - `message queue` prints `queue`, `graph`, `paused`, and `escalated` when an order other than `assembly` exists, and `idle` otherwise. The page factory is that same text. The page chat is `message show`. `POST /act/chat` does not write `.wm/CHAT.md`.
+- A guided `crucible room` pane-runs `orchestrate run` and `message queue` with `CRUCIBLE_ROOT` and the working directory set to that checkout, then leaves a shell in the pane. The chat pane stays a shell. No new command. No VERSION bump.
 - `crucible orchestrate run` delivers one dispatched order through the existing
   `drive` tick and `result`. It waits in that process for a manager `answer`
   after `asking`, including a failed assembly check. A maker-shell failure is

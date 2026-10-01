@@ -249,7 +249,7 @@ fn drive(
     let _ = writeln!(out, "workspace {}", report.workspace_id);
     let _ = writeln!(out, "tabs {}", report.labels.join(" "));
     if guided_checkout(cwd) {
-        if let Err(e) = start_floor(&herdr, exe, &report.workspace_id) {
+        if let Err(e) = start_floor(&herdr, exe, &report.workspace_id, cwd) {
             let _ = writeln!(err, "room: {e}");
             return 1;
         }
@@ -276,23 +276,38 @@ fn guided_checkout(cwd: &Path) -> bool {
     false
 }
 
-fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), String> {
+fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str, cwd: &Path) -> Result<(), String> {
     let tabs = herdr_ok(herdr, &["tab", "list", "--workspace", workspace_id])?;
     let listed = herdr_ok(herdr, &["pane", "list", "--workspace", workspace_id])?;
-    let exe_s = exe.to_string_lossy();
     if let Some(pane) = pane_for_role(&tabs, &listed, "orchestrator") {
-        herdr_ok(
-            herdr,
-            &["pane", "run", &pane, exe_s.as_ref(), "orchestrate", "run"],
-        )?;
+        pane_verb(herdr, &pane, exe, cwd, "orchestrate", "run")?;
     }
     if let Some(pane) = pane_for_role(&tabs, &listed, "dashboard") {
-        herdr_ok(
-            herdr,
-            &["pane", "run", &pane, exe_s.as_ref(), "message", "queue"],
-        )?;
+        pane_verb(herdr, &pane, exe, cwd, "message", "queue")?;
     }
     Ok(())
+}
+
+/// `pane run` types one line into the existing shell. `exec` replaces that
+/// shell, and Herdr then removes the tab. `cd` and `CRUCIBLE_ROOT` select
+/// this checkout, not the directory that contains the binary.
+fn pane_verb(
+    herdr: &Path,
+    pane: &str,
+    exe: &Path,
+    cwd: &Path,
+    verb: &str,
+    arg: &str,
+) -> Result<(), String> {
+    let root = shell_quote(&cwd.display().to_string());
+    let bin = shell_quote(&exe.display().to_string());
+    let line = format!("cd {root} && CRUCIBLE_ROOT={root} {bin} {verb} {arg}");
+    herdr_ok(herdr, &["pane", "run", pane, &line])?;
+    Ok(())
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
 }
 
 /// A Herdr tab id is not the role name. Match the tab label, then the pane
@@ -1065,6 +1080,15 @@ exit 0
         assert!(log.contains("orchestrate run"), "{log}");
         assert!(log.contains("pane run pane-dashboard"), "{log}");
         assert!(log.contains("message queue"), "{log}");
+        assert!(log.contains("CRUCIBLE_ROOT"), "{log}");
+        assert!(
+            !log.contains("exec "),
+            "pane run must not replace the shell:\n{log}"
+        );
+        assert!(
+            log.contains(&tmp.root.display().to_string()),
+            "pane run must name this checkout:\n{log}"
+        );
         assert!(log.contains("tab list"), "{log}");
         assert!(!log.contains(" go"), "{log}");
         assert!(!log.contains("workspace create"), "{log}");

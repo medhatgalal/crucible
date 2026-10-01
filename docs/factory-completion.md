@@ -18,7 +18,7 @@ Do not install this into another repository.
 
 The page and the CLI read one message file. `message queue` is the dashboard text: queue, graph, pauses, and escalations. `GET /api/factory` prints that same text. `message show` prints `MESSAGES.tsv`. `GET /api/chat` prints that same text. Send still posts a manager sentence to `POST /act/message`. `POST /act/chat` is not a route. Walk stays the kernel camera.
 
-The guided room still pane-runs `orchestrate run` and `message queue` by tab label. It does not pane-run the chat tab, `go`, `reap`, or `camera`. A person can type `crucible message` in that shell. The page Send is the same sentence.
+The guided room still pane-runs `orchestrate run` and `message queue` by tab label. Each command sets `CRUCIBLE_ROOT` and its working directory to that checkout. It does not pane-run the chat tab, `go`, `reap`, or `camera`. A person can type `crucible message` in that shell. The page Send is the same sentence.
 
 After this is on `main`, the proofs are three fixtures, not a product repository: a vague idea, a full system, and a bug. Join the existing workspace labeled `crucible`. Do not create a workspace. Do not edit `~/.config/herdr/config.toml`. Command cruft stays until a newer command covers it and the verb-table test is updated in that same change.
 
