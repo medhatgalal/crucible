@@ -10,7 +10,15 @@ Messages, grill, ticket source, stats from `MESSAGES.tsv`, one orchestrator step
 
 ## Still open
 
-F1–F4 are tagged at `v1.28.0` (`c453cac`). This change makes `crucible orchestrate run` start the maker shells and wait for an answer. No new command. No product install.
+The desk is on `main` at `9f61800`. A legal source message writes one orders row. The page does not emit the 29 verb buttons. Send reloads only when the exit header is `0`. The numbered line appears only for a queue row that is already `paused` or `escalated`. `VERSION` stays `1.28.0`. This desk has no tag.
+
+## Next
+
+Do not install this into another repository. The porcelain is not running.
+
+O6 is the remaining order. The room joins an existing Herdr workspace and can add the labels `terminal`, `chat`, `orchestrator`, and `dashboard`. `start_floor` used to look for the literal tab ids `tab-orchestrator` and `tab-dashboard`. A live room's tab id is not that string, so those panes were not started. Chat is not sent a manager sentence. The web page and the CLI are not yet one surface. Command cruft stays until a newer command covers it and the verb-table test is updated in that same change.
+
+After those surfaces agree, the proofs are three fixtures, not a product repository: a vague idea, a full system, and a bug. Join the existing workspace labeled `crucible`. Do not create a workspace. Do not edit `~/.config/herdr/config.toml`.
 
 ## Orders
 
@@ -44,4 +52,4 @@ A second dispatch in one step. A second message verb. Jira or GitLab. A ticket h
 
 Each order is its own pull request. The proof is a test that runs the shipped `crucible` binary. `scripts/selftest.sh` must still see one verb table. Room tests must still show no `config.toml` write and no workspace create. Do not edit `~/.config/herdr/config.toml`. Do not create a Herdr workspace. Do not pop `stash@{0}`. Do not delete `reports/`.
 
-After F4, stop. The next order is a repository path from the operator.
+F1–F4 are done and tagged `v1.28.0`. The desk commit is `9f61800`. The next order is a repository path from the operator.

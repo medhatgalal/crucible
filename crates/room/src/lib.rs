@@ -277,15 +277,16 @@ fn guided_checkout(cwd: &Path) -> bool {
 }
 
 fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), String> {
+    let tabs = herdr_ok(herdr, &["tab", "list", "--workspace", workspace_id])?;
     let listed = herdr_ok(herdr, &["pane", "list", "--workspace", workspace_id])?;
     let exe_s = exe.to_string_lossy();
-    if let Some(pane) = pane_for_tab(&listed, "tab-orchestrator") {
+    if let Some(pane) = pane_for_role(&tabs, &listed, "orchestrator") {
         herdr_ok(
             herdr,
             &["pane", "run", &pane, exe_s.as_ref(), "orchestrate", "run"],
         )?;
     }
-    if let Some(pane) = pane_for_tab(&listed, "tab-dashboard") {
+    if let Some(pane) = pane_for_role(&tabs, &listed, "dashboard") {
         herdr_ok(
             herdr,
             &["pane", "run", &pane, exe_s.as_ref(), "message", "queue"],
@@ -294,18 +295,23 @@ fn start_floor(herdr: &Path, exe: &Path, workspace_id: &str) -> Result<(), Strin
     Ok(())
 }
 
-fn pane_for_tab(text: &str, tab: &str) -> Option<String> {
-    let value = parse_json(text).ok()?;
-    let panes = value.get("result")?.get("panes")?.as_array()?;
-    for pane in panes {
-        if pane.get("tab_id").and_then(|item| item.as_str()) == Some(tab) {
-            return pane
-                .get("pane_id")
-                .and_then(|item| item.as_str())
-                .map(str::to_string);
-        }
-    }
-    None
+/// A Herdr tab id is not the role name. Match the tab label, then the pane
+/// whose `tab_id` is that tab.
+fn pane_for_role(tabs: &str, panes: &str, role: &str) -> Option<String> {
+    let tabs = parse_json(tabs).ok()?;
+    let mut tab_pairs = Vec::new();
+    collect_pairs(&tabs, "tab_id", "label", &mut tab_pairs);
+    let tab_id = tab_pairs
+        .into_iter()
+        .find(|(_, label)| label == role)
+        .map(|(id, _)| id)?;
+    let panes = parse_json(panes).ok()?;
+    let mut pane_pairs = Vec::new();
+    collect_pairs(&panes, "pane_id", "tab_id", &mut pane_pairs);
+    pane_pairs
+        .into_iter()
+        .find(|(_, id)| id == &tab_id)
+        .map(|(pane, _)| pane)
 }
 
 fn spawn_serve(exe: &Path, cwd: &Path, bind: &str) -> Result<(String, u32, ChildGuard), String> {
@@ -1059,9 +1065,39 @@ exit 0
         assert!(log.contains("orchestrate run"), "{log}");
         assert!(log.contains("pane run pane-dashboard"), "{log}");
         assert!(log.contains("message queue"), "{log}");
+        assert!(log.contains("tab list"), "{log}");
         assert!(!log.contains(" go"), "{log}");
         assert!(!log.contains("workspace create"), "{log}");
         assert!(!log.contains("config.toml"), "{log}");
+    }
+
+    #[test]
+    fn live_tab_ids_still_start_the_labeled_panes() {
+        let tabs = r#"{"result":{"tabs":[
+            {"label":"crucible","tab_id":"w4:t1"},
+            {"label":"terminal","tab_id":"w4:t5"},
+            {"label":"chat","tab_id":"w4:t6"},
+            {"label":"orchestrator","tab_id":"w4:t7"},
+            {"label":"dashboard","tab_id":"w4:t8"}
+        ]}}"#;
+        let panes = r#"{"result":{"panes":[
+            {"pane_id":"w4:p6","tab_id":"w4:t6"},
+            {"pane_id":"w4:p7","tab_id":"w4:t7"},
+            {"pane_id":"w4:p8","tab_id":"w4:t8"}
+        ]}}"#;
+        assert_eq!(
+            super::pane_for_role(tabs, panes, "orchestrator").as_deref(),
+            Some("w4:p7")
+        );
+        assert_eq!(
+            super::pane_for_role(tabs, panes, "dashboard").as_deref(),
+            Some("w4:p8")
+        );
+        assert_eq!(
+            super::pane_for_role(tabs, panes, "chat").as_deref(),
+            Some("w4:p6")
+        );
+        assert_eq!(super::pane_for_role(tabs, panes, "terminal"), None);
     }
 
     #[test]
