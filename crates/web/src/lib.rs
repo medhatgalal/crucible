@@ -1,5 +1,6 @@
 //! Loopback web camera. It serves a page and proxies GET `/walk`, `/stats`, and
-//! `/health`. It appends `BACKLOG.tsv` and `.wm/CHAT.md`. `POST /act/go` spawns
+//! `/health`. It appends `BACKLOG.tsv`. `GET /api/chat` spawns `message show`.
+//! `GET /api/factory` spawns `message queue`. `POST /act/go` spawns
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
 //! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
 //! `POST /act/close`, bare `POST /act/status`, `POST /act/state`,
@@ -26,7 +27,6 @@ pub const DEFAULT_API_BIND: &str = "127.0.0.1:1734";
 // Raw POST body cap. The chat cap is the decoded line, not this framing limit.
 const BODY_CAP: usize = 8192;
 const HEADER_CAP: usize = 8192;
-const CHAT_LINE_CAP: usize = 4096;
 const FIELD_MAX: usize = 256;
 const NOT_A_WALK: &str = "POST is not a walk\n";
 const OK_JSON: &str = "{\"ok\":true}\n";
@@ -46,7 +46,7 @@ label { display: block; margin: 0.25rem 0; }
 </head>
 <body>
 <h1>Crucible</h1>
-<p>Backlog: <a href="/api/backlog">/api/backlog</a>. CHAT.md: <a href="/api/chat">/api/chat</a> (plain text).</p>
+<p>Backlog: <a href="/api/backlog">/api/backlog</a>. Messages: <a href="/api/chat">/api/chat</a> (plain text).</p>
 <button id="reload" type="button">Reload</button>
 <button id="start" type="button">Start</button>
 <h2>Read</h2>
@@ -66,7 +66,7 @@ label { display: block; margin: 0.25rem 0; }
 <label>status <input id="b-status" type="text"></label>
 <button id="backlog-add" type="button">Add backlog</button>
 <pre id="backlog"></pre>
-<h2>CHAT.md</h2>
+<h2>Messages</h2>
 <label>kind <input id="c-kind" type="text" value="source"></label>
 <label>text <input id="c-line" type="text"></label>
 <button id="chat-send" type="button">Send</button>
@@ -312,10 +312,16 @@ fn route(
         };
     }
     if req.path == "/api/chat" {
-        match chat_text(cwd) {
-            Ok(body) => return write_resp(stream, 200, "text/plain; charset=utf-8", &body, head),
-            Err(e) => return write_resp(stream, 500, "text/plain", &format!("{e}\n"), head),
-        }
+        return match spawn_read(exe, cwd, "message", &["show".to_string()]) {
+            Ok(out) => {
+                let text = String::from_utf8_lossy(&out.stdout);
+                write_resp(stream, 200, "text/plain; charset=utf-8", &text, head)
+            }
+            Err(ReadSpawn::Spawn) => write_resp(stream, 500, "text/plain", "spawn failed\n", head),
+            Err(ReadSpawn::Timeout) => {
+                write_resp(stream, 504, "text/plain", "act timed out\n", head)
+            }
+        };
     }
     let upstream = match req.path.as_str() {
         "/api/health" => "/health".to_string(),
@@ -472,7 +478,7 @@ pub fn web_page_acts() -> Vec<WebAct> {
 }
 
 fn is_act(path: &str) -> bool {
-    matches!(path, "/act/backlog" | "/act/chat" | "/act/go")
+    matches!(path, "/act/backlog" | "/act/go")
 }
 
 fn act_segment(path: &str) -> Option<&str> {
@@ -500,7 +506,6 @@ fn act(stream: &mut TcpStream, cwd: &Path, exe: &Path, req: &Incoming) -> Result
     }
     match req.path.as_str() {
         "/act/backlog" => post_backlog(stream, cwd, &req.body),
-        "/act/chat" => post_chat(stream, cwd, &req.body),
         "/act/go" => post_go(stream, cwd, exe, &req.body),
         _ => write_resp(stream, 405, "text/plain", NOT_A_WALK, false),
     }
@@ -542,21 +547,6 @@ fn post_backlog(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), S
     }
 }
 
-fn post_chat(stream: &mut TcpStream, cwd: &Path, body: &[u8]) -> Result<(), String> {
-    let v = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(v) => v,
-        Err(_) => return write_resp(stream, 400, "text/plain", "not json\n", false),
-    };
-    let line = match chat_line(&v) {
-        Ok(line) => line,
-        Err(msg) => return write_resp(stream, 400, "text/plain", msg, false),
-    };
-    if let Err(e) = append_chat(cwd, &line) {
-        return write_resp(stream, 500, "text/plain", &format!("{e}\n"), false);
-    }
-    write_resp(stream, 200, "application/json", OK_JSON, false)
-}
-
 fn post_go(stream: &mut TcpStream, cwd: &Path, exe: &Path, body: &[u8]) -> Result<(), String> {
     // Reject a bad body before intake so it cannot spawn or look like "not ready".
     if let Err(msg) = go_body(body) {
@@ -582,6 +572,9 @@ fn post_read(
 ) -> Result<(), String> {
     if let Err(msg) = act_headers(&req.headers) {
         return write_resp(stream, 400, "text/plain", msg, false);
+    }
+    if !WEB_READ_ONLY.contains(&verb) && !WEB_WRITERS.contains(&verb) {
+        return write_resp(stream, 404, "text/plain", "not found\n", false);
     }
     let parsed: serde_json::Value = match serde_json::from_slice(&req.body) {
         Ok(v) => v,
@@ -692,19 +685,6 @@ fn tsv_field(v: &serde_json::Value, key: &str) -> Result<String, &'static str> {
     Ok(s.to_string())
 }
 
-fn chat_line(v: &serde_json::Value) -> Result<String, &'static str> {
-    if !v.is_object() {
-        return Err("bad chat\n");
-    }
-    let Some(s) = v.get("line").and_then(|x| x.as_str()) else {
-        return Err("bad chat\n");
-    };
-    if s.len() > CHAT_LINE_CAP || s.bytes().any(|b| matches!(b, b'\n' | b'\r')) {
-        return Err("bad chat\n");
-    }
-    Ok(s.to_string())
-}
-
 enum BacklogWrite {
     Bad,
     Io(String),
@@ -745,26 +725,6 @@ fn append_backlog(cwd: &Path, row: &Row) -> Result<(), BacklogWrite> {
         row.id, row.size, row.risk, row.idea_path, row.status
     )
     .map_err(|e| BacklogWrite::Io(e.to_string()))
-}
-
-fn append_chat(cwd: &Path, line: &str) -> Result<(), String> {
-    let dir = cwd.join(".wm");
-    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("CHAT.md");
-    let prev = match fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
-    };
-    let mut f = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .map_err(|e| e.to_string())?;
-    if !prev.is_empty() && !prev.ends_with(b"\n") {
-        writeln!(f).map_err(|e| e.to_string())?;
-    }
-    writeln!(f, "{line}").map_err(|e| e.to_string())
 }
 
 fn backlog_json(cwd: &Path) -> Result<String, String> {
@@ -820,14 +780,6 @@ fn read_backlog(cwd: &Path) -> Result<Vec<Row>, String> {
         });
     }
     Ok(rows)
-}
-
-fn chat_text(cwd: &Path) -> Result<String, String> {
-    match fs::read_to_string(cwd.join(".wm").join("CHAT.md")) {
-        Ok(s) => Ok(s),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(e.to_string()),
-    }
 }
 
 fn pid_json(pid: u32) -> String {
@@ -1496,7 +1448,8 @@ mod tests {
         );
         assert_eq!(code, 200);
         assert!(!body.contains("cannot start"));
-        assert!(body.contains("CHAT.md"));
+        assert!(!body.contains("CHAT.md"));
+        assert!(body.contains("<h2>Messages</h2>"));
         assert!(body.contains("/act/backlog"));
         assert!(body.contains("/act/message"));
         assert!(body.contains("/api/factory"));
@@ -1540,7 +1493,9 @@ mod tests {
     }
 
     fn between<'a>(page: &'a str, start: &str, end: &str) -> &'a str {
-        let at = page.find(start).unwrap_or_else(|| panic!("missing {start}"));
+        let at = page
+            .find(start)
+            .unwrap_or_else(|| panic!("missing {start}"));
         let rest = &page[at..];
         let stop = rest.find(end).unwrap_or_else(|| panic!("missing {end}"));
         &rest[..stop]
@@ -1608,9 +1563,7 @@ mod tests {
         for banned in ["setTimeout", "setInterval", "EventSource", "WebSocket"] {
             assert!(!listener.contains(banned), "{banned} in {listener}");
         }
-        let zero_at = listener
-            .find("if (exit === \"0\")")
-            .expect("exit-0 path");
+        let zero_at = listener.find("if (exit === \"0\")").expect("exit-0 path");
         let after = &listener[zero_at..];
         let else_at = after.find("} else {").expect("non-zero path");
         let zero_arm = &after[..else_at];
@@ -1636,7 +1589,11 @@ mod tests {
         assert_eq!(page.matches("/api/factory").count(), 1);
         assert!(!page.contains("/api/question"));
         let func = between(&page, "function questionLine", "\nasync function load");
-        let load = between(&page, "async function load()", "\ndocument.getElementById(\"reload\")");
+        let load = between(
+            &page,
+            "async function load()",
+            "\ndocument.getElementById(\"reload\")",
+        );
         assert!(load.contains("[\"factory\",\"/api/factory\"]"));
         assert!(load.contains("[\"chat\",\"/api/chat\"]"));
         assert!(load.contains(
@@ -1666,6 +1623,10 @@ mod tests {
         assert_eq!(show("A waiting\nB paused\nC escalated\n"), "1 B");
         assert_eq!(show("A escalated\nB paused\n"), "1 A");
         assert_eq!(show("idle\n\norder-9 escalated\n"), "1 order-9");
+        assert_eq!(
+            show("queue\nA dispatched\nB paused\ngraph\nA -\nB A\npaused\nB\nescalated\n"),
+            "1 B"
+        );
         assert_eq!(show("no-space\nD paused\n"), "1 D");
         assert!(!show("A paused\n").contains('2'));
     }
@@ -1846,17 +1807,13 @@ mod tests {
     }
 
     #[test]
-    fn chat_appends_one_line_and_does_not_touch_trace() {
+    fn chat_post_does_not_write_a_second_record() {
         let tmp = Tmp::new();
         let exe = sleeper(&tmp.root);
         fs::create_dir_all(tmp.root.join(".wm")).unwrap();
         let trace = tmp.root.join(".wm").join("TRACE.tsv");
         fs::write(&trace, "when\tcard\toutcome\n").unwrap();
-        let addr = start_server(&tmp.root, &exe, 6);
-        let (code, _, body) = exchange(&addr, &simple("GET", "/api/chat"));
-        assert_eq!(code, 200, "{body}");
-        assert_eq!(body, "");
-        assert!(!tmp.root.join(".wm").join("CHAT.md").exists());
+        let addr = start_server(&tmp.root, &exe, 2);
         let (code, _, body) = exchange(
             &addr,
             &act_request(
@@ -1866,71 +1823,11 @@ mod tests {
                 Some("1"),
             ),
         );
-        assert_eq!(code, 200, "{body}");
-        assert_eq!(body, "{\"ok\":true}\n");
-        let (code, _, _) = exchange(
-            &addr,
-            &act_request(
-                "/act/chat",
-                &serde_json::json!({"line": "second"}).to_string(),
-                "application/json",
-                Some("1"),
-            ),
-        );
-        assert_eq!(code, 200);
-        assert_eq!(
-            fs::read_to_string(tmp.root.join(".wm").join("CHAT.md")).unwrap(),
-            "hello\nsecond\n"
-        );
-        let (code, _, body) = exchange(&addr, &simple("GET", "/api/chat"));
-        assert_eq!(body, "hello\nsecond\n");
-        assert_eq!(code, 200);
-        let (code, _, body) = exchange(&addr, &simple("HEAD", "/api/chat"));
-        assert_eq!(code, 200, "{body}");
-        assert!(body.is_empty());
-        let (code, _, body) = exchange(
-            &addr,
-            &act_request(
-                "/act/chat",
-                &serde_json::json!({"line": "a\nb"}).to_string(),
-                "application/json",
-                Some("1"),
-            ),
-        );
-        assert_eq!(code, 400);
-        assert_eq!(body, "bad chat\n");
-        assert_eq!(
-            fs::read_to_string(tmp.root.join(".wm").join("CHAT.md")).unwrap(),
-            "hello\nsecond\n"
-        );
-        assert_eq!(fs::read_to_string(&trace).unwrap(), "when\tcard\toutcome\n");
-        assert!(!tmp.root.join(".wm").join("EVENTS").exists());
-        assert!(!tmp.root.join(".wm").join("CLOSED").exists());
-        assert!(!tmp.root.join(".wm").join("FLOOR.md").exists());
-        assert!(!marker(&tmp.root));
-    }
-
-    #[test]
-    fn chat_line_cap_is_the_decoded_line() {
-        let tmp = Tmp::new();
-        let exe = sleeper(&tmp.root);
-        let addr = start_server(&tmp.root, &exe, 2);
-        let too_long = serde_json::json!({ "line": "a".repeat(4097) }).to_string();
-        assert!(too_long.len() <= 8192);
-        let (code, _, _) = exchange(
-            &addr,
-            &act_request("/act/chat", &too_long, "application/json", Some("1")),
-        );
-        assert_eq!(code, 400);
+        assert_eq!(code, 404, "{body}");
+        assert_eq!(body, "not found\n");
         assert!(!tmp.root.join(".wm").join("CHAT.md").exists());
-        let ok = serde_json::json!({ "line": "b".repeat(4096) }).to_string();
-        let (code, _, _) = exchange(
-            &addr,
-            &act_request("/act/chat", &ok, "application/json", Some("1")),
-        );
-        assert_eq!(code, 200);
-        let text = fs::read_to_string(tmp.root.join(".wm").join("CHAT.md")).unwrap();
-        assert_eq!(text, format!("{}\n", "b".repeat(4096)));
+        assert!(!tmp.root.join("MESSAGES.tsv").exists());
+        assert_eq!(fs::read_to_string(&trace).unwrap(), "when\tcard\toutcome\n");
         assert!(!marker(&tmp.root));
     }
 

@@ -2108,7 +2108,10 @@ fn message_queue_and_factory_page_print_the_same_lines() {
         String::from_utf8_lossy(&cli.stderr)
     );
     let from_cli = String::from_utf8_lossy(&cli.stdout).to_string();
-    assert_eq!(from_cli, "A dispatched\n");
+    assert_eq!(
+        from_cli,
+        "queue\nA dispatched\ngraph\nA -\npaused\nescalated\n"
+    );
     let web = start_web(&tmp.root);
     let raw = format!(
         "GET /api/factory HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
@@ -2131,6 +2134,36 @@ fn message_queue_and_factory_page_print_the_same_lines() {
     let body = text.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
     assert!(text.starts_with("HTTP/1.1 200"), "{text}");
     assert_eq!(body, from_cli);
+    let shown = bin()
+        .current_dir(&tmp.root)
+        .env("CRUCIBLE_ROOT", &tmp.root)
+        .args(["message", "show"])
+        .output()
+        .unwrap();
+    assert!(
+        shown.status.success(),
+        "{}",
+        String::from_utf8_lossy(&shown.stderr)
+    );
+    let from_show = String::from_utf8_lossy(&shown.stdout).to_string();
+    let file = fs::read_to_string(prog.join("MESSAGES.tsv")).unwrap();
+    assert_eq!(from_show, file);
+    let chat_raw = format!(
+        "GET /api/chat HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        web.addr
+    );
+    let mut chat = TcpStream::connect(&web.addr).unwrap();
+    chat.write_all(chat_raw.as_bytes()).unwrap();
+    let mut chat_buf = Vec::new();
+    chat.read_to_end(&mut chat_buf).unwrap();
+    let chat_text = String::from_utf8_lossy(&chat_buf);
+    let chat_body = chat_text
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b)
+        .unwrap_or("");
+    assert!(chat_text.starts_with("HTTP/1.1 200"), "{chat_text}");
+    assert_eq!(chat_body, from_show);
+    assert!(!tmp.root.join(".wm").join("CHAT.md").exists());
 }
 
 fn start_web(dir: &Path) -> ServeProc {
