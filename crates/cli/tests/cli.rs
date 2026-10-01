@@ -1809,7 +1809,7 @@ fn start_serve(dir: &Path, bind: &str) -> ServeProc {
 }
 
 #[test]
-fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
+fn message_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     let tmp = Tmp::new();
     init_git_product(&tmp.root);
     let prog = tmp.root.join(".crucible").join("work");
@@ -1826,18 +1826,18 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     let cli = bin()
         .current_dir(&tmp.root)
         .env("CRUCIBLE_ROOT", &tmp.root)
-        .args(["speech", "manager", "source", "the greeting is wrong"])
+        .args(["message", "manager", "source", "the greeting is wrong"])
         .output()
-        .expect("speech cli");
+        .expect("message cli");
     assert!(
         cli.status.success(),
         "stderr {}",
         String::from_utf8_lossy(&cli.stderr)
     );
-    let path = prog.join("SPEECH.tsv");
+    let path = prog.join("MESSAGES.tsv");
     let after_cli = fs::read_to_string(&path).unwrap();
     assert!(
-        after_cli.starts_with("epoch\trole\tsentence\ttext\n"),
+        after_cli.starts_with("epoch\trole\tkind\ttext\n"),
         "{after_cli}"
     );
     assert!(
@@ -1851,12 +1851,12 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     let refused = bin()
         .current_dir(&tmp.root)
         .env("CRUCIBLE_ROOT", &tmp.root)
-        .args(["speech", "manager", "landed", "no"])
+        .args(["message", "manager", "landed", "no"])
         .output()
-        .expect("speech refuse");
+        .expect("message refuse");
     assert_eq!(refused.status.code(), Some(2), "{refused:?}");
     assert!(
-        String::from_utf8_lossy(&refused.stderr).contains("speech sentence refused"),
+        String::from_utf8_lossy(&refused.stderr).contains("message refused"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
@@ -1864,7 +1864,7 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     let web = start_web(&tmp.root);
     let (status, _headers, body) = post(
         &web.addr,
-        "/act/speech",
+        "/act/message",
         r#"{"args":["machine","landed","greeting fixed"]}"#,
     );
     assert_eq!(status, 200, "{body}");
@@ -1876,7 +1876,7 @@ fn speech_cli_and_http_append_the_same_sentence_and_refuse_the_same_word() {
     );
     let (bad_status, bad_headers, bad_body) = post(
         &web.addr,
-        "/act/speech",
+        "/act/message",
         r#"{"args":["guest","source","no"]}"#,
     );
     assert_eq!(bad_status, 200, "{bad_body}");
@@ -2072,7 +2072,7 @@ The file contains hello.
 }
 
 #[test]
-fn speech_queue_and_factory_page_print_the_same_lines() {
+fn message_queue_and_factory_page_print_the_same_lines() {
     let tmp = Tmp::new();
     init_git_product(&tmp.root);
     let prog = tmp.root.join(".crucible").join("work");
@@ -2092,14 +2092,14 @@ fn speech_queue_and_factory_page_print_the_same_lines() {
     )
     .unwrap();
     fs::write(
-        prog.join("SPEECH.tsv"),
-        "epoch\trole\tsentence\ttext\n1\torchestrator\tdispatched\tA\n",
+        prog.join("MESSAGES.tsv"),
+        "epoch\trole\tkind\ttext\n1\torchestrator\tdispatched\tA\n",
     )
     .unwrap();
     let cli = bin()
         .current_dir(&tmp.root)
         .env("CRUCIBLE_ROOT", &tmp.root)
-        .args(["speech", "queue"])
+        .args(["message", "queue"])
         .output()
         .unwrap();
     assert!(
@@ -4148,9 +4148,12 @@ contract-auditor\tj2\tyes\t
     .unwrap();
     let first = factory_ok(&tmp.root, &["result", id, "PASS", "check.txt", "CLOSE"]);
     assert!(first.contains("result.md"), "{first}");
-    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap();
+    let speech = fs::read_to_string(prog.join("MESSAGES.tsv")).unwrap();
     assert_eq!(
-        speech.lines().filter(|line| line.ends_with("\tmachine\tlanded\talpha")).count(),
+        speech
+            .lines()
+            .filter(|line| line.ends_with("\tmachine\tlanded\talpha"))
+            .count(),
         1,
         "{speech}"
     );
@@ -4161,7 +4164,10 @@ contract-auditor\tj2\tyes\t
         "{}",
         String::from_utf8_lossy(&again.stderr)
     );
-    assert_eq!(fs::read_to_string(prog.join("SPEECH.tsv")).unwrap(), speech);
+    assert_eq!(
+        fs::read_to_string(prog.join("MESSAGES.tsv")).unwrap(),
+        speech
+    );
 }
 
 #[test]
@@ -4255,7 +4261,9 @@ contract-auditor\tj2\tyes\t
         ),
     )
     .unwrap();
-    let mut perm = fs::metadata(tmp.root.join("maker.sh")).unwrap().permissions();
+    let mut perm = fs::metadata(tmp.root.join("maker.sh"))
+        .unwrap()
+        .permissions();
     perm.set_mode(0o755);
     fs::set_permissions(tmp.root.join("maker.sh"), perm).unwrap();
     let dispatched = factory_ok(&tmp.root, &["dispatch", "alpha", "maker", "mk1"]);
@@ -4266,17 +4274,16 @@ contract-auditor\tj2\tyes\t
         .unwrap()
         .to_string_lossy()
         .to_string();
-    factory_ok(
-        &tmp.root,
-        &["attempt", "transport", &id, "multi-agent"],
-    );
+    factory_ok(&tmp.root, &["attempt", "transport", &id, "multi-agent"]);
     factory_ok(&tmp.root, &["contract-audit", &id, "j2", "PASS"]);
-    assert!(!prog.join("SPEECH.tsv").exists());
+    assert!(!prog.join("MESSAGES.tsv").exists());
     let drove = factory_ok(&tmp.root, &["drive", "tick"]);
     assert!(drove.contains("finish recorded"), "{drove}");
     assert_eq!(fs::read(tmp.root.join("HELLO.txt")).unwrap(), b"hello");
     assert!(
-        !fs::read_to_string(prog.join("SPEECH.tsv")).unwrap_or_default().contains("landed"),
+        !fs::read_to_string(prog.join("MESSAGES.tsv"))
+            .unwrap_or_default()
+            .contains("landed"),
         "drive must not plant landed"
     );
     let evidence = fs::read_dir(item.join("evidence"))
@@ -4284,15 +4291,9 @@ contract-auditor\tj2\tyes\t
         .map(|ent| ent.unwrap().file_name().to_string_lossy().into_owned())
         .find(|name| name.ends_with(".txt"))
         .expect("maker run wrote evidence");
-    factory_ok(
-        &tmp.root,
-        &["result", &id, "PASS", &evidence, "CLOSE"],
-    );
-    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap();
-    assert!(
-        speech.contains("\tmachine\tlanded\talpha\n"),
-        "{speech}"
-    );
+    factory_ok(&tmp.root, &["result", &id, "PASS", &evidence, "CLOSE"]);
+    let speech = fs::read_to_string(prog.join("MESSAGES.tsv")).unwrap();
+    assert!(speech.contains("\tmachine\tlanded\talpha\n"), "{speech}");
 }
 
 fn run_out(root: &Path, args: &[&str]) -> String {
@@ -4390,7 +4391,7 @@ fn factory_ok(root: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-fn speech_facts(path: &Path) -> Vec<(String, String, String)> {
+fn message_facts(path: &Path) -> Vec<(String, String, String)> {
     fs::read_to_string(path)
         .unwrap()
         .lines()
@@ -4433,11 +4434,11 @@ fn tree_bytes(root: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     out
 }
 
-fn assert_only_speech_grew(
+fn assert_only_message_grew(
     before: &std::collections::BTreeMap<String, Vec<u8>>,
     after: &std::collections::BTreeMap<String, Vec<u8>>,
 ) {
-    let speech = ".crucible/work/SPEECH.tsv";
+    let speech = ".crucible/work/MESSAGES.tsv";
     for (path, bytes) in before {
         if path == speech {
             continue;
@@ -4454,7 +4455,7 @@ fn assert_only_speech_grew(
         }
         assert!(
             before.contains_key(path),
-            "wrote a file outside the speech record: {path}"
+            "wrote a file outside the message record: {path}"
         );
     }
     assert!(after.contains_key(speech), "missing {speech}");
@@ -4474,10 +4475,10 @@ assembly\tA,B\t-\tassembly.sh
     );
     let before = tree_bytes(&tmp.root);
     let first = factory_ok(&tmp.root, &["orchestrate", "step"]);
-    assert!(first.contains("SPEECH.tsv"), "{first}");
-    let speech = prog.join("SPEECH.tsv");
+    assert!(first.contains("MESSAGES.tsv"), "{first}");
+    let speech = prog.join("MESSAGES.tsv");
     assert_eq!(
-        speech_facts(&speech),
+        message_facts(&speech),
         vec![(
             "orchestrator".to_string(),
             "dispatched".to_string(),
@@ -4485,21 +4486,21 @@ assembly\tA,B\t-\tassembly.sh
         )]
     );
     let mid = tree_bytes(&tmp.root);
-    assert_only_speech_grew(&before, &mid);
+    assert_only_message_grew(&before, &mid);
     let second = factory_ok(&tmp.root, &["orchestrate", "step"]);
     assert_eq!(second, "idle\n", "{second}");
     assert_eq!(
-        speech_facts(&speech)
+        message_facts(&speech)
             .into_iter()
             .filter(|(_, sentence, _)| sentence == "dispatched")
             .map(|(_, _, text)| text)
             .collect::<Vec<_>>(),
         vec!["A".to_string()]
     );
-    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
-    factory_ok(&tmp.root, &["speech", "machine", "landed", "A"]);
+    assert_only_message_grew(&before, &tree_bytes(&tmp.root));
+    factory_ok(&tmp.root, &["message", "machine", "landed", "A"]);
     factory_ok(&tmp.root, &["orchestrate", "step"]);
-    let facts = speech_facts(&speech);
+    let facts = message_facts(&speech);
     assert!(
         facts
             .iter()
@@ -4517,14 +4518,14 @@ assembly\tA,B\t-\tassembly.sh
     assert!(dispatched_b > landed_at, "{facts:?}");
     assert!(!facts.iter().any(|row| row.2 == "assembly"), "{facts:?}");
     let stats = crucible_contract::StatsWindow::from_wm_dir(&prog, "8h", &SystemClock).unwrap();
-    let machines = &stats.factory.expect("SPEECH.tsv").orders[0].machines;
+    let machines = &stats.factory.expect("MESSAGES.tsv").orders[0].machines;
     assert!(
         machines
             .iter()
-            .any(|line| line.sentence == "dispatched" && line.result == "B"),
+            .any(|line| line.kind == "dispatched" && line.result == "B"),
         "{machines:?}"
     );
-    factory_ok(&tmp.root, &["speech", "machine", "landed", "B"]);
+    factory_ok(&tmp.root, &["message", "machine", "landed", "B"]);
     let script = prog.join("assembly.sh");
     fs::write(&script, "#!/bin/sh\necho once >> stamp\nexit 0\n").unwrap();
     #[cfg(unix)]
@@ -4535,7 +4536,7 @@ assembly\tA,B\t-\tassembly.sh
         fs::set_permissions(&script, perm).unwrap();
     }
     factory_ok(&tmp.root, &["orchestrate", "step"]);
-    let facts = speech_facts(&speech);
+    let facts = message_facts(&speech);
     assert!(
         facts
             .iter()
@@ -4712,12 +4713,12 @@ fn spawn_orch(root: &Path) -> Child {
 fn wait_until(prog: &Path, want: impl Fn(&[(String, String, String)]) -> bool) {
     let start = Instant::now();
     loop {
-        let facts = speech_facts(&prog.join("SPEECH.tsv"));
+        let facts = message_facts(&prog.join("MESSAGES.tsv"));
         if want(&facts) {
             return;
         }
         if start.elapsed() > Duration::from_secs(45) {
-            panic!("timed out waiting for speech: {facts:?}");
+            panic!("timed out waiting for the message: {facts:?}");
         }
         thread::sleep(Duration::from_millis(50));
     }
@@ -4774,20 +4775,30 @@ assembly\tA,B\t-\tassembly.sh
     assert_shell_landed(&prog, "A");
     assert_shell_landed(&prog, "B");
     assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
-    assert_eq!(fs::read(tmp.root.join("PRODUCT.txt")).unwrap(), b"leave me\n");
-    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    assert_eq!(
+        fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
+    let facts = message_facts(&prog.join("MESSAGES.tsv"));
     for slug in ["A", "B", "assembly"] {
         assert_eq!(
-            facts.iter().filter(|row| row.1 == "landed" && row.2 == slug).count(),
+            facts
+                .iter()
+                .filter(|row| row.1 == "landed" && row.2 == slug)
+                .count(),
             1,
             "{facts:?}"
         );
     }
     let again = orch_output(&tmp.root);
-    assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
+    assert!(
+        again.status.success(),
+        "{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
     assert_eq!(fs::read_to_string(prog.join("stamp")).unwrap(), "once\n");
     assert_eq!(
-        speech_facts(&prog.join("SPEECH.tsv"))
+        message_facts(&prog.join("MESSAGES.tsv"))
             .iter()
             .filter(|row| row.1 == "landed" && row.2 == "assembly")
             .count(),
@@ -4815,14 +4826,20 @@ assembly\tA,B,C\t-\tassembly.sh
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    let facts = message_facts(&prog.join("MESSAGES.tsv"));
     let pos = |sentence: &str, id: &str| {
-        facts.iter().position(|row| row.1 == sentence && row.2 == id).unwrap()
+        facts
+            .iter()
+            .position(|row| row.1 == sentence && row.2 == id)
+            .unwrap()
     };
     assert!(pos("landed", "A") < pos("dispatched", "B"), "{facts:?}");
     assert!(pos("landed", "B") < pos("dispatched", "C"), "{facts:?}");
     assert_eq!(fs::read(three.root.join("C.txt")).unwrap(), b"hello");
-    assert_eq!(fs::read(three.root.join("PRODUCT.txt")).unwrap(), b"leave me\n");
+    assert_eq!(
+        fs::read(three.root.join("PRODUCT.txt")).unwrap(),
+        b"leave me\n"
+    );
 }
 
 #[test]
@@ -4839,19 +4856,22 @@ assembly\tA,B\t-\tassembly.sh
         "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
     plant_closed(&prog, "B");
-    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
+    factory_ok(&tmp.root, &["message", "machine", "need-a-fact", "A"]);
     let mut child = spawn_orch(&tmp.root);
     wait_until(&prog, |facts| {
         facts.iter().any(|row| row.1 == "asking" && row.2 == "A")
     });
-    let mid = fs::read(prog.join("SPEECH.tsv")).unwrap();
+    let mid = fs::read(prog.join("MESSAGES.tsv")).unwrap();
     thread::sleep(Duration::from_millis(200));
-    assert_eq!(fs::read(prog.join("SPEECH.tsv")).unwrap(), mid);
-    assert!(child.try_wait().unwrap().is_none(), "run exited before the answer");
+    assert_eq!(fs::read(prog.join("MESSAGES.tsv")).unwrap(), mid);
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "run exited before the answer"
+    );
     assert!(!tmp.root.join("A.txt").exists());
     assert!(!tmp.root.join("B.txt").exists());
     assert!(!prog.join("stamp").exists());
-    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
+    factory_ok(&tmp.root, &["message", "manager", "answer", "A"]);
     let finished = child.wait_with_output().unwrap();
     assert!(
         finished.status.success(),
@@ -4877,22 +4897,31 @@ assembly\tA\t-\tassembly.sh
         "#!/bin/sh\nexit 0\n",
     );
     fs::write(tmp.root.join("maker.sh"), "#!/bin/sh\nexit 1\n").unwrap();
-    let mut perm = fs::metadata(tmp.root.join("maker.sh")).unwrap().permissions();
+    let mut perm = fs::metadata(tmp.root.join("maker.sh"))
+        .unwrap()
+        .permissions();
     perm.set_mode(0o755);
     fs::set_permissions(tmp.root.join("maker.sh"), perm).unwrap();
     let out = orch_output(&tmp.root);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("maker shell exited nonzero"), "{stderr}");
-    assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
-    let speech = fs::read_to_string(prog.join("SPEECH.tsv")).unwrap_or_default();
+    assert!(
+        out.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let speech = fs::read_to_string(prog.join("MESSAGES.tsv")).unwrap_or_default();
     assert!(!speech.contains("\tlanded\t"), "{speech}");
     assert!(!speech.contains("\tescalated\t"), "{speech}");
     assert!(!speech.contains("\tasking\t"), "{speech}");
     let again = orch_output(&tmp.root);
     let again_err = String::from_utf8_lossy(&again.stderr);
     assert_eq!(again.status.code(), Some(2), "{again_err}");
-    assert!(again_err.contains("maker shell exited nonzero"), "{again_err}");
+    assert!(
+        again_err.contains("maker shell exited nonzero"),
+        "{again_err}"
+    );
     assert!(!again_err.contains("idle without outcome"), "{again_err}");
 }
 
@@ -4910,9 +4939,9 @@ assembly\tA,B\t-\tassembly.sh
         "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
     plant_closed(&prog, "B");
-    factory_ok(&bare.root, &["speech", "machine", "landed", "A"]);
-    factory_ok(&bare.root, &["speech", "machine", "landed", "B"]);
-    factory_ok(&bare.root, &["speech", "machine", "landed", "assembly"]);
+    factory_ok(&bare.root, &["message", "machine", "landed", "A"]);
+    factory_ok(&bare.root, &["message", "machine", "landed", "B"]);
+    factory_ok(&bare.root, &["message", "machine", "landed", "assembly"]);
     let out = orch_output(&bare.root);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
@@ -4932,9 +4961,9 @@ assembly\tA,B\t-\tassembly.sh
         "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
     plant_closed(&prog, "B");
-    factory_ok(&forged.root, &["speech", "machine", "landed", "A"]);
-    factory_ok(&forged.root, &["speech", "machine", "landed", "B"]);
-    factory_ok(&forged.root, &["speech", "machine", "landed", "assembly"]);
+    factory_ok(&forged.root, &["message", "machine", "landed", "A"]);
+    factory_ok(&forged.root, &["message", "machine", "landed", "B"]);
+    factory_ok(&forged.root, &["message", "machine", "landed", "assembly"]);
     for (n, slug) in [("1", "A"), ("2", "B")] {
         let id = format!("A1700000000.1.{n}");
         let dir = prog.join("attempts").join(&id);
@@ -4975,19 +5004,14 @@ A\t-\ta.paths\ta.sh
 B\t-\tb.paths\tb.sh
 ",
     );
-    factory_ok(&tmp.root, &["speech", "machine", "escalated", "A"]);
+    factory_ok(&tmp.root, &["message", "machine", "escalated", "A"]);
     factory_ok(&tmp.root, &["orchestrate", "step"]);
-    let facts = speech_facts(&prog.join("SPEECH.tsv"));
+    let facts = message_facts(&prog.join("MESSAGES.tsv"));
     assert!(
-        facts
-            .iter()
-            .any(|row| row.1 == "asking" && row.2 == "A"),
+        facts.iter().any(|row| row.1 == "asking" && row.2 == "A"),
         "{facts:?}"
     );
-    assert!(
-        !facts.iter().any(|row| row.1 == "paused"),
-        "{facts:?}"
-    );
+    assert!(!facts.iter().any(|row| row.1 == "paused"), "{facts:?}");
     assert!(
         facts
             .iter()
@@ -5000,12 +5024,9 @@ B\t-\tb.paths\tb.sh
             .any(|row| row.1 == "dispatched" && row.2 == "A"),
         "{facts:?}"
     );
-    let held = fs::read(prog.join("SPEECH.tsv")).unwrap();
-    assert_eq!(
-        factory_ok(&tmp.root, &["orchestrate", "step"]),
-        "idle\n"
-    );
-    assert_eq!(fs::read(prog.join("SPEECH.tsv")).unwrap(), held);
+    let held = fs::read(prog.join("MESSAGES.tsv")).unwrap();
+    assert_eq!(factory_ok(&tmp.root, &["orchestrate", "step"]), "idle\n");
+    assert_eq!(fs::read(prog.join("MESSAGES.tsv")).unwrap(), held);
 }
 
 #[test]
@@ -5019,11 +5040,11 @@ A\t-\ta.paths\ta.sh
 B\t-\tb.paths\tb.sh
 ",
     );
-    factory_ok(&tmp.root, &["speech", "machine", "need-a-fact", "A"]);
+    factory_ok(&tmp.root, &["message", "machine", "need-a-fact", "A"]);
     let before = tree_bytes(&tmp.root);
     factory_ok(&tmp.root, &["orchestrate", "step"]);
-    let speech = prog.join("SPEECH.tsv");
-    let facts = speech_facts(&speech);
+    let speech = prog.join("MESSAGES.tsv");
+    let facts = message_facts(&speech);
     assert_eq!(
         facts,
         vec![
@@ -5049,10 +5070,10 @@ B\t-\tb.paths\tb.sh
             ),
         ]
     );
-    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
-    factory_ok(&tmp.root, &["speech", "manager", "answer", "A"]);
+    assert_only_message_grew(&before, &tree_bytes(&tmp.root));
+    factory_ok(&tmp.root, &["message", "manager", "answer", "A"]);
     factory_ok(&tmp.root, &["orchestrate", "step"]);
-    let facts = speech_facts(&speech);
+    let facts = message_facts(&speech);
     assert!(
         facts
             .iter()
@@ -5065,7 +5086,7 @@ B\t-\tb.paths\tb.sh
             .any(|row| row.1 == "dispatched" && row.2 == "B"),
         "{facts:?}"
     );
-    assert_only_speech_grew(&before, &tree_bytes(&tmp.root));
+    assert_only_message_grew(&before, &tree_bytes(&tmp.root));
     assert_eq!(
         fs::read(tmp.root.join("PRODUCT.txt")).unwrap(),
         b"leave me\n"
@@ -5074,9 +5095,9 @@ B\t-\tb.paths\tb.sh
     assert_eq!(
         program_names,
         vec![
+            "MESSAGES.tsv".to_string(),
             "ORDERS.tsv".to_string(),
             "PROGRAM".to_string(),
-            "SPEECH.tsv".to_string(),
         ]
     );
 }

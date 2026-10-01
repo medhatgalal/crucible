@@ -2,7 +2,7 @@
 
 ## In
 
-IDEA.md, the target tree (packages, `src/`, tests, existing DESIGN.md / ADRs), and any already-written `architecture/modules.md`. Not a maker brief. Not a falsifier command.
+IDEA.md, the target tree (existing directories such as `src/`, `packages/`, `cmd/`, `crates/`, tests, existing DESIGN.md / ADRs), and any already-written `architecture/modules.md`. Not a maker brief. Not a falsifier command. A module root is a directory boundary, not a deployment boundary.
 
 ## Out (must-write paths / words)
 
@@ -19,7 +19,8 @@ IDEA.md, the target tree (packages, `src/`, tests, existing DESIGN.md / ADRs), a
 - Implement product files, author `.wm/FALSIFIER`, dispatch makers, or cast itself as maker of these slices.
 - Invent fairy-tale rooms, floors, or castles that are not packages / directories in the tree.
 - Silently introduce a second pattern. `CHANGES-ARCHITECTURE` is STOP, not a footnote.
-- Silently mkdir a new top-level package (`src/<name>`, `packages/<name>`, `cmd/<name>`) when another product package already exists, without QUESTIONS.md + ANSWERS.md.
+- Silently mkdir a new top-level package (`src/<name>`, `packages/<name>`, `cmd/<name>`, `crates/<name>`) when another product package already exists, without QUESTIONS.md + ANSWERS.md.
+- Run an inner write/review loop, or treat issue closure as the map verdict. Critique writes `MAP-ACCEPT`, `MAP-REVISE`, or `MAP-STOP-ASK`.
 
 ## Send-back
 

@@ -33,28 +33,6 @@ const OK_JSON: &str = "{\"ok\":true}\n";
 const BACKLOG_HEADER: &str = "id\tsize\trisk\tidea_path\tstatus";
 
 fn page_html() -> String {
-    let mut buttons = String::new();
-    // Read buttons, then the status --json button, then WEB_WRITERS.
-    let run_at = WEB_READ_ONLY.len() + 1;
-    for (i, act) in web_page_acts().into_iter().enumerate() {
-        if i == run_at {
-            buttons.push_str("<h2>Run</h2>\n");
-        }
-        let verb = act.verb;
-        let args_json = serde_json::to_string(act.args).unwrap_or_else(|_| "[]".to_string());
-        let data_args = args_json
-            .replace('&', "&amp;")
-            .replace('"', "&quot;")
-            .replace('<', "&lt;");
-        let label = if act.args.is_empty() {
-            verb.to_string()
-        } else {
-            format!("{verb} {}", act.args.join(" "))
-        };
-        buttons.push_str(&format!(
-            "<button type=\"button\" data-verb=\"{verb}\" data-args=\"{data_args}\">{label}</button>\n"
-        ));
-    }
     let doc = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -78,6 +56,7 @@ label { display: block; margin: 0.25rem 0; }
 <h2>Health</h2><pre id="health"></pre>
 <h2>Walk</h2><pre id="walk"></pre>
 <h2>Factory</h2><pre id="factory"></pre>
+<pre id="question"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
 <h2>Backlog</h2>
 <label>id <input id="b-id" type="text"></label>
@@ -88,9 +67,9 @@ label { display: block; margin: 0.25rem 0; }
 <button id="backlog-add" type="button">Add backlog</button>
 <pre id="backlog"></pre>
 <h2>CHAT.md</h2>
-<label>sentence <input id="c-sentence" type="text" value="source"></label>
+<label>kind <input id="c-kind" type="text" value="source"></label>
 <label>text <input id="c-line" type="text"></label>
-<button id="chat-send" type="button">Send manager sentence</button>
+<button id="chat-send" type="button">Send</button>
 <pre id="chat"></pre>
 <pre id="go"></pre>
 <script>
@@ -106,6 +85,20 @@ async function postAct(path, payload) {
   });
   return res.text();
 }
+function questionLine(queue) {
+  const lines = queue.split("\n");
+  for (const line of lines) {
+    if (line === "" || line === "idle") continue;
+    const space = line.indexOf(" ");
+    if (space < 0) continue;
+    const id = line.slice(0, space);
+    const status = line.slice(space + 1);
+    if (status === "paused" || status === "escalated") {
+      return "1 " + id;
+    }
+  }
+  return "";
+}
 async function load() {
   for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
@@ -114,6 +107,9 @@ async function load() {
       el.textContent = await res.text();
     } catch (e) {
       el.textContent = String(e);
+    }
+    if (id === "factory") {
+      document.getElementById("question").textContent = questionLine(el.textContent);
     }
   }
 }
@@ -135,9 +131,21 @@ document.getElementById("backlog-add").addEventListener("click", async () => {
 document.getElementById("chat-send").addEventListener("click", async () => {
   const el = document.getElementById("chat");
   try {
-    el.textContent = await postAct("/act/speech", {
-      args: ["manager", document.getElementById("c-sentence").value, document.getElementById("c-line").value]
+    const res = await fetch("/act/message", {
+      method: "POST",
+      headers: actHeaders,
+      body: JSON.stringify({
+        args: ["manager", document.getElementById("c-kind").value, document.getElementById("c-line").value]
+      })
     });
+    const text = await res.text();
+    const exit = res.headers.get("X-Crucible-Exit");
+    if (exit === "0") {
+      el.textContent = text;
+      load();
+    } else {
+      el.textContent = text;
+    }
   } catch (e) {
     el.textContent = String(e);
   }
@@ -174,7 +182,7 @@ load();
 </body>
 </html>
 "#;
-    doc.replace("<!--READ-->", &buttons)
+    doc.replace("<!--READ-->", "")
 }
 
 pub fn bind_web(spec: &str) -> Result<TcpListener, ServeError> {
@@ -292,7 +300,7 @@ fn route(
         }
     }
     if req.path == "/api/factory" {
-        return match spawn_read(exe, cwd, "speech", &["queue".to_string()]) {
+        return match spawn_read(exe, cwd, "message", &["queue".to_string()]) {
             Ok(out) => {
                 let text = String::from_utf8_lossy(&out.stdout);
                 write_resp(stream, 200, "text/plain; charset=utf-8", &text, head)
@@ -358,12 +366,12 @@ pub const WEB_WRITERS: &[&str] = &[
     "drive",
     "evidence",
     "lifecycle",
+    "message",
     "phase",
     "plan-audit",
     "probe-acp",
     "ready",
     "result",
-    "speech",
     "state",
     "status",
     "target",
@@ -1490,7 +1498,7 @@ mod tests {
         assert!(!body.contains("cannot start"));
         assert!(body.contains("CHAT.md"));
         assert!(body.contains("/act/backlog"));
-        assert!(body.contains("/act/speech"));
+        assert!(body.contains("/act/message"));
         assert!(body.contains("/api/factory"));
         assert!(body.contains("<h2>Walk</h2>"));
         assert!(body.contains("<h2>Factory</h2>"));
@@ -1505,92 +1513,161 @@ mod tests {
         assert!(body.contains(">Read<"));
         assert!(body.contains("id=\"read-args\""));
         assert!(body.contains("id=\"read\""));
-        for verb in [
-            "agents", "check", "debrief", "next", "panes", "stats", "triage", "workid", "status",
-        ] {
-            assert!(
-                body.contains(&format!("data-verb=\"{verb}\"")),
-                "{verb} missing from {body}"
-            );
-        }
-        assert!(body.contains(">stats --since 24h --json<"));
-        assert!(body.contains(">status --json<"));
-        assert!(body.contains(">status<"));
-        assert!(body.contains("<h2>Run</h2>"));
-        assert!(body.contains("data-verb=\"close\""));
-        assert!(body.contains("data-verb=\"drive\""));
-        assert!(body.contains("data-verb=\"adopt\""));
-        assert!(body.contains("data-verb=\"brief\""));
-        assert!(body.contains("data-verb=\"lifecycle\""));
-        assert!(body.contains("data-verb=\"state\""));
-        assert!(body.contains("data-verb=\"target\""));
-        assert!(body.contains("data-args=\"[&quot;--managed&quot;]\""));
-        assert!(body.contains(">adopt --managed<"));
-        assert!(body.contains("data-args=\"[&quot;status&quot;]\""));
-        assert!(body.contains(">lifecycle status<"));
-        assert!(body.contains("data-verb=\"state\" data-args=\"[]\""));
-        assert!(body.contains("data-verb=\"target\" data-args=\"[]\""));
-        assert!(body.contains("data-verb=\"brief\" data-args=\"[]\""));
-        assert!(body.contains("data-verb=\"evidence\" data-args=\"[]\""));
-        assert!(body.contains(">evidence<"));
-        assert!(body.contains("data-verb=\"check\""));
-        assert!(body.contains("data-verb=\"triage\""));
-        assert!(body.contains("data-verb=\"check\" data-args=\"[]\""));
-        assert!(body.contains("data-verb=\"triage\" data-args=\"[]\""));
-        for verb in [
-            "add",
-            "attempt",
-            "claim",
-            "contract-audit",
-            "cycle",
-            "phase",
-            "plan-audit",
-            "probe-acp",
-            "ready",
-        ] {
-            assert!(
-                body.contains(&format!("data-verb=\"{verb}\" data-args=\"[]\"")),
-                "{verb} missing from {body}"
-            );
-        }
-        assert!(body.contains("data-verb=\"result\" data-args=\"[]\""));
+        assert!(!body.contains("data-verb=\""));
         for verb in ["dispatch", "task", "run", "run-claim"] {
             assert!(
                 !body.contains(&format!("data-verb=\"{verb}\"")),
                 "{verb} must stay off the page"
             );
         }
-        let read_at = body.find(">Read<").unwrap();
-        let run_at = body.find("<h2>Run</h2>").unwrap();
-        let check_at = body.find("data-verb=\"check\"").unwrap();
-        let triage_at = body.find("data-verb=\"triage\"").unwrap();
-        assert!(read_at < check_at && check_at < triage_at && triage_at < run_at);
-        let add_at = body.find("data-verb=\"add\"").unwrap();
-        let adopt_at = body.find("data-verb=\"adopt\"").unwrap();
-        let brief_at = body.find("data-verb=\"brief\"").unwrap();
-        let close_at = body.find("data-verb=\"close\"").unwrap();
-        let drive_at = body.find("data-verb=\"drive\"").unwrap();
-        let evidence_at = body.find("data-verb=\"evidence\"").unwrap();
-        let lifecycle_at = body.find("data-verb=\"lifecycle\"").unwrap();
-        let state_at = body.find("data-verb=\"state\"").unwrap();
-        let target_at = body.find("data-verb=\"target\"").unwrap();
-        let args_at = body.find("id=\"read-args\"").unwrap();
-        let first_status = body.find("data-verb=\"status\"").unwrap();
-        let bare_status = body[first_status + 1..]
-            .find("data-verb=\"status\"")
-            .map(|off| off + first_status + 1)
-            .unwrap();
-        assert!(read_at < run_at && run_at < add_at && add_at < adopt_at && adopt_at < args_at);
-        assert!(first_status < run_at);
-        assert!(adopt_at < brief_at && brief_at < close_at && close_at < drive_at);
-        assert!(drive_at < evidence_at && evidence_at < lifecycle_at && lifecycle_at < state_at);
-        assert!(state_at < bare_status && bare_status < target_at);
         let (code, body) = read_http(&web_addr, "GET", "/api/walk");
         assert_eq!(code, 200, "{body}");
         assert!(body.contains("NEXT RED"), "{body}");
         let (code, body) = read_http(&web_addr, "POST", "/go");
         assert_eq!(code, 405, "{body}");
         assert!(body.contains("not a walk"));
+    }
+
+    fn chat_send_listener(page: &str) -> &str {
+        let start = page
+            .find("getElementById(\"chat-send\")")
+            .expect("chat-send listener");
+        let rest = &page[start..];
+        let end = rest
+            .find("\ndocument.getElementById(\"start\")")
+            .expect("start listener follows chat-send");
+        &rest[..end]
+    }
+
+    fn between<'a>(page: &'a str, start: &str, end: &str) -> &'a str {
+        let at = page.find(start).unwrap_or_else(|| panic!("missing {start}"));
+        let rest = &page[at..];
+        let stop = rest.find(end).unwrap_or_else(|| panic!("missing {end}"));
+        &rest[..stop]
+    }
+
+    fn question_statuses(func: &str) -> Vec<&str> {
+        let ret = func
+            .find("return \"1 \" + id")
+            .expect("question prefix is 1 plus the id");
+        let gate_at = func[..ret].rfind("if (").expect("status gate");
+        let mut gate = &func[gate_at..ret];
+        let mut statuses = Vec::new();
+        while let Some(at) = gate.find("status === \"") {
+            let after = &gate[at + "status === \"".len()..];
+            let end = after.find('"').expect("status literal");
+            statuses.push(&after[..end]);
+            gate = &after[end + 1..];
+        }
+        statuses
+    }
+
+    fn question_shown(func: &str, queue: &str) -> String {
+        assert!(func.contains("line === \"\" || line === \"idle\""));
+        assert!(func.contains("indexOf(\" \")"));
+        assert!(func.contains("if (space < 0) continue;"));
+        assert!(func.contains("line.slice(0, space)"));
+        assert!(func.contains("line.slice(space + 1)"));
+        assert!(func.contains("return \"\";"));
+        assert!(!func.contains("fetch("), "question must not GET");
+        assert!(!func.contains("\"2 \""));
+        assert!(!func.contains("c-kind"));
+        assert!(!func.contains("c-line"));
+        assert!(!func.contains(".value"));
+        let statuses = question_statuses(func);
+        assert_eq!(statuses, ["paused", "escalated"]);
+        for line in queue.split('\n') {
+            if line.is_empty() || line == "idle" {
+                continue;
+            }
+            let Some((id, status)) = line.split_once(' ') else {
+                continue;
+            };
+            if statuses.contains(&status) {
+                return format!("1 {id}");
+            }
+        }
+        String::new()
+    }
+
+    #[test]
+    fn chat_send_loads_only_on_exit_zero() {
+        let page = page_html();
+        let listener = chat_send_listener(&page);
+        assert!(listener.trim_end().ends_with("});"), "{listener}");
+        assert!(!listener.contains("postAct"), "{listener}");
+        assert_eq!(listener.matches("fetch(").count(), 1, "{listener}");
+        assert_eq!(listener.matches("/act/message").count(), 1, "{listener}");
+        assert!(listener.contains("method: \"POST\""));
+        assert!(listener.contains("headers: actHeaders"));
+        assert!(listener.contains(
+            "args: [\"manager\", document.getElementById(\"c-kind\").value, document.getElementById(\"c-line\").value]"
+        ));
+        assert!(listener.contains("res.headers.get(\"X-Crucible-Exit\")"));
+        assert!(!listener.contains(".value ="));
+        for banned in ["setTimeout", "setInterval", "EventSource", "WebSocket"] {
+            assert!(!listener.contains(banned), "{banned} in {listener}");
+        }
+        let zero_at = listener
+            .find("if (exit === \"0\")")
+            .expect("exit-0 path");
+        let after = &listener[zero_at..];
+        let else_at = after.find("} else {").expect("non-zero path");
+        let zero_arm = &after[..else_at];
+        let else_rest = &after[else_at + "} else {".len()..];
+        let else_end = else_rest.find('}').expect("end of non-zero path");
+        let else_arm = &else_rest[..else_end];
+        assert!(zero_arm.contains("el.textContent = text"), "{zero_arm}");
+        assert!(zero_arm.contains("load("), "{zero_arm}");
+        assert!(zero_arm.find("textContent").unwrap() < zero_arm.find("load(").unwrap());
+        assert!(else_arm.contains("el.textContent = text"), "{else_arm}");
+        assert!(!else_arm.contains("load("), "{else_arm}");
+        assert!(!else_arm.contains("\"2\""), "{else_arm}");
+        assert_eq!(listener.matches("load(").count(), 1, "{listener}");
+        let outside = listener.replacen(zero_arm, "", 1);
+        assert!(!outside.contains("load("), "{outside}");
+    }
+
+    #[test]
+    fn question_is_filled_only_for_paused_or_escalated() {
+        let page = page_html();
+        assert!(page.contains("<pre id=\"factory\"></pre>\n<pre id=\"question\"></pre>\n"));
+        assert!(page.contains("id=\"c-kind\" type=\"text\" value=\"source\""));
+        assert_eq!(page.matches("/api/factory").count(), 1);
+        assert!(!page.contains("/api/question"));
+        let func = between(&page, "function questionLine", "\nasync function load");
+        let load = between(&page, "async function load()", "\ndocument.getElementById(\"reload\")");
+        assert!(load.contains("[\"factory\",\"/api/factory\"]"));
+        assert!(load.contains("[\"chat\",\"/api/chat\"]"));
+        assert!(load.contains(
+            "document.getElementById(\"question\").textContent = questionLine(el.textContent)"
+        ));
+        let filled = load
+            .find("el.textContent = await res.text()")
+            .expect("factory fill");
+        let asked = load
+            .find("questionLine(el.textContent)")
+            .expect("question from factory text");
+        assert!(filled < asked);
+        assert!(load.contains("if (id === \"factory\")"));
+        assert_eq!(load.matches("fetch(").count(), 1);
+        let show = |queue: &str| question_shown(func, queue);
+        assert_eq!(show(""), "");
+        assert_eq!(show("idle"), "");
+        assert_eq!(show("idle\n"), "");
+        assert_eq!(show("\n\nidle\n"), "");
+        assert_eq!(show("A waiting\n"), "");
+        assert_eq!(show("A dispatched\n"), "");
+        assert_eq!(show("A landed\n"), "");
+        assert_eq!(show("A waiting\nB dispatched\nC landed\n"), "");
+        assert_eq!(show("A paused extra\n"), "");
+        assert_eq!(show("A paused"), "1 A");
+        assert_eq!(show("A escalated\n"), "1 A");
+        assert_eq!(show("A waiting\nB paused\nC escalated\n"), "1 B");
+        assert_eq!(show("A escalated\nB paused\n"), "1 A");
+        assert_eq!(show("idle\n\norder-9 escalated\n"), "1 order-9");
+        assert_eq!(show("no-space\nD paused\n"), "1 D");
+        assert!(!show("A paused\n").contains('2'));
     }
 
     #[test]
@@ -2166,12 +2243,12 @@ mod tests {
                 "drive",
                 "evidence",
                 "lifecycle",
+                "message",
                 "phase",
                 "plan-audit",
                 "probe-acp",
                 "ready",
                 "result",
-                "speech",
                 "state",
                 "status",
                 "target",

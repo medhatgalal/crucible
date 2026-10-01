@@ -4,6 +4,8 @@ Release history stays in `CHANGELOG.md`. This page travels with installed progra
 
 ## Unreleased
 
+`crucible message` is the factory record. It replaces `crucible speech`, and the file is `MESSAGES.tsv` with columns `epoch`, `role`, `kind`, and `text`. Kinds stay `source`, `correction`, `answer`, `started`, `need-a-fact`, `escalated`, `landed`, `dispatched`, `paused`, `advanced`, and `asking`.
+
 `crucible orchestrate run` delivers dispatched orders through the existing `drive` tick. It waits in that same process when it asks, and a failed assembly check asks instead of ending as a success. No new command.
 
 `crucible serve --bind 127.0.0.1:PORT` (default `127.0.0.1:1734`) GET `/walk`,

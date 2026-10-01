@@ -7,8 +7,8 @@ mod event;
 mod intake;
 mod json;
 mod layout;
+mod message;
 mod snapshot;
-mod speech;
 mod stats;
 mod timeutil;
 
@@ -17,8 +17,8 @@ pub use event::{Event, EventKind};
 pub use intake::intake_ready;
 pub use json::canonical_json;
 pub use layout::resolve as resolve_wm;
+pub use message::{message_line, MESSAGE_HEADER};
 pub use snapshot::{Closed, Floor, TraceRow, WalkSnapshot, WALK_SCHEMA};
-pub use speech::{speech_line, SPEECH_HEADER};
 pub use stats::{
     Factory, FactoryLine, FactoryOrder, Halt, StatsCounts, StatsError, StatsWindow, STATS_SCHEMA,
 };

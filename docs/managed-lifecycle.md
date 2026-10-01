@@ -15,13 +15,23 @@ CP=.crucible/<program>/crucible     # after `adopt work --managed`: CP=.crucible
 Then `$CP cycle` is `.crucible/work/crucible cycle`. Nothing exports this for you; a shell
 without it runs nothing.
 
-Factory speech is one record, `SPEECH.tsv`, in the program directory. The manager may say
-`source`, `correction`, or `answer`. A machine may say `started`, `need-a-fact`, `escalated`,
-or `landed`. The orchestrator may say `dispatched`, `paused`, `advanced`, or `asking`. Any
-other role or sentence is refused and the file is left unchanged.
+Factory messages are one record, `MESSAGES.tsv`, in the program directory. The manager may record
+`source`, `correction`, or `answer`. A machine may record `started`, `need-a-fact`, `escalated`,
+or `landed`. The orchestrator may record `dispatched`, `paused`, `advanced`, or `asking`. Any
+other role or kind is refused and the file is left unchanged.
+
+A manager `source` whose text passes the order-id rule and is not `assembly` also appends one
+`ORDERS.tsv` row when that id is absent. A text that fails the rule, including the existing
+example "the greeting is wrong", stays message-only. The two path files are not created. The
+appended row is the factory queue row `read_orders` stores, and it is not a grill vehicle.
+`validate_vehicle` returns `invalid ORDERS.tsv: missing assembly row` for that one-row file, and
+`invalid ORDERS.tsv: assembly must depend on every other order` when the file already has an
+assembly row. Creating the path files does not remove either refusal. The grill example that uses
+`orders/door.paths` and `orders/door.verify.sh` beside an assembly row stays the vehicle graph
+and is not this row.
 
 ```sh
-$CP speech manager source "the greeting is wrong"
+$CP message manager source "the greeting is wrong"
 ```
 
 `crucible result` with `PASS` and `CLOSE` appends `machine landed <slug>`.
@@ -411,11 +421,11 @@ A program file named `ticket` lets that same command read a two-line ticket when
 
 ## Factory orchestrator
 
-`crucible orchestrate step` is one pass of the outer loop. It reads `ORDERS.tsv` in the program directory and appends factory speech by the same record as `speech`. It does not edit a product file outside that directory and it does not start a maker.
+`crucible orchestrate step` is one pass of the outer loop. It reads `ORDERS.tsv` in the program directory and appends factory messages by the same record as `message`. It does not edit a product file outside that directory and it does not start a maker.
 
-An order is landed when `SPEECH.tsv` contains a `landed` sentence whose text is that order id. A `need-a-fact` with no later manager `answer` pauses that order only: the step appends one `paused` and one `asking` for it, then may still dispatch one other ready order. An `escalated` sentence with no later answer appends one `asking` and does not dispatch that order. A later step does not repeat those sentences. When every order except `assembly` has landed, the step runs the assembly `verify_script` once. Exit 0 appends `machine landed assembly`. Any other exit appends `machine escalated assembly`. A second step does not run it again. One step still dispatches at most one order. When nothing was written it exits 0 and prints `idle`.
+An order is landed when `MESSAGES.tsv` contains a `landed` kind whose text is that order id. A `need-a-fact` with no later manager `answer` pauses that order only: the step appends one `paused` and one `asking` for it, then may still dispatch one other ready order. An `escalated` kind with no later answer appends one `asking` and does not dispatch that order. A later step does not repeat those messages. When every order except `assembly` has landed, the step runs the assembly `verify_script` once. Exit 0 appends `machine landed assembly`. Any other exit appends `machine escalated assembly`. A second step does not run it again. One step still dispatches at most one order. When nothing was written it exits 0 and prints `idle`.
 
-Walk on the page is the kernel camera. Factory is the order queue from `speech queue`. They are not the same payload.
+Walk on the page is the kernel camera. Factory is the order queue from `message queue`. They are not the same payload.
 
 ```sh
 $CP orchestrate step

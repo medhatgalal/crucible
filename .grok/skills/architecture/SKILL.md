@@ -15,12 +15,12 @@ Write `architecture/modules.md` as a tab-separated table (header required):
 module_id	root_path	public_contracts	test_entrypoint	pattern_instance	live_write
 ```
 
-- `root_path` is a relative package directory (`src/<name>/`, `cmd/<name>/`). Not a metaphor. Greenfield may create empty packages (kernel `mkdir` + `.gitkeep`) then fit. Brownfield new `src/`/`packages/`/`cmd/` package requires QUESTIONS.md + ANSWERS.md; kernel refuses silent mkdir. Absolute paths and `..` are fairy-tale and STOP.
+- `root_path` is a relative directory that already exists in the checkout being mapped. `src/<name>/`, `packages/<name>/`, `cmd/<name>/`, and `crates/<name>/` are examples, not a closed list. Not a metaphor and not a deployment boundary. Greenfield may create empty packages (kernel `mkdir` + `.gitkeep`) then fit. Brownfield new `src/`/`packages/`/`cmd/` package requires QUESTIONS.md + ANSWERS.md; kernel refuses silent mkdir. A new `crates/<name>/` that is not already a directory also requires QUESTIONS.md and ANSWERS.md before it is created. Absolute paths and `..` are fairy-tale and STOP.
 - `pattern_instance` is a path to a real file that shows the pattern this module already uses (RULE 26). On greenfield, that file may land with the first slice; the root directory must exist after fit.
 - `live_write` is `yes` or `no` (credentials, destroy, push-main). Recording it is not permission to do it.
-- Every path under `src/`, `packages/`, `cmd/` that this work might touch is either under a `root_path` or listed `UNOWNED`. Two plausible packagings → write QUESTIONS.md and stop; do not pick in secret.
+- Every path this work might touch is either under a `root_path` or listed `UNOWNED`. Two plausible packagings → write QUESTIONS.md and stop; do not pick in secret.
 
-Do not invent fairy-tale rooms. Absolute paths and `..` still die. Greenfield mkdir remains; brownfield new `src/`/`packages/`/`cmd/` package requires QUESTIONS.md + ANSWERS.md; kernel refuses silent mkdir.
+Do not invent fairy-tale rooms. Absolute paths and `..` still die. Greenfield mkdir remains; brownfield new `src/`/`packages/`/`cmd/` package requires QUESTIONS.md + ANSWERS.md; kernel refuses silent mkdir. A module root is a directory boundary, not a deployment boundary.
 
 ## RULE 26
 
@@ -50,5 +50,6 @@ The mapper id is durable in `.wm/mapper`. Later `wm cast maker` with that same a
 - `CLOSED PASS` — brick closer, not a map word.
 - Implement product, author the falsifier, spawn makers, or refresh skills.
 - Edit `wm.sh`. Replacing this directory must not require that.
+- Run an inner write/review loop, or treat issue closure as the map verdict. Critique writes `MAP-ACCEPT`, `MAP-REVISE`, or `MAP-STOP-ASK`.
 
 Stop: missing inventory, path outside modules, fairy-tale absolute/`..` root, `CHANGES-ARCHITECTURE`, two packagings → QUESTIONS (do not pick in secret).
