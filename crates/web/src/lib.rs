@@ -55,6 +55,7 @@ label { display: block; margin: 0.25rem 0; }
 <pre id="read"></pre>
 <h2>Health</h2><pre id="health"></pre>
 <h2>Walk</h2><pre id="walk"></pre>
+<h2>Floor</h2><pre id="floor"></pre>
 <h2>Factory</h2><pre id="factory"></pre>
 <pre id="question"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
@@ -85,6 +86,11 @@ async function postAct(path, payload) {
   });
   return res.text();
 }
+function questionText(queue) {
+  const q = questionLine(queue);
+  if (q === "") return "";
+  return q + "\nPublish, delete, or leave this machine.";
+}
 function questionLine(queue) {
   const lines = queue.split("\n");
   for (const line of lines) {
@@ -100,7 +106,7 @@ function questionLine(queue) {
   return "";
 }
 async function load() {
-  for (const [id, path] of [["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
+  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
     try {
       const res = await fetch(path, { method: "GET" });
@@ -109,7 +115,7 @@ async function load() {
       el.textContent = String(e);
     }
     if (id === "factory") {
-      document.getElementById("question").textContent = questionLine(el.textContent);
+      document.getElementById("question").textContent = questionText(el.textContent);
     }
   }
 }
@@ -260,6 +266,44 @@ fn handle_one(stream: &mut TcpStream, api: &str, cwd: &Path, exe: &Path) -> Resu
     route(stream, api, cwd, exe, &req)
 }
 
+const FLOOR_CAP: usize = 262_144;
+
+fn read_floor(cwd: &Path) -> Result<String, &'static str> {
+    let (_repo, wm) = crucible_contract::resolve_wm(cwd);
+    let path = wm.join("FLOOR.md");
+    // stat does not block on a FIFO. Opening a FIFO does, and take
+    // never runs. is_file is false for a FIFO, a directory, a socket, and
+    // a device. metadata follows a symlink, so a symlink to a FIFO is refused
+    // and a symlink to a regular file is still read. The size decision is
+    // the buffer after take, not the metadata length.
+    match fs::metadata(&path) {
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => return Err("floor unreadable\n"),
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return match fs::symlink_metadata(&path) {
+                Ok(_) => Err("floor unreadable\n"),
+                Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
+                Err(_) => Err("floor unreadable\n"),
+            };
+        }
+        Err(_) => return Err("floor unreadable\n"),
+    }
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(String::new()),
+        Err(_) => return Err("floor unreadable\n"),
+    };
+    let mut bytes = Vec::new();
+    let mut limited = file.take((FLOOR_CAP as u64) + 1);
+    if limited.read_to_end(&mut bytes).is_err() {
+        return Err("floor unreadable\n");
+    }
+    if bytes.len() > FLOOR_CAP {
+        return Err("floor too large\n");
+    }
+    String::from_utf8(bytes).map_err(|_| "floor unreadable\n")
+}
+
 fn route(
     stream: &mut TcpStream,
     api: &str,
@@ -282,6 +326,12 @@ fn route(
     }
     if req.method != "GET" && req.method != "HEAD" {
         return write_resp(stream, 405, "text/plain", NOT_A_WALK, false);
+    }
+    if req.path == "/api/floor" {
+        return match read_floor(cwd) {
+            Ok(body) => write_resp(stream, 200, "text/plain; charset=utf-8", &body, head),
+            Err(msg) => write_resp(stream, 500, "text/plain", msg, head),
+        };
     }
     if req.path == "/" || req.path == "/index.html" {
         return write_resp(stream, 200, "text/html; charset=utf-8", &page_html(), head);
@@ -1545,6 +1595,17 @@ mod tests {
         String::new()
     }
 
+    const PAUSE_CLASS: &str = "Publish, delete, or leave this machine.";
+
+    fn question_display(func: &str, queue: &str) -> String {
+        let q = question_shown(func, queue);
+        if q.is_empty() {
+            String::new()
+        } else {
+            format!("{q}\n{PAUSE_CLASS}")
+        }
+    }
+
     #[test]
     fn chat_send_loads_only_on_exit_zero() {
         let page = page_html();
@@ -1581,6 +1642,21 @@ mod tests {
         assert!(!outside.contains("load("), "{outside}");
     }
 
+    const QUESTION_TEXT_FN: &str = "function questionText(queue) {\n  const q = questionLine(queue);\n  if (q === \"\") return \"\";\n  return q + \"\\nPublish, delete, or leave this machine.\";\n}\n";
+
+    const FLOOR_LOAD_FOR: &str = r#"  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
+    const el = document.getElementById(id);
+    try {
+      const res = await fetch(path, { method: "GET" });
+      el.textContent = await res.text();
+    } catch (e) {
+      el.textContent = String(e);
+    }
+    if (id === "factory") {
+      document.getElementById("question").textContent = questionText(el.textContent);
+    }
+  }"#;
+
     #[test]
     fn question_is_filled_only_for_paused_or_escalated() {
         let page = page_html();
@@ -1588,24 +1664,21 @@ mod tests {
         assert!(page.contains("id=\"c-kind\" type=\"text\" value=\"source\""));
         assert_eq!(page.matches("/api/factory").count(), 1);
         assert!(!page.contains("/api/question"));
+        assert!(!page.contains("innerHTML"));
         let func = between(&page, "function questionLine", "\nasync function load");
+        assert!(!func.contains("Publish"));
+        assert!(!func.contains("restore_all"));
+        assert!(!func.contains("fetch("));
+        assert!(!func.contains("merge"));
+        assert!(!func.contains("herdr-init"));
         let load = between(
             &page,
             "async function load()",
             "\ndocument.getElementById(\"reload\")",
         );
+        assert!(load.contains("[\"walk\",\"/api/walk\"]"));
         assert!(load.contains("[\"factory\",\"/api/factory\"]"));
         assert!(load.contains("[\"chat\",\"/api/chat\"]"));
-        assert!(load.contains(
-            "document.getElementById(\"question\").textContent = questionLine(el.textContent)"
-        ));
-        let filled = load
-            .find("el.textContent = await res.text()")
-            .expect("factory fill");
-        let asked = load
-            .find("questionLine(el.textContent)")
-            .expect("question from factory text");
-        assert!(filled < asked);
         assert!(load.contains("if (id === \"factory\")"));
         assert_eq!(load.matches("fetch(").count(), 1);
         let show = |queue: &str| question_shown(func, queue);
@@ -1629,6 +1702,62 @@ mod tests {
         );
         assert_eq!(show("no-space\nD paused\n"), "1 D");
         assert!(!show("A paused\n").contains('2'));
+        let display = |queue: &str| question_display(func, queue);
+        for queue in [
+            "",
+            "idle",
+            "A waiting\n",
+            "door waiting\n",
+            "A paused extra\n",
+        ] {
+            let got = display(queue);
+            assert_eq!(got, "", "{queue:?} -> {got:?}");
+            assert!(!got.contains("Publish"), "{queue:?}");
+        }
+        let paused = display("A paused");
+        assert!(paused.starts_with("1 A"), "{paused}");
+        assert_eq!(paused.matches(PAUSE_CLASS).count(), 1, "{paused}");
+        assert_eq!(display("A escalated\n"), format!("1 A\n{PAUSE_CLASS}"));
+        assert_eq!(
+            display("A waiting\nB paused\nC escalated\n"),
+            format!("1 B\n{PAUSE_CLASS}")
+        );
+        assert_eq!(
+            display("queue\nA dispatched\nB paused\ngraph\nA -\nB A\npaused\nB\nescalated\n"),
+            format!("1 B\n{PAUSE_CLASS}")
+        );
+        let listener = chat_send_listener(&page);
+        assert!(!listener.contains(PAUSE_CLASS), "{listener}");
+        assert!(!page.contains(&format!(">{PAUSE_CLASS}<")));
+        for banned in ["setInterval", "setTimeout", "EventSource", "WebSocket"] {
+            assert!(!page.contains(banned), "{banned}");
+        }
+        assert!(
+            load.contains(
+                "document.getElementById(\"question\").textContent = questionText(el.textContent)"
+            ),
+            "questionText is absent; load is:\n{load}"
+        );
+        let filled = load
+            .find("el.textContent = await res.text()")
+            .expect("factory fill");
+        let asked = load
+            .find("questionText(el.textContent)")
+            .expect("question from factory text");
+        assert!(filled < asked);
+        assert!(!load.contains("questionLine(el.textContent)"), "{load}");
+        assert!(
+            load.contains("[\"floor\",\"/api/floor\"]"),
+            "load does not fetch /api/floor"
+        );
+        assert_eq!(load.matches(FLOOR_LOAD_FOR).count(), 1, "{load}");
+        assert_eq!(load.matches("questionText(el.textContent)").count(), 1);
+        assert_eq!(page.matches("function questionText").count(), 1);
+        assert_eq!(load.matches("function questionText").count(), 0);
+        let qtext = between(&page, "function questionText", "function questionLine");
+        assert_eq!(qtext, QUESTION_TEXT_FN);
+        assert!(!qtext.contains("c-kind"), "{qtext}");
+        assert!(!qtext.contains("c-line"), "{qtext}");
     }
 
     #[test]
@@ -2808,5 +2937,350 @@ mod tests {
         assert!(head.contains("X-Crucible-Exit: 0"), "{head}");
         assert_eq!(body, &[0xff]);
         assert!(!body.windows(3).any(|w| w == [0xef, 0xbf, 0xbd]));
+    }
+
+    const FLOOR_BOARD: &str = "\
+station: BUILD
+card: NEXT RED
+wip: slice-1
+andon: -
+independence: SUBAGENT-ISOLATED
+elapsed: 12
+evidence:
+  .wm/FALSIFIER
+  reviews/review.md
+";
+
+    fn write_floor(root: &Path, bytes: &[u8]) -> PathBuf {
+        let wm = root.join(".wm");
+        fs::create_dir_all(&wm).unwrap();
+        let path = wm.join("FLOOR.md");
+        fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    fn wm_entries(root: &Path) -> Vec<String> {
+        let mut names = Vec::new();
+        for ent in fs::read_dir(root.join(".wm")).unwrap() {
+            names.push(ent.unwrap().file_name().to_string_lossy().into_owned());
+        }
+        names.sort();
+        names
+    }
+
+    fn assert_wm_quiet(root: &Path) {
+        let wm = root.join(".wm");
+        assert!(!wm.join("TRACE.tsv").exists());
+        assert!(!wm.join("EVENTS").exists());
+        assert!(!marker(root));
+    }
+
+    #[test]
+    fn floor_pre_sits_between_walk_and_factory() {
+        let page = page_html();
+        assert!(page.contains("<pre id=\"walk\"></pre>"));
+        assert!(page.contains("<pre id=\"factory\"></pre>\n<pre id=\"question\"></pre>\n"));
+        assert!(!page.contains("<pre id=\"walk\">station:"));
+        assert!(!page.contains("<pre id=\"factory\">station:"));
+        assert!(
+            page.contains("<h2>Walk</h2><pre id=\"walk\"></pre>\n<h2>Floor</h2><pre id=\"floor\"></pre>\n<h2>Factory</h2><pre id=\"factory\"></pre>\n<pre id=\"question\"></pre>\n"),
+            "Floor pre is absent"
+        );
+    }
+
+    #[test]
+    fn floor_get_returns_the_planted_file() {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 4);
+        let path = write_floor(&tmp.root, FLOOR_BOARD.as_bytes());
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/api/floor", "{\"n\":1}", "application/json", None),
+        );
+        assert_eq!(fs::read(&path).unwrap(), FLOOR_BOARD.as_bytes());
+        assert!(!marker(&tmp.root));
+        assert_eq!(body, "POST is not a walk\n");
+        assert_eq!(code, 405, "{body}");
+        let (walk_code, _, walk_body) = exchange(&addr, &simple("GET", "/api/walk"));
+        assert_ne!(walk_body, FLOOR_BOARD);
+        assert!(
+            walk_code != 200 || !walk_body.contains("station: BUILD"),
+            "{walk_code} {walk_body}"
+        );
+        let (code, headers, body) = exchange(&addr, &simple("GET", "/api/floor"));
+        assert_eq!(fs::read(&path).unwrap(), FLOOR_BOARD.as_bytes());
+        assert_eq!(wm_entries(&tmp.root), vec!["FLOOR.md".to_string()]);
+        assert_wm_quiet(&tmp.root);
+        assert_no_cors(&headers);
+        assert_eq!(code, 200, "{body}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("text/plain; charset=utf-8"),
+            "{headers}"
+        );
+        assert_eq!(body, FLOOR_BOARD);
+        let (code, headers, body) = exchange(&addr, &simple("HEAD", "/api/floor"));
+        assert_eq!(fs::read(&path).unwrap(), FLOOR_BOARD.as_bytes());
+        assert_wm_quiet(&tmp.root);
+        assert_eq!(code, 200, "{headers}");
+        assert!(body.is_empty(), "{body}");
+        assert!(
+            headers.to_ascii_lowercase().contains("content-length: 0"),
+            "{headers}"
+        );
+    }
+
+    #[test]
+    fn floor_missing_is_empty_and_creates_nothing() {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let (code, headers, body) = exchange(&addr, &simple("GET", "/api/floor"));
+        assert!(!tmp.root.join(".wm").exists());
+        assert!(!marker(&tmp.root));
+        assert_no_cors(&headers);
+        assert_eq!(code, 200, "{body}");
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn floor_over_cap_is_too_large() {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let bytes = vec![b'x'; 262_144 + 1];
+        let path = write_floor(&tmp.root, &bytes);
+        let (code, _, body) = exchange(&addr, &simple("GET", "/api/floor"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_wm_quiet(&tmp.root);
+        assert_eq!(code, 500, "{body}");
+        assert_eq!(body, "floor too large\n");
+    }
+
+    #[test]
+    fn floor_non_utf8_is_unreadable() {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        let addr = start_server(&tmp.root, &exe, 1);
+        let bytes = [0xff, 0xfe];
+        let path = write_floor(&tmp.root, &bytes);
+        let (code, _, body) = exchange(&addr, &simple("GET", "/api/floor"));
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+        assert_wm_quiet(&tmp.root);
+        assert_eq!(code, 500, "{body}");
+        assert_eq!(body, "floor unreadable\n");
+    }
+
+    // One connect and one read. A retry would hide a handler blocked in File::open.
+    #[cfg(unix)]
+    fn floor_once(addr: &str) -> (u16, String, String) {
+        let mut stream =
+            TcpStream::connect(addr).unwrap_or_else(|err| panic!("connect {addr}: {err}"));
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        stream.write_all(&simple("GET", "/api/floor")).unwrap();
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        let mut buf = Vec::new();
+        let read = stream.read_to_end(&mut buf);
+        assert!(!buf.is_empty(), "empty buffer: {read:?}");
+        split_resp(&buf)
+    }
+
+    #[cfg(unix)]
+    fn floor_request(root: &Path) -> (u16, String) {
+        let exe = sleeper(root);
+        let addr = start_server(root, &exe, 1);
+        let (code, _, body) = floor_once(&addr);
+        (code, body)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_regular_floor_does_not_block() {
+        use std::os::unix::fs::FileTypeExt;
+
+        // FIFO first. This client does not open the write end.
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let path = wm.join("FLOOR.md");
+            let status = Command::new("mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap_or_else(|err| panic!("mkfifo: {err}"));
+            assert!(status.success(), "mkfifo: {status}");
+            let (code, body) = floor_request(&tmp.root);
+            assert!(fs::metadata(&path).unwrap().file_type().is_fifo());
+            assert_eq!(wm_entries(&tmp.root), vec!["FLOOR.md".to_string()]);
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let fifo = tmp.root.join("held.fifo");
+            let status = Command::new("mkfifo").arg(&fifo).status().unwrap();
+            assert!(status.success(), "{status}");
+            let abs = fifo.canonicalize().unwrap();
+            let path = wm.join("FLOOR.md");
+            std::os::unix::fs::symlink(&abs, &path).unwrap();
+            assert!(fs::metadata(&path).unwrap().file_type().is_fifo());
+            let (code, body) = floor_request(&tmp.root);
+            assert!(fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert!(fs::metadata(&path).unwrap().file_type().is_fifo());
+            assert!(fs::metadata(&abs).unwrap().file_type().is_fifo());
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let path = wm.join("FLOOR.md");
+            let missing = tmp
+                .root
+                .canonicalize()
+                .unwrap()
+                .join("missing-floor-target");
+            std::os::unix::fs::symlink(&missing, &path).unwrap();
+            assert_eq!(fs::metadata(&path).unwrap_err().kind(), ErrorKind::NotFound);
+            assert!(fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            let (code, body) = floor_request(&tmp.root);
+            assert!(fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(wm_entries(&tmp.root), vec!["FLOOR.md".to_string()]);
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let path = wm.join("FLOOR.md");
+            fs::create_dir(&path).unwrap();
+            let (code, body) = floor_request(&tmp.root);
+            assert!(path.is_dir());
+            assert!(fs::read_dir(&path).unwrap().next().is_none());
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let path = wm.join("FLOOR.md");
+            let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+            let (code, body) = floor_request(&tmp.root);
+            assert!(fs::symlink_metadata(&path).unwrap().file_type().is_socket());
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+            drop(listener);
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let path = wm.join("FLOOR.md");
+            std::os::unix::fs::symlink("/dev/null", &path).unwrap();
+            assert!(!fs::metadata(&path).unwrap().is_file());
+            let (code, body) = floor_request(&tmp.root);
+            assert!(fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert!(!fs::metadata(&path).unwrap().is_file());
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 500, "{body}");
+            assert_eq!(body, "floor unreadable\n");
+        }
+        {
+            let tmp = Tmp::new();
+            let wm = tmp.root.join(".wm");
+            fs::create_dir_all(&wm).unwrap();
+            let board = tmp.root.join("seven.md");
+            fs::write(&board, FLOOR_BOARD).unwrap();
+            let abs = board.canonicalize().unwrap();
+            let path = wm.join("FLOOR.md");
+            std::os::unix::fs::symlink(&abs, &path).unwrap();
+            assert!(fs::metadata(&path).unwrap().is_file());
+            let (code, body) = floor_request(&tmp.root);
+            assert_eq!(fs::read(&abs).unwrap(), FLOOR_BOARD.as_bytes());
+            assert_wm_quiet(&tmp.root);
+            assert_eq!(code, 200, "{body}");
+            assert_eq!(body, FLOOR_BOARD);
+        }
+    }
+
+    fn this_file_source() -> String {
+        let raw = Path::new(file!());
+        if let Ok(text) = fs::read_to_string(raw) {
+            return text;
+        }
+        // file!() is workspace-relative when paths are trimmed. The test cwd is the package.
+        let mut dir = std::env::current_dir().expect("cwd");
+        loop {
+            if let Ok(text) = fs::read_to_string(dir.join(raw)) {
+                return text;
+            }
+            if !dir.pop() {
+                break;
+            }
+        }
+        panic!("cannot read {}", raw.display());
+    }
+
+    #[test]
+    fn floor_reader_source_is_bounded() {
+        let src = this_file_source();
+        let name = ["fn ", "read", "_floor"].concat();
+        let start = src
+            .find(&name)
+            .unwrap_or_else(|| panic!("floor reader is absent"));
+        let rest = &src[start..];
+        let next = rest.find("\nfn ").unwrap_or_else(|| panic!("next fn"));
+        let slice = &rest[..next];
+        assert_eq!(
+            slice.matches("file.take((FLOOR_CAP as u64) + 1)").count(),
+            1,
+            "{slice}"
+        );
+        assert_eq!(
+            slice.matches("limited.read_to_end(&mut bytes)").count(),
+            1,
+            "{slice}"
+        );
+        assert_eq!(
+            slice.matches("bytes.len() > FLOOR_CAP").count(),
+            1,
+            "{slice}"
+        );
+        assert_eq!(slice.matches("File::open").count(), 1, "{slice}");
+        assert_eq!(slice.matches("read_to_end").count(), 1, "{slice}");
+        assert_eq!(slice.matches(".len()").count(), 1, "{slice}");
+        assert!(slice.contains("bytes.len()"), "{slice}");
+        assert!(slice.contains("symlink_metadata"), "{slice}");
+        assert!(!slice.contains("OpenOptions"), "{slice}");
+        assert!(!slice.contains("fs::read"), "{slice}");
     }
 }
