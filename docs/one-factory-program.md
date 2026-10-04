@@ -40,7 +40,7 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S7 | done `863f94e` | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
 | S8 | done `1a1d481` | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
 | S9 | done `f1f588b` | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
-| S10 | open | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
+| S10 | done `378091e` | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
 
 ## S3 design
 
