@@ -32,8 +32,14 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | --- | --- | --- | --- |
 | S0 | done `91f9400` | This board | This file is on `main` and names every slice below |
 | S1 | done `2ab3b34` | Queue text matches the printer | `source_legal_id_creates_an_orders_row_and_queue_prints_waiting` expects the four sections. The page test that treats `door waiting` as not a pause stays |
-| S2 | open | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
-| S3 | waiting | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
+| S2 | done `3b1bd6f` | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
+| S3 | open | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
+
+## S3 design
+
+`agent_records` reads `attempts/<id>/meta.tsv` and that attempt's `events.tsv`. It does not spawn a process, read a process list, or write a file. One line per agent name. The row kept for an agent is the attempt whose last event epoch is greater. Names sort. The text is the heading `agents` and then `name state`.
+
+`DISPATCHED` is `new`. `RUNNING` and `OVERDUE` are `in progress`. `RETURNED`, `TIMEOUT`, `STOPPED`, and `ABANDONED` are `finished`. Any other state is skipped. An agent with no attempt is absent.
 | S4 | waiting | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
 | S5 | waiting | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
 | S6 | waiting | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
