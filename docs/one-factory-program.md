@@ -2,7 +2,7 @@
 
 The board for the eleven notes. Chat is not the record. Update the status row in the same change that moves a slice. Slices run one at a time. Do not start the next slice while the current pull request is open.
 
-Home is `/Users/medhat.galal/Desktop/crucible`. Do not install this into another repository. `VERSION` stays `1.28.0` until a release is requested. Do not edit `~/.config/herdr/config.toml`. Do not create a Herdr workspace. Do not displace herdr-init.
+Home is this checkout. Do not install this into another repository. `VERSION` stays `1.28.0` until a release is requested. Do not edit `~/.config/herdr/config.toml`. Do not create a Herdr workspace. Do not displace herdr-init.
 
 ## Decisions recorded 2026-10-04
 
