@@ -30,8 +30,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 
 | Id | Status | Work | Done when |
 | --- | --- | --- | --- |
-| S0 | open | This board | This file is on `main` and names every slice below |
-| S1 | next | Queue text matches the printer | `source_legal_id_creates_an_orders_row_and_queue_prints_waiting` expects the four sections. The page test that treats `door waiting` as not a pause stays |
+| S0 | done `91f9400` | This board | This file is on `main` and names every slice below |
+| S1 | open | Queue text matches the printer | `source_legal_id_creates_an_orders_row_and_queue_prints_waiting` expects the four sections. The page test that treats `door waiting` as not a pause stays |
 | S2 | waiting | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
 | S3 | waiting | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
 | S4 | waiting | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |

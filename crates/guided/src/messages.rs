@@ -245,7 +245,10 @@ door\t-\torders/door.paths\torders/door.verify.sh
 "
         );
         assert!(!dir.join("orders").exists());
-        assert_eq!(append(&dir, &["queue"], &clock).unwrap(), "door waiting\n");
+        assert_eq!(
+            append(&dir, &["queue"], &clock).unwrap(),
+            "queue\ndoor waiting\ngraph\ndoor -\npaused\nescalated\n"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
