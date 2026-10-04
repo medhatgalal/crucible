@@ -37,8 +37,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S4 | done `5bd2bbb` | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
 | S5 | done `608947c` | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
 | S6 | done `b7beabb` | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
-| S7 | open | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
-| S8 | waiting | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
+| S7 | done `863f94e` | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
+| S8 | open | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
 | S9 | waiting | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
 | S10 | waiting | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
 
@@ -89,6 +89,14 @@ The question text stays empty unless a queue line is `paused` or `escalated`. Th
 `Recommend 3. Leave keeps the work here.` A waiting line, `door waiting`, and an idle queue show neither the sentence nor the choices. The essay is not a second queue, not a new route, and not a message kind. It does not fetch. The send button does not contain it.
 
 Proof: `paused_line_shows_the_options_beside_the_pause_sentence`.
+
+## S8 design
+
+`crucible keys PANE KEY...` types those key names into one pane. It reads the workspace label in this checkout's `.crucible/herdr/workspace`, lists Herdr workspaces, and keeps the one workspace whose label matches and whose cwd is this checkout. It lists panes with `--workspace` that id. The pane must be in that list. The keys go to `herdr pane send-keys` for that pane only.
+
+A pane that is not in that list is refused, and no keys are sent. A key or pane that starts with `-` is refused, so the command cannot pass `--machine` or `--remote`. It does not create, close, or rename a workspace. It does not read Herdr's config file. It does not call `pane run`. It does not start `orchestrate run`.
+
+Proof: `keys_type_into_the_joined_workspace_pane_only`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 

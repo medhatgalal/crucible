@@ -577,6 +577,104 @@ fn tab_create_failed(role: &str) -> String {
     )
 }
 
+/// Type `keys` into one pane of the workspace this checkout already joined.
+/// Does not create a workspace, read Herdr config, or pass `--machine` or `--remote`.
+pub fn type_into_pane(
+    path: &OsStr,
+    herdr_override: Option<&OsStr>,
+    cwd: &Path,
+    pane: &str,
+    keys: &[&str],
+) -> Result<String, String> {
+    pane_token(pane)?;
+    if keys.is_empty() {
+        return Err("usage: crucible keys PANE KEY...".to_string());
+    }
+    for key in keys {
+        key_token(key)?;
+    }
+    let herdr = keys_herdr(path, herdr_override)?;
+    let label = workspace_label(&cwd.join(".crucible/herdr/workspace"))?;
+    let listed = herdr_ok(&herdr, &["workspace", "list"])?;
+    let workspace_id = select_workspace(&listed, &label, cwd)?;
+    let panes = herdr_ok(&herdr, &["pane", "list", "--workspace", &workspace_id])?;
+    let ids = pane_ids(&panes)?;
+    if !ids.iter().any(|id| id == pane) {
+        return Err(format!(
+            "pane {pane} is not in the workspace this checkout joined"
+        ));
+    }
+    let mut args = vec!["pane", "send-keys", pane];
+    args.extend(keys);
+    herdr_ok(&herdr, &args)?;
+    Ok(format!("typed {pane} {}\n", keys.join(" ")))
+}
+
+fn keys_herdr(path: &OsStr, override_bin: Option<&OsStr>) -> Result<PathBuf, String> {
+    if let Some(found) = resolve_herdr(path) {
+        return Ok(found);
+    }
+    let Some(raw) = override_bin else {
+        return Err("herdr not found on PATH".to_string());
+    };
+    let candidate = PathBuf::from(raw);
+    if is_executable(&candidate) {
+        Ok(candidate)
+    } else {
+        Err(format!(
+            "herdr not found on PATH; {} is missing or not executable",
+            candidate.display()
+        ))
+    }
+}
+
+fn pane_token(pane: &str) -> Result<(), String> {
+    if pane.is_empty()
+        || pane.starts_with('-')
+        || pane.contains('/')
+        || pane.contains('\\')
+        || pane.bytes().any(|b| b.is_ascii_whitespace())
+    {
+        return Err(format!("refusing pane {pane}"));
+    }
+    Ok(())
+}
+
+fn key_token(key: &str) -> Result<(), String> {
+    if key.is_empty() || key.starts_with('-') || key.bytes().any(|b| b.is_ascii_whitespace()) {
+        return Err(format!("refusing key {key}"));
+    }
+    Ok(())
+}
+
+fn pane_ids(text: &str) -> Result<Vec<String>, String> {
+    let value = parse_json(text)?;
+    let mut ids = Vec::new();
+    collect_ids(&value, "pane_id", &mut ids);
+    Ok(ids)
+}
+
+fn collect_ids(value: &Value, key: &str, out: &mut Vec<String>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(id) = map.get(key).and_then(Value::as_str) {
+                if !out.iter().any(|seen| seen == id) {
+                    out.push(id.to_string());
+                }
+            }
+            for child in map.values() {
+                collect_ids(child, key, out);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                collect_ids(child, key, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn herdr_ok(bin: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new(bin)
         .args(args)
@@ -870,6 +968,77 @@ exit 0
             !log.split_whitespace().any(|word| word == "server"),
             "server in log:\n{log}"
         );
+    }
+
+    #[test]
+    fn keys_type_into_the_joined_workspace_pane_only() {
+        let tmp = Tmp::new();
+        let dir = tmp.root.join(".crucible/herdr");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("workspace"), "crucible\n").unwrap();
+        let cwd = tmp.root.display().to_string();
+        let list = serde_json::json!({
+            "result": {"workspaces": [
+                {"workspace_id": "ws-here", "label": "crucible", "cwd": cwd},
+                {"workspace_id": "ws-other", "label": "other", "cwd": "/elsewhere"}
+            ]}
+        })
+        .to_string();
+        let herdr = write_fake(
+            &tmp,
+            &FakeSpec {
+                workspace_list: Some(list),
+                panes: r#"{"result":{"panes":[{"pane_id":"pane-chat","tab_id":"tab-chat"}]}}"#,
+                ..FakeSpec::default()
+            },
+        );
+        let empty = std::ffi::OsStr::new("");
+        let bin = herdr.as_os_str();
+        let refused =
+            type_into_pane(empty, Some(bin), &tmp.root, "pane-chat", &["--machine"]).unwrap_err();
+        assert_eq!(refused, "refusing key --machine");
+        assert!(!tmp.root.join("herdr.log").exists());
+        let typed = type_into_pane(empty, Some(bin), &tmp.root, "pane-chat", &["esc"]).unwrap();
+        assert_eq!(typed, "typed pane-chat esc\n");
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.lines().any(|line| line == "workspace list"), "{log}");
+        assert!(
+            log.lines()
+                .any(|line| line == "pane list --workspace ws-here"),
+            "{log}"
+        );
+        assert!(
+            log.lines()
+                .any(|line| line == "pane send-keys pane-chat esc"),
+            "{log}"
+        );
+        assert!(!log.contains("--workspace ws-other"), "{log}");
+        assert!(!log.contains("--machine"), "{log}");
+        assert!(!log.contains("--remote"), "{log}");
+        assert!(!log.contains("workspace create"), "{log}");
+        assert!(!log.contains("pane run"), "{log}");
+        assert!(!log.contains("config.toml"), "{log}");
+        let foreign =
+            type_into_pane(empty, Some(bin), &tmp.root, "pane-other", &["esc"]).unwrap_err();
+        assert_eq!(
+            foreign,
+            "pane pane-other is not in the workspace this checkout joined"
+        );
+        let after = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert_eq!(
+            after
+                .lines()
+                .filter(|line| *line == "pane send-keys pane-chat esc")
+                .count(),
+            1,
+            "{after}"
+        );
+        fs::remove_file(dir.join("workspace")).unwrap();
+        let missing =
+            type_into_pane(empty, Some(bin), &tmp.root, "pane-chat", &["esc"]).unwrap_err();
+        assert!(missing.contains("is missing"), "{missing}");
+        let still = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert_eq!(still, after);
     }
 
     #[test]
