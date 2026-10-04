@@ -1619,6 +1619,14 @@ mod tests {
         assert!(listener.contains(
             "args: [\"manager\", document.getElementById(\"c-kind\").value, document.getElementById(\"c-line\").value]"
         ));
+        assert!(
+            !listener.contains("\"source\""),
+            "send posts the kind field, not a fixed source"
+        );
+        assert!(
+            !listener.contains("\"answer\""),
+            "send posts the kind field, not a fixed answer"
+        );
         assert!(listener.contains("res.headers.get(\"X-Crucible-Exit\")"));
         assert!(!listener.contains(".value ="));
         for banned in ["setTimeout", "setInterval", "EventSource", "WebSocket"] {
