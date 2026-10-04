@@ -35,8 +35,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S2 | done `3b1bd6f` | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
 | S3 | done `391c369` | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
 | S4 | done `5bd2bbb` | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
-| S5 | open | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
-| S6 | waiting | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
+| S5 | done `608947c` | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
+| S6 | open | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
 | S7 | waiting | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
 | S8 | waiting | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
 | S9 | waiting | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
@@ -63,6 +63,20 @@ Proof: `agent_process_reports_the_recorded_pid_only`. A dash pid stays `stopped`
 The page heading Dashboard loads `GET /api/dashboard`. The `dashboard` verb prints the same text for the program root. Neither is a second queue.
 
 Proof: `dashboard_shows_records_that_exist_and_not_the_queue` and `dashboard_uses_one_guided_program_beside_the_served_directory`.
+
+## S6 design
+
+`attempt stop`, `attempt resume`, `attempt restart`, and `attempt correct` are subcommands of the existing `attempt` verb. None calls `orchestrate run`. None spawns a worker. None is `drive stop`.
+
+`attempt stop ATTEMPT` requires `RUNNING` or `OVERDUE`. It reads the recorded pid. A pid of 2 or more is signaled with `kill -TERM` on that pid only, not its process group. A pid of `-` or empty is not signaled. A pid below 2 is refused with `refusing pid N`, and `STOPPED` is not written. A failed signal does not write `STOPPED`. On success it records `STOPPED` with reason `operator-stop` and blocks the item the same way `attempt finish` does.
+
+`attempt resume ATTEMPT` requires `STOPPED`. The recorded pid must still be alive. A dead pid is refused with `resume requires the recorded pid of ATTEMPT to be alive`, nothing is spawned, and the events stay as they were. A live pid records `RUNNING` with reason `operator-resume` and sets the item `ACTIVE` with that same attempt in flight. The only exit from a terminal state is `STOPPED` to `RUNNING`, and only through this command.
+
+`attempt restart ATTEMPT NEW` requires `STOPPED`. `NEW` must be an attempt id that does not already exist. It copies the attempt meta, sets the new id, state `DISPATCHED`, and `retry_of` to the old id. The new events row is `DISPATCHED` with pid `-` and reason `restart`. The item becomes `ACTIVE` with the new attempt in flight. The old attempt stays `STOPPED`. Nothing is spawned or signaled.
+
+`attempt correct ATTEMPT TEXT` records one manager message of kind `correction`. It does not print the messages path, does not add an orders row, and does not clear a pause.
+
+Proof: `stop_signals_the_recorded_pid_and_refuses_pid_one`, `resume_requires_the_recorded_pid_to_be_alive`, `restart_records_a_new_dispatched_attempt_without_spawning`, and `correct_records_a_manager_correction_and_leaves_the_pause`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 

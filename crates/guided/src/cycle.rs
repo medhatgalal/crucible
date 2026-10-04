@@ -1328,7 +1328,7 @@ pub(crate) fn attempt_dir(root: &Path, id: &str) -> Result<PathBuf, GuidedError>
     Ok(path)
 }
 
-fn valid_attempt_id(id: &str) -> bool {
+pub(crate) fn valid_attempt_id(id: &str) -> bool {
     if id.is_empty()
         || !id
             .bytes()
@@ -1430,6 +1430,28 @@ pub(crate) fn attempt_event(
     pid: &str,
     reason: &str,
 ) -> Result<(), GuidedError> {
+    attempt_event_inner(root, clock, id, new, pid, reason, false)
+}
+
+/// `STOPPED` to `RUNNING` only. Every other terminal state stays terminal.
+pub(crate) fn attempt_resume_event(
+    root: &Path,
+    clock: &dyn Clock,
+    id: &str,
+    pid: &str,
+) -> Result<(), GuidedError> {
+    attempt_event_inner(root, clock, id, "RUNNING", pid, "operator-resume", true)
+}
+
+fn attempt_event_inner(
+    root: &Path,
+    clock: &dyn Clock,
+    id: &str,
+    new: &str,
+    pid: &str,
+    reason: &str,
+    resume_stopped: bool,
+) -> Result<(), GuidedError> {
     if reason.contains('\t') || reason.contains('\n') {
         return Err(message("attempt reason must be one line without tabs"));
     }
@@ -1440,7 +1462,8 @@ pub(crate) fn attempt_event(
     }
     let result = (|| {
         let old = attempt_state(root, id)?;
-        if attempt_terminal(&old) {
+        let resume = resume_stopped && old == "STOPPED" && new == "RUNNING";
+        if attempt_terminal(&old) && !resume {
             return Err(message(format!("attempt {id} is terminal: {old}")));
         }
         let events = ad.join("events.tsv");
