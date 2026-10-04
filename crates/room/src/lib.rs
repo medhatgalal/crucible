@@ -1214,6 +1214,83 @@ exit 0
     }
 
     #[test]
+    fn room_joins_the_existing_workspace_and_leaves_herdr_init() {
+        let tmp = Tmp::new();
+        plant_layout(&tmp.root);
+        let cwd = tmp.root.display().to_string();
+        let list = serde_json::json!({
+            "result": {"workspaces": [{
+                "workspace_id": "ws-here",
+                "label": "crucible",
+                "cwd": cwd
+            }]}
+        })
+        .to_string();
+        let init_cfg = b"herdr-init config stays\n";
+        let init_skill = b"herdr-init skill stays\n";
+        let home_cfg = b"herdr config stays\n";
+        let init = tmp.root.join("herdr-init");
+        fs::create_dir_all(&init).unwrap();
+        fs::write(init.join("config.toml"), init_cfg).unwrap();
+        fs::write(init.join("SKILL.md"), init_skill).unwrap();
+        let home = tmp.root.join("home").join(".config").join("herdr");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join("config.toml"), home_cfg).unwrap();
+        let workspace_before = fs::read(tmp.root.join(".crucible/herdr/workspace")).unwrap();
+        let roles_before = fs::read(tmp.root.join(".crucible/herdr/roles")).unwrap();
+        let body = serde_json::json!({
+            "ok": true,
+            "version": product_version()
+        })
+        .to_string();
+        let srv = HealthSrv::start(body);
+        let herdr = write_fake(
+            &tmp,
+            &FakeSpec {
+                workspace_list: Some(list),
+                ..FakeSpec::default()
+            },
+        );
+        let exe = spawn_marker(&tmp);
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let code = drive(
+            &exe,
+            &tmp.root,
+            herdr.parent().unwrap().as_os_str(),
+            None,
+            &srv.addr,
+            &mut out,
+            &mut err,
+        );
+        let stdout = String::from_utf8(out).unwrap();
+        let stderr = String::from_utf8(err).unwrap();
+        assert_eq!(code, 0, "stdout={stdout} stderr={stderr}");
+        assert!(stdout.contains("workspace ws-here"), "{stdout}");
+        assert!(stdout.contains("go not started"), "{stdout}");
+        assert!(!stdout.contains("orchestrator started"), "{stdout}");
+        let log = fs::read_to_string(tmp.root.join("herdr.log")).unwrap();
+        assert!(log.contains("workspace list"), "{log}");
+        assert_join_log(&log);
+        assert_eq!(fs::read(init.join("config.toml")).unwrap(), init_cfg);
+        assert_eq!(fs::read(init.join("SKILL.md")).unwrap(), init_skill);
+        assert_eq!(fs::read(home.join("config.toml")).unwrap(), home_cfg);
+        assert_eq!(
+            fs::read(tmp.root.join(".crucible/herdr/workspace")).unwrap(),
+            workspace_before
+        );
+        assert_eq!(
+            fs::read(tmp.root.join(".crucible/herdr/roles")).unwrap(),
+            roles_before
+        );
+        assert!(!tmp.root.join(".wm").exists(), "room must not write TRACE");
+        assert!(
+            !tmp.root.join("SPAWNED").exists(),
+            "a matching health response must not spawn"
+        );
+    }
+
+    #[test]
     fn guided_room_starts_the_orchestrator_and_not_go() {
         let tmp = Tmp::new();
         plant_layout(&tmp.root);
