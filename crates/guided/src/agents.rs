@@ -85,6 +85,52 @@ fn last_event(path: &Path) -> Option<(String, u64)> {
     found
 }
 
+/// One line for the attempt the factory recorded: `name state running`
+/// or `name state stopped`. `kill -0` is asked only about that pid.
+pub fn agent_process(root: &Path, attempt_id: &str) -> Result<String, GuidedError> {
+    let path = root.join("attempts").join(attempt_id);
+    let agent = agent_name(&path.join("meta.tsv"))
+        .ok_or_else(|| crate::message(format!("no attempt {attempt_id}")))?;
+    let (state, _) = last_event(&path.join("events.tsv"))
+        .ok_or_else(|| crate::message(format!("no attempt {attempt_id}")))?;
+    let word =
+        state_word(&state).ok_or_else(|| crate::message(format!("no attempt {attempt_id}")))?;
+    let motion = match last_pid(&path.join("events.tsv")) {
+        Some(pid) if process_alive(pid) => "running",
+        _ => "stopped",
+    };
+    Ok(format!("{agent} {word} {motion}\n"))
+}
+
+fn last_pid(path: &Path) -> Option<u32> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut pid = None;
+    for (idx, rec) in records(&text).into_iter().enumerate() {
+        if idx == 0 || rec.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = rec.split('\t').collect();
+        if let Ok(value) = fields.get(2).copied().unwrap_or("").trim().parse::<u32>() {
+            if value >= 2 {
+                pid = Some(value);
+            }
+        }
+    }
+    pid
+}
+
+fn process_alive(pid: u32) -> bool {
+    if pid < 2 {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 fn state_word(state: &str) -> Option<&'static str> {
     match state {
         "DISPATCHED" => Some("new"),
@@ -133,6 +179,78 @@ mod tests {
             agent_records(&dir).unwrap(),
             "agents\nada in progress\nbea new\ncy finished\n"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    struct Reap(std::process::Child);
+
+    #[cfg(unix)]
+    impl Drop for Reap {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_process_reports_the_recorded_pid_only() {
+        let dir = std::env::temp_dir().join(format!(
+            "crucible-agent-process-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let missing = agent_process(&dir, "A9.9.9").unwrap_err();
+        assert_eq!(missing.to_string(), "no attempt A9.9.9");
+
+        plant(&dir, "A1.2.3", "ada", "DISPATCHED", 1);
+        let decoy = Reap(
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        );
+        let decoy_pid = decoy.0.id();
+        assert!(decoy_pid >= 2);
+        let dashed = agent_process(&dir, "A1.2.3").unwrap();
+        assert_eq!(dashed, "ada new stopped\n");
+        assert!(
+            !dashed.contains(&decoy_pid.to_string()),
+            "unrecorded pid {decoy_pid} appeared in {dashed}"
+        );
+
+        let mut child = Reap(
+            std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id();
+        assert!(pid >= 2 && pid != decoy_pid);
+        fs::write(
+            dir.join("attempts").join("A1.2.3").join("events.tsv"),
+            format!(
+                "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tfixture\nRUNNING\t9\t{pid}\tobserved-start\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            agent_process(&dir, "A1.2.3").unwrap(),
+            "ada in progress running\n"
+        );
+
+        let _ = child.0.kill();
+        let _ = child.0.wait();
+        let stopped = agent_process(&dir, "A1.2.3").unwrap();
+        assert_eq!(stopped, "ada in progress stopped\n");
+        assert!(
+            !stopped.contains(&decoy_pid.to_string()),
+            "unrecorded pid {decoy_pid} appeared in {stopped}"
+        );
+        drop(decoy);
         let _ = fs::remove_dir_all(&dir);
     }
 }
