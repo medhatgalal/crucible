@@ -121,6 +121,7 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         "stats" => cmd_stats(rest, cwd, clock),
         "serve" => cmd_serve(rest, cwd, clock),
         "room" => cmd_room(rest, cwd),
+        "keys" => cmd_keys(rest, cwd),
         "camera" => cmd_camera(rest),
         "reap" => cmd_reap(rest),
         "web" => cmd_web(rest),
@@ -682,6 +683,31 @@ fn cmd_serve(args: &[String], cwd: &Path, clock: &dyn Clock) -> i32 {
         Err(crucible_http::ServeError::Io(m)) => {
             let _ = writeln!(io::stderr(), "{m}");
             1
+        }
+    }
+}
+
+fn cmd_keys(args: &[String], cwd: &Path) -> i32 {
+    if args.len() < 2 {
+        let _ = writeln!(io::stderr(), "usage: crucible keys PANE KEY...");
+        return 2;
+    }
+    let keys: Vec<&str> = args[1..].iter().map(String::as_str).collect();
+    let path = env::var_os("PATH").unwrap_or_default();
+    let over = env::var_os("CRUCIBLE_HERDR");
+    match crucible_room::type_into_pane(path.as_os_str(), over.as_deref(), cwd, &args[0], &keys) {
+        Ok(text) => {
+            print!("{text}");
+            let _ = io::stdout().flush();
+            0
+        }
+        Err(err) => {
+            let _ = writeln!(io::stderr(), "keys: {err}");
+            if err.starts_with("spawn herdr") || err.starts_with("herdr [") {
+                1
+            } else {
+                2
+            }
         }
     }
 }
