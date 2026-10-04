@@ -182,6 +182,9 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
                 root, &args, clock,
             ))
         }),
+        "handoff" => {
+            with_program_root(|root| guided_ok(crucible_guided::handoff::handoff(root, &args)))
+        }
         "ready" => {
             with_program_root(|root| guided_ok(crucible_guided::task::ready(root, &args, clock)))
         }

@@ -11,6 +11,7 @@ pub mod dashboard;
 pub mod dispatch;
 pub mod drive;
 pub mod grill;
+pub mod handoff;
 mod harness;
 pub mod inspect;
 pub mod messages;
