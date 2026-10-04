@@ -91,7 +91,7 @@ async function postAct(path, payload) {
 function questionText(queue) {
   const q = questionLine(queue);
   if (q === "") return "";
-  return q + "\nPublish, delete, or leave this machine.";
+  return q + "\nPublish, delete, or leave this machine.\n1. Publish. The work leaves this machine.\n2. Delete. The copy on this machine is removed.\n3. Leave. The work stays on this machine.\nRecommend 3. Leave keeps the work here.";
 }
 function questionLine(queue) {
   const lines = queue.split("\n");
@@ -1602,13 +1602,14 @@ mod tests {
     }
 
     const PAUSE_CLASS: &str = "Publish, delete, or leave this machine.";
+    const OPTIONS_ESSAY: &str = "1. Publish. The work leaves this machine.\n2. Delete. The copy on this machine is removed.\n3. Leave. The work stays on this machine.\nRecommend 3. Leave keeps the work here.";
 
     fn question_display(func: &str, queue: &str) -> String {
         let q = question_shown(func, queue);
         if q.is_empty() {
             String::new()
         } else {
-            format!("{q}\n{PAUSE_CLASS}")
+            format!("{q}\n{PAUSE_CLASS}\n{OPTIONS_ESSAY}")
         }
     }
 
@@ -1656,7 +1657,7 @@ mod tests {
         assert!(!outside.contains("load("), "{outside}");
     }
 
-    const QUESTION_TEXT_FN: &str = "function questionText(queue) {\n  const q = questionLine(queue);\n  if (q === \"\") return \"\";\n  return q + \"\\nPublish, delete, or leave this machine.\";\n}\n";
+    const QUESTION_TEXT_FN: &str = "function questionText(queue) {\n  const q = questionLine(queue);\n  if (q === \"\") return \"\";\n  return q + \"\\nPublish, delete, or leave this machine.\\n1. Publish. The work leaves this machine.\\n2. Delete. The copy on this machine is removed.\\n3. Leave. The work stays on this machine.\\nRecommend 3. Leave keeps the work here.\";\n}\n";
 
     const FLOOR_LOAD_FOR: &str = r#"  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["dashboard","/api/dashboard"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
@@ -1733,14 +1734,17 @@ mod tests {
         let paused = display("A paused");
         assert!(paused.starts_with("1 A"), "{paused}");
         assert_eq!(paused.matches(PAUSE_CLASS).count(), 1, "{paused}");
-        assert_eq!(display("A escalated\n"), format!("1 A\n{PAUSE_CLASS}"));
+        assert_eq!(
+            display("A escalated\n"),
+            format!("1 A\n{PAUSE_CLASS}\n{OPTIONS_ESSAY}")
+        );
         assert_eq!(
             display("A waiting\nB paused\nC escalated\n"),
-            format!("1 B\n{PAUSE_CLASS}")
+            format!("1 B\n{PAUSE_CLASS}\n{OPTIONS_ESSAY}")
         );
         assert_eq!(
             display("queue\nA dispatched\nB paused\ngraph\nA -\nB A\npaused\nB\nescalated\n"),
-            format!("1 B\n{PAUSE_CLASS}")
+            format!("1 B\n{PAUSE_CLASS}\n{OPTIONS_ESSAY}")
         );
         let listener = chat_send_listener(&page);
         assert!(!listener.contains(PAUSE_CLASS), "{listener}");
@@ -1774,6 +1778,63 @@ mod tests {
         assert_eq!(qtext, QUESTION_TEXT_FN);
         assert!(!qtext.contains("c-kind"), "{qtext}");
         assert!(!qtext.contains("c-line"), "{qtext}");
+    }
+
+    #[test]
+    fn paused_line_shows_the_options_beside_the_pause_sentence() {
+        let page = page_html();
+        let qtext = between(&page, "function questionText", "function questionLine");
+        let line = between(&page, "function questionLine", "\nasync function load");
+        assert!(qtext.contains(PAUSE_CLASS), "{qtext}");
+        assert!(
+            qtext.contains(&OPTIONS_ESSAY.replace('\n', "\\n")),
+            "{qtext}"
+        );
+        assert!(qtext.find(PAUSE_CLASS).unwrap() < qtext.find("1. Publish").unwrap());
+        assert!(!line.contains("1. Publish"), "{line}");
+        assert!(!line.contains("Recommend 3"), "{line}");
+        assert!(!page.contains("<h2>Options</h2>"));
+        assert!(!page.contains("/api/options"));
+        let display = |queue: &str| question_display(line, queue);
+        let paused = display("A paused");
+        assert_eq!(paused, format!("1 A\n{PAUSE_CLASS}\n{OPTIONS_ESSAY}"));
+        assert!(paused.find(PAUSE_CLASS).unwrap() < paused.find("1. Publish").unwrap());
+        assert_eq!(
+            paused
+                .matches("1. Publish. The work leaves this machine.")
+                .count(),
+            1,
+            "{paused}"
+        );
+        assert_eq!(
+            paused
+                .matches("2. Delete. The copy on this machine is removed.")
+                .count(),
+            1,
+            "{paused}"
+        );
+        assert_eq!(
+            paused
+                .matches("3. Leave. The work stays on this machine.")
+                .count(),
+            1,
+            "{paused}"
+        );
+        assert_eq!(
+            paused
+                .matches("Recommend 3. Leave keeps the work here.")
+                .count(),
+            1,
+            "{paused}"
+        );
+        for queue in ["", "idle", "door waiting\n", "A waiting\n"] {
+            let got = display(queue);
+            assert_eq!(got, "", "{queue:?} -> {got:?}");
+            assert!(!got.contains("1. Publish"), "{queue:?}");
+        }
+        let listener = chat_send_listener(&page);
+        assert!(!listener.contains("1. Publish"), "{listener}");
+        assert!(!listener.contains(PAUSE_CLASS), "{listener}");
     }
 
     #[test]
