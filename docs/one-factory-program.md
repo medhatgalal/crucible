@@ -34,8 +34,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S1 | done `2ab3b34` | Queue text matches the printer | `source_legal_id_creates_an_orders_row_and_queue_prints_waiting` expects the four sections. The page test that treats `door waiting` as not a pause stays |
 | S2 | done `3b1bd6f` | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
 | S3 | done `391c369` | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
-| S4 | open | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
-| S5 | waiting | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
+| S4 | done `5bd2bbb` | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
+| S5 | open | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
 | S6 | waiting | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
 | S7 | waiting | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
 | S8 | waiting | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
@@ -53,6 +53,16 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 `agent_process` reads one attempt id. It uses that attempt's agent name and the S3 state word, and the last numeric pid of at least 2 in that attempt's `events.tsv`. It runs `kill -0` on that pid only. The line is `name state running` or `name state stopped`. A pid below 2, a `-`, or a missing pid is `stopped`, and `kill` is not called. A live process the attempt did not record does not appear and does not change the line. This slice does not signal the process, scan a process list, or add a command.
 
 Proof: `agent_process_reports_the_recorded_pid_only`. A dash pid stays `stopped` while another process is alive. The recorded pid is `running` until that process exits, then `stopped`, even while the other process is still alive.
+
+## S5 design
+
+`dashboard` reads the served directory. It does not write, spawn, or print the message queue. When that directory has no `PROGRAM` file, one `.crucible` child that is `cycle: guided`, `lifecycle: managed`, and whose `repo:` is that directory supplies the factory records. Zero matches or several matches leave the factory records on the served directory. A second match is not chosen.
+
+`agents` is `agent_records` for that factory directory. `repo` is its `repo:` line. `next` is each `STATE.tsv` row whose status is `ACTIVE`, written `item stage`. `blocked` is each row whose status is `BLOCKED`, written `item block`. Any other status is absent. `reviews` is the regular file `reviews/review.md` in the repo directory. `git` is `branch NAME` when `.git` is a real directory and `HEAD` says `ref: refs/heads/NAME`, plus `slug branch NAME off BASE` from each `items/<slug>/TARGET`. A `.git` file is not followed. A target's repo path is not opened and is not printed. `intake` is the first non-empty `IDEA.md` line, at most 200 characters, and each READY id in `BACKLOG.tsv`. A missing record leaves the heading with no line under it.
+
+The page heading Dashboard loads `GET /api/dashboard`. The `dashboard` verb prints the same text for the program root. Neither is a second queue.
+
+Proof: `dashboard_shows_records_that_exist_and_not_the_queue` and `dashboard_uses_one_guided_program_beside_the_served_directory`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 

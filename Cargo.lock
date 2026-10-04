@@ -85,6 +85,7 @@ name = "crucible-web"
 version = "0.1.0"
 dependencies = [
  "crucible-contract",
+ "crucible-guided",
  "crucible-http",
  "serde_json",
 ]

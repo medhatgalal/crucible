@@ -1,6 +1,7 @@
 //! Loopback web camera. It serves a page and proxies GET `/walk`, `/stats`, and
 //! `/health`. It appends `BACKLOG.tsv`. `GET /api/chat` spawns `message show`.
-//! `GET /api/factory` spawns `message queue`. `POST /act/go` spawns
+//! `GET /api/factory` spawns `message queue`. `GET /api/dashboard` reads
+//! records in the served directory and does not spawn. `POST /act/go` spawns
 //! `go` in a new process group and does not walk. Read-only `POST /act/<verb>`
 //! spawns that verb and waits. `POST /act/drive` and `POST /act/adopt` detach.
 //! `POST /act/close`, bare `POST /act/status`, `POST /act/state`,
@@ -58,6 +59,7 @@ label { display: block; margin: 0.25rem 0; }
 <h2>Floor</h2><pre id="floor"></pre>
 <h2>Factory</h2><pre id="factory"></pre>
 <pre id="question"></pre>
+<h2>Dashboard</h2><pre id="dashboard"></pre>
 <h2>Stats</h2><pre id="stats"></pre>
 <h2>Backlog</h2>
 <label>id <input id="b-id" type="text"></label>
@@ -106,7 +108,7 @@ function questionLine(queue) {
   return "";
 }
 async function load() {
-  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
+  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["dashboard","/api/dashboard"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
     try {
       const res = await fetch(path, { method: "GET" });
@@ -348,6 +350,10 @@ fn route(
                 return write_resp(stream, 500, "text/plain", &body, head);
             }
         }
+    }
+    if req.path == "/api/dashboard" {
+        let body = crucible_guided::dashboard::dashboard(cwd);
+        return write_resp(stream, 200, "text/plain; charset=utf-8", &body, head);
     }
     if req.path == "/api/factory" {
         return match spawn_read(exe, cwd, "message", &["queue".to_string()]) {
@@ -1652,7 +1658,7 @@ mod tests {
 
     const QUESTION_TEXT_FN: &str = "function questionText(queue) {\n  const q = questionLine(queue);\n  if (q === \"\") return \"\";\n  return q + \"\\nPublish, delete, or leave this machine.\";\n}\n";
 
-    const FLOOR_LOAD_FOR: &str = r#"  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
+    const FLOOR_LOAD_FOR: &str = r#"  for (const [id, path] of [["floor","/api/floor"],["health","/api/health"],["walk","/api/walk"],["factory","/api/factory"],["dashboard","/api/dashboard"],["stats","/api/stats?since=1h"],["backlog","/api/backlog"],["chat","/api/chat"]]) {
     const el = document.getElementById(id);
     try {
       const res = await fetch(path, { method: "GET" });
@@ -1686,6 +1692,8 @@ mod tests {
         );
         assert!(load.contains("[\"walk\",\"/api/walk\"]"));
         assert!(load.contains("[\"factory\",\"/api/factory\"]"));
+        assert!(load.contains("[\"dashboard\",\"/api/dashboard\"]"));
+        assert!(!load.contains("/api/queue"));
         assert!(load.contains("[\"chat\",\"/api/chat\"]"));
         assert!(load.contains("if (id === \"factory\")"));
         assert_eq!(load.matches("fetch(").count(), 1);
@@ -2994,6 +3002,57 @@ evidence:
             page.contains("<h2>Walk</h2><pre id=\"walk\"></pre>\n<h2>Floor</h2><pre id=\"floor\"></pre>\n<h2>Factory</h2><pre id=\"factory\"></pre>\n<pre id=\"question\"></pre>\n"),
             "Floor pre is absent"
         );
+    }
+
+    #[test]
+    fn dashboard_pre_follows_the_factory() {
+        let page = page_html();
+        assert!(page.contains(
+            "<pre id=\"question\"></pre>\n<h2>Dashboard</h2><pre id=\"dashboard\"></pre>\n"
+        ));
+        assert_eq!(page.matches("/api/dashboard").count(), 1);
+        assert!(!page.contains("/api/queue"));
+    }
+
+    #[test]
+    fn dashboard_get_returns_the_served_directory() {
+        let tmp = Tmp::new();
+        let exe = sleeper(&tmp.root);
+        fs::write(tmp.root.join("IDEA.md"), "a small idea\n").unwrap();
+        fs::create_dir_all(tmp.root.join(".git")).unwrap();
+        fs::write(
+            tmp.root.join(".git").join("HEAD"),
+            "ref: refs/heads/dash-proof\n",
+        )
+        .unwrap();
+        fs::write(tmp.root.join("ORDERS.tsv"), "secret-order\n").unwrap();
+        let addr = start_server(&tmp.root, &exe, 3);
+        let (code, _, body) = exchange(
+            &addr,
+            &act_request("/api/dashboard", "{\"n\":1}", "application/json", None),
+        );
+        assert_eq!(code, 405, "{body}");
+        assert_eq!(body, "POST is not a walk\n");
+        assert_eq!(
+            fs::read_to_string(tmp.root.join("ORDERS.tsv")).unwrap(),
+            "secret-order\n"
+        );
+        let (code, headers, body) = exchange(&addr, &simple("GET", "/api/dashboard"));
+        assert_eq!(code, 200, "{body}");
+        assert!(
+            headers
+                .to_ascii_lowercase()
+                .contains("text/plain; charset=utf-8"),
+            "{headers}"
+        );
+        assert_eq!(body, crucible_guided::dashboard::dashboard(&tmp.root));
+        assert!(body.contains("idea: a small idea\n"), "{body}");
+        assert!(body.contains("branch dash-proof\n"), "{body}");
+        assert!(!body.contains("secret-order"), "{body}");
+        assert!(!tmp.root.join("SPAWNED").exists());
+        let (code, _, body) = exchange(&addr, &simple("HEAD", "/api/dashboard"));
+        assert_eq!(code, 200, "{body}");
+        assert!(body.is_empty(), "{body}");
     }
 
     #[test]

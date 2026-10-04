@@ -8,5 +8,6 @@ description = "Loopback web camera. GET proxy, backlog, message show. Read-only 
 
 [dependencies]
 crucible-contract = { path = "../contract" }
+crucible-guided = { path = "../guided" }
 crucible-http = { path = "../http" }
 serde_json = "1"
