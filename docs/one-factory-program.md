@@ -38,8 +38,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S5 | done `608947c` | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
 | S6 | done `b7beabb` | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
 | S7 | done `863f94e` | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
-| S8 | open | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
-| S9 | waiting | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
+| S8 | done `1a1d481` | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
+| S9 | open | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
 | S10 | waiting | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
 
 ## S3 design
@@ -97,6 +97,14 @@ Proof: `paused_line_shows_the_options_beside_the_pause_sentence`.
 A pane that is not in that list is refused, and no keys are sent. A key or pane that starts with `-` is refused, so the command cannot pass `--machine` or `--remote`. It does not create, close, or rename a workspace. It does not read Herdr's config file. It does not call `pane run`. It does not start `orchestrate run`.
 
 Proof: `keys_type_into_the_joined_workspace_pane_only`.
+
+## S9 design
+
+`crucible handoff ORDER` appends one row to `HANDOFF.tsv` in the program directory: the order id, the branch, and the commit. The order must already be a row in `ORDERS.tsv`. The branch and commit come from the product directory. That directory is the `repo:` line in `PROGRAM` when it is present, otherwise the program directory. `.git` must be a real directory. `HEAD` must say `ref: refs/heads/NAME`, and `refs/heads/NAME` must be a 40-hex commit. A `.git` file is not followed.
+
+The command does not run git, so it does not commit, push, or refresh an index. It does not write into the product directory. It does not send the order anywhere. `orchestrate run` is unchanged and still does not edit product files.
+
+Proof: `handoff_records_the_order_commit_and_leaves_the_product`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 
