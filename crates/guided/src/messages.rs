@@ -366,4 +366,29 @@ door\t-\torders/door.paths\torders/door.verify.sh
         );
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn answer_clears_a_pause_and_source_does_not() {
+        let dir =
+            std::env::temp_dir().join(format!("crucible-queue-{}-{}", std::process::id(), line!()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("ORDERS.tsv"),
+            "order_id\tdepends_on\tpaths_file\tverify_script\nA\t-\ta.paths\ta.sh\n",
+        )
+        .unwrap();
+        let clock = FixedClock::new(1);
+        append(&dir, &["machine", "need-a-fact", "A"], &clock).unwrap();
+        let paused = "queue\nA paused\ngraph\nA -\npaused\nA\nescalated\n";
+        assert_eq!(queue(&dir).unwrap(), paused);
+        append(&dir, &["manager", "source", "A"], &clock).unwrap();
+        assert_eq!(queue(&dir).unwrap(), paused);
+        append(&dir, &["manager", "answer", "A"], &clock).unwrap();
+        assert_eq!(
+            queue(&dir).unwrap(),
+            "queue\nA waiting\ngraph\nA -\npaused\nescalated\n"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
