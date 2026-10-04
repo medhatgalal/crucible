@@ -1,6 +1,7 @@
 //! Root resolution, managed STATE / PROGRAM parsers, and adopt.
 
 mod adopt;
+pub mod agents;
 pub mod attempt;
 pub mod audit;
 pub mod claims;
