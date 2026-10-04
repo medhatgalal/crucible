@@ -39,8 +39,8 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S6 | done `b7beabb` | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
 | S7 | done `863f94e` | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
 | S8 | done `1a1d481` | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
-| S9 | open | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
-| S10 | waiting | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
+| S9 | done `f1f588b` | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
+| S10 | open | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
 
 ## S3 design
 
@@ -105,6 +105,14 @@ Proof: `keys_type_into_the_joined_workspace_pane_only`.
 The command does not run git, so it does not commit, push, or refresh an index. It does not write into the product directory. It does not send the order anywhere. `orchestrate run` is unchanged and still does not edit product files.
 
 Proof: `handoff_records_the_order_commit_and_leaves_the_product`.
+
+## S10 design
+
+`crucible room` takes no arguments. It lists Herdr workspaces and joins the one whose label is the line in `.crucible/herdr/workspace` and whose cwd is this checkout. Missing standing role tabs are created in that workspace. Zero workspaces, two workspaces, or a cwd that is not this checkout stop with the herdr-init message, and no workspace is created.
+
+The command does not create, close, or rename a workspace. It does not read or write a Herdr config file. It does not edit herdr-init. A checkout that is not `cycle: guided` prints `go not started` and does not pane-run.
+
+Proof: `room_joins_the_existing_workspace_and_leaves_herdr_init`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 
