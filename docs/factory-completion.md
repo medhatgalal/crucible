@@ -10,6 +10,8 @@ Messages, grill, ticket source, stats from `MESSAGES.tsv`, one orchestrator step
 
 ## Still open
 
+The eleven-note program that starts after the floor page is tracked in `docs/one-factory-program.md`. F1–F4 below are already merged. They are not that program.
+
 The desk is on `main` at `9f61800`. A legal source message writes one orders row. The page does not emit the 29 verb buttons. Send reloads only when the exit header is `0`. The numbered line appears only for a queue row that is already `paused` or `escalated`. `VERSION` stays `1.28.0`. This desk has no tag.
 
 ## Next
