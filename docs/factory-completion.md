@@ -40,7 +40,7 @@ Depends on F1. A fixture `agents.tsv` maker is a shell that writes the owned fil
 
 ### F3 — The orchestrator keeps going
 
-Depends on F2. `crucible orchestrate run` is the existing command a guided room pane-runs. It delivers each dispatched order through `drive` and waits in that process when it asks. It does not edit product files. `orchestrate step` stays one pass. The dashboard still runs `message queue` once.
+Depends on F2. `crucible orchestrate run` is the existing command a guided room pane-runs. It delivers each dispatched order through `drive` and waits in that process when it asks. It does not write product files. That tick rolls the product tree back when the coordinator commits, merges, or edits an owned product path. Maker shells still write the files they own. `orchestrate step` stays one pass. The dashboard still runs `message queue` once.
 
 Proof: one `crucible orchestrate run` starts the maker shells. Idle requires `drive worker exit 0` and a `PASS`/`CLOSE` result for each order. A `need-a-fact` keeps that same process waiting until the manager answers. A planted `landed` line is not idle.
 

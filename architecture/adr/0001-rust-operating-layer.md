@@ -21,7 +21,7 @@ Honest snapshot of this repo at **1.28.0**. Rust working-mode has already cut ov
 | Wrapper | Repo-root `wm.sh` is the exec shim: export `WM_WRAPPER=$0` then `exec "$bindir/crucible" "$@"`. Not a second kernel. Do not dump it. |
 | Guided | Rust (`crates/guided`), dispatched by the `crucible` binary. Repo-root `./crucible` is a finder wrapper (`CRUCIBLE_BIN` or `target/release/crucible`). `crucible-guided` only execs the sibling binary. Not a second kernel. |
 | HTTP | `crucible serve`: GET `/walk` `/stats?since=` `/health`. Loopback only. **No `POST /go`.** `serve` never writes. |
-| Room | Landed (`crates/room`): `crucible room` joins one existing Herdr workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, ensured only when absent. No pane-run. Serve on `127.0.0.1:1734` is unchanged: matching VERSION is reused; only connection refused spawns this binary's `serve`. Help lists `room` and `doctor`. |
+| Room | Landed (`crates/room`): `crucible room` joins one existing Herdr workspace. Standing labels are `terminal`, `chat`, `orchestrator`, and `dashboard`, ensured only when absent. A guided checkout pane-runs `orchestrate run` and `message queue`. Any other checkout pane-runs nothing. Serve on `127.0.0.1:1734` is unchanged: matching VERSION is reused; only connection refused spawns this binary's `serve`. Help lists `room` and `doctor`. |
 | Doctor | `crucible doctor` warns on `<cwd>/.grok/rules/loop-router.md` when it is missing or stale vs ADR-HASH (`testdata/loop-router.md`; D8/D15) and does not write. `crucible doctor --home` is the only writer of `$HOME/.grok/rules/loop-router.md`. Never `$HOME` in CI. |
 | Web | Landed (`crates/web`): `crucible web` proxies GET `/walk` `/stats` `/health`. The web process may append `BACKLOG.tsv` only. Bare `status`, `close`, `drive`, and `adopt` are spawned children under the ADR 0002 page-writer addendum. `POST /act/go` spawns `go` as a process group. `POST /go` stays 405. Not a second kernel (ADR 0002). Read-only `POST /act/<verb>` is the 2026-09-25 addendum to ADR 0002. `state`, `target`, `brief`, and `lifecycle` may run as waited children under the ADR 0002 addendum. |
 | Skill copies | Canonical `skills/<name>`. Real copies, not symlinks: `.grok/skills`, `.claude/skills`, `.agents/skills`, `.kiro/skills`. Codex uses `.agents/skills` (no `.codex/skills` tree). |
@@ -62,7 +62,7 @@ crates/
   kernel/     # go, run, independence, FLOOR/TRACE/EVENTS writers
   cli/        # argv → kernel/contract and `guided` (the `crucible` binary)
   http/       # GET serve; same types as cli; never writes
-  room/       # probe GET /health; external herdr; join the four labels; do not pane-run
+  room/       # probe GET /health; external herdr; join the four labels; guided pane-runs orchestrate run and message queue; otherwise do not pane-run
   web/        # loopback page; append BACKLOG.tsv; GET /api/chat spawns message show; POST /act/go spawns go; read-only POST /act spawns that verb and waits.
   guided/     # adopt, cycle, drive; library. The `crucible` binary dispatches it. Not a second binary.
 skills/                 # canonical skill trees
@@ -148,7 +148,7 @@ D1–D17 from the approved plan. D18–D22 freeze review holes. D18/D19 are the 
 | D8 | **Signal:** `/crucible` or live walk → Crucible. Named other framework → that. Else → Grok-native + `NEXT:`. Interrupt wins until `/crucible`/`go` again. |
 | D9 | Contracts: `crucible.walk/v1` + events WAL + **panel-as-files** (cast state `go` already requires; **not** a `WalkSnapshot` key in v1). CLI **read-only** JSON **equals** HTTP JSON. Files always written (human/`cat` without HTTP). |
 | D10 | Kernel HTTP: **GET** `/walk` `/stats?since=` `/health`. **No `POST /go`.** `go` is still a foreground process, not `POST /go`; room does not start it. |
-| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` joins one existing workspace; ensures `terminal`, `chat`, `orchestrator`, `dashboard` only when absent; does not pane-run; leaves watcher and reaper tabs. Not a copy of herdr-init and not a second room. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. |
+| D11 | **herdr-crucible is required** and has landed (`crates/room`). `crucible room` joins one existing workspace; ensures `terminal`, `chat`, `orchestrator`, `dashboard` only when absent; a guided checkout pane-runs `orchestrate run` and `message queue`, and any other checkout pane-runs nothing; leaves watcher and reaper tabs. Not a copy of herdr-init and not a second room. Kernel crate has **zero** Herdr types. Room talks **external `herdr` + kernel HTTP**. |
 | D12 | Core-Prompts shaping: **Grok-side** for designing this work. Not in the binary v1. Later optional menu `shaping: off \| grok`. |
 | D13 | Blank-HOME CHECKs pass on the **shipped `crucible` binary**. |
 | D14 | Identity: static `crucible` (working-mode kernel and guided verbs) + `wm.sh` exec shim + files + cargo for contributors. `crucible-guided` only execs the sibling binary. The 1.17.0 changelog section records the break from “POSIX sh is the **working-mode** engine.” The 1.18.0 changelog section records guided verbs on that same binary. |

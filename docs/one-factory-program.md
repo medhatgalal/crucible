@@ -8,7 +8,11 @@ Home is this checkout. Do not install this into another repository. `VERSION` st
 
 Medhat confirmed the home above. He made an exception to the pause-before-main rule: a slice is squash-merged only after review, fixes, its proof, and green `refusals` and `refusals-bsd`. One verified slice merges, then the next slice starts. Branches are not deleted. He authorized joining the Herdr workspace that already exists.
 
-`message queue` prints `idle` or the four sections `queue`, `graph`, `paused`, and `escalated`. `orchestrate run` does not edit product files. Maker shells still write the files they own. A key sender, when that slice starts, types only into panes in a workspace already owned on this machine.
+`message queue` prints `idle` or the four sections `queue`, `graph`, `paused`, and `escalated`. `orchestrate run` does not write product files. The `drive tick` it calls rolls the product tree back when the coordinator commits, merges, or edits an owned product path. Maker shells still write the files they own. A key sender, when that slice starts, types only into panes in a workspace already owned on this machine.
+
+Medhat superseded the S6 rule that `attempt restart`, and `attempt resume` of a dead pid, spawn nothing. Those two will run the maker through the existing deliver path. `attempt stop` stays a signal to the recorded pid. That behavior is B1. It is not built yet.
+
+The build gate for a new row is a bet, then one order on this board whose done-when is the sentence that was bet, then one seam note, then the nine steps below. `MAP-ACCEPT` is not required.
 
 ## What is already on main
 
@@ -78,6 +82,8 @@ Proof: `dashboard_shows_records_that_exist_and_not_the_queue` and `dashboard_use
 
 Proof: `stop_signals_the_recorded_pid_and_refuses_pid_one`, `resume_requires_the_recorded_pid_to_be_alive`, `restart_records_a_new_dispatched_attempt_without_spawning`, and `correct_records_a_manager_correction_and_leaves_the_pause`.
 
+The paragraphs above are what the code does today. Medhat superseded the spawn-nothing rule for restart and for resume of a dead pid. B1 builds that. Until B1 lands, those two commands still do not run the maker.
+
 ## S7 design
 
 The question text stays empty unless a queue line is `paused` or `escalated`. The sentence `Publish, delete, or leave this machine.` stays the line after `1 ID`. The same question text then lists the three choices in that sentence:
@@ -115,6 +121,17 @@ The command does not create, close, or rename a workspace. It does not read or w
 Proof: `room_joins_the_existing_workspace_and_leaves_herdr_init`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
+
+## Named backlog
+
+A row here is not an order. It becomes an order only after its own pitch is bet. S0–S10 stay closed.
+
+| Id | Status | Work | Done when |
+| --- | --- | --- | --- |
+| B1 | waiting | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
+| B9 | named | Page appearance | The same verbs and the same sections, after a visual pass. Its own pitch |
+| B10 | named | Human-feedback eval | A rating record that is not `answer` or `correction`. Its own pitch |
+| B11 | named | Telemetry export | A defined export. The TSV files are not that export. Its own pitch |
 
 ## Stop
 
