@@ -33,20 +33,26 @@ Medhat confirmed the home above. He made an exception to the pause-before-main r
 | S0 | done `91f9400` | This board | This file is on `main` and names every slice below |
 | S1 | done `2ab3b34` | Queue text matches the printer | `source_legal_id_creates_an_orders_row_and_queue_prints_waiting` expects the four sections. The page test that treats `door waiting` as not a pause stays |
 | S2 | done `3b1bd6f` | Send can answer a pause | The page can post kind `answer` and the order id. A `source` send still does not clear a pause |
-| S3 | open | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
-
-## S3 design
-
-`agent_records` reads `attempts/<id>/meta.tsv` and that attempt's `events.tsv`. It does not spawn a process, read a process list, or write a file. One line per agent name. The row kept for an agent is the attempt whose last event epoch is greater. Names sort. The text is the heading `agents` and then `name state`.
-
-`DISPATCHED` is `new`. `RUNNING` and `OVERDUE` are `in progress`. `RETURNED`, `TIMEOUT`, `STOPPED`, and `ABANDONED` are `finished`. Any other state is skipped. An agent with no attempt is absent.
-| S4 | waiting | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
+| S3 | done `391c369` | One record per agent: new, in progress, finished | A test shows those three states from the factory's own records. No OS process list yet |
+| S4 | open | Process watcher | A test reports progress, state, and stop for an agent process the factory started. It does not scan unrelated processes |
 | S5 | waiting | Dashboard panels | The page shows agents, repo, reviews, next work, blocked work, git, and intake from records that exist. No panel invents a second queue |
 | S6 | waiting | Stop, resume, restart, correct | Each verb has one command and one test. None is a second `orchestrate run` |
 | S7 | waiting | Options essay | A paused line shows choices and tradeoffs beside the sentence already on the page |
 | S8 | waiting | Keys into an owned pane | A test types into a pane in a workspace this checkout already joined. No key is sent to any other machine |
 | S9 | waiting | Git handoff | One command records a git handoff of an order. `orchestrate run` still does not edit product files |
 | S10 | waiting | Crucible room beside Herdr | `crucible room` joins the existing workspace. herdr-init and its config are untouched |
+
+## S3 design
+
+`agent_records` reads `attempts/<id>/meta.tsv` and that attempt's `events.tsv`. It does not spawn a process, read a process list, or write a file. One line per agent name. The row kept for an agent is the attempt whose last event epoch is greater. Names sort. The text is the heading `agents` and then `name state`.
+
+`DISPATCHED` is `new`. `RUNNING` and `OVERDUE` are `in progress`. `RETURNED`, `TIMEOUT`, `STOPPED`, and `ABANDONED` are `finished`. Any other state is skipped. An agent with no attempt is absent.
+
+## S4 design
+
+`agent_process` reads one attempt id. It uses that attempt's agent name and the S3 state word, and the last numeric pid of at least 2 in that attempt's `events.tsv`. It runs `kill -0` on that pid only. The line is `name state running` or `name state stopped`. A pid below 2, a `-`, or a missing pid is `stopped`, and `kill` is not called. A live process the attempt did not record does not appear and does not change the line. This slice does not signal the process, scan a process list, or add a command.
+
+Proof: `agent_process_reports_the_recorded_pid_only`. A dash pid stays `stopped` while another process is alive. The recorded pid is `running` until that process exits, then `stopped`, even while the other process is still alive.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 
