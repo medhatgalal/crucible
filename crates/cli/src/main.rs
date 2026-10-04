@@ -211,6 +211,9 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         }
         "next" => with_program_root(|root| guided_ok(crucible_guided::inspect::next(root))),
         "agents" => with_program_root(|root| guided_ok(crucible_guided::inspect::agents(root))),
+        "dashboard" => {
+            with_program_root(|root| guided_ok(Ok(crucible_guided::dashboard::dashboard(root))))
+        }
         "target" => {
             with_program_root(|root| guided_ok(crucible_guided::inspect::target(root, &args)))
         }
