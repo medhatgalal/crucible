@@ -1,7 +1,7 @@
 //! One factory step, or a run of steps until idle or asking.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -466,15 +466,61 @@ fn outcome_idle(
 }
 
 fn maker_landed(root: &Path, id: &str) -> Result<bool, GuidedError> {
-    Ok(classify_landed(root, id)? == LandedClass::Real)
+    if classify_landed(root, id)? != LandedClass::Real {
+        return Ok(false);
+    }
+    Ok(visible_judgment(root, id))
 }
 
 fn require_maker_landed(root: &Path, id: &str) -> Result<(), GuidedError> {
     match classify_landed(root, id)? {
-        LandedClass::Real => Ok(()),
         LandedClass::NoResult => Err(message(format!("landed {id} has no PASS CLOSE result"))),
         LandedClass::NoShell => Err(message(format!("landed {id} has no maker shell"))),
+        LandedClass::Real if visible_judgment(root, id) => Ok(()),
+        LandedClass::Real => Err(message(format!(
+            "landed {id} has no visible non-author judgment"
+        ))),
     }
+}
+
+const REVIEW_BODY_CAP: u64 = 262_144;
+
+fn review_directory(root: &Path) -> PathBuf {
+    if let Some(repo) = crate::cycle::program_field(root, "repo") {
+        let path = PathBuf::from(repo);
+        if fs::metadata(&path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+        {
+            return path;
+        }
+    }
+    root.to_path_buf()
+}
+
+fn visible_judgment(root: &Path, id: &str) -> bool {
+    let path = review_directory(root).join("reviews").join("review.md");
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return false;
+    };
+    if !meta.file_type().is_file() || meta.len() > REVIEW_BODY_CAP {
+        return false;
+    }
+    let Ok(text) = fs::read_to_string(&path) else {
+        return false;
+    };
+    if text.len() as u64 > REVIEW_BODY_CAP {
+        return false;
+    }
+    shows_non_author_judgment(&text, id)
+}
+
+/// True only when a person can read `text` as a judgment of `id`
+/// and can see that the judge is not the author.
+/// Both parts are required. The spelling is the named test's.
+/// Returns no name and stores no name.
+fn shows_non_author_judgment(text: &str, id: &str) -> bool {
+    text.contains(&format!("Judgment of {id}: the judge is not the author."))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
