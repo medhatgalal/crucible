@@ -1,7 +1,7 @@
 //! One factory step, or a run of steps until idle or asking.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -466,15 +466,61 @@ fn outcome_idle(
 }
 
 fn maker_landed(root: &Path, id: &str) -> Result<bool, GuidedError> {
-    Ok(classify_landed(root, id)? == LandedClass::Real)
+    if classify_landed(root, id)? != LandedClass::Real {
+        return Ok(false);
+    }
+    Ok(visible_judgment(root, id))
 }
 
 fn require_maker_landed(root: &Path, id: &str) -> Result<(), GuidedError> {
     match classify_landed(root, id)? {
-        LandedClass::Real => Ok(()),
         LandedClass::NoResult => Err(message(format!("landed {id} has no PASS CLOSE result"))),
         LandedClass::NoShell => Err(message(format!("landed {id} has no maker shell"))),
+        LandedClass::Real if visible_judgment(root, id) => Ok(()),
+        LandedClass::Real => Err(message(format!(
+            "landed {id} has no visible non-author judgment"
+        ))),
     }
+}
+
+const REVIEW_BODY_CAP: u64 = 262_144;
+
+fn review_directory(root: &Path) -> PathBuf {
+    if let Some(repo) = crate::cycle::program_field(root, "repo") {
+        let path = PathBuf::from(repo);
+        if fs::metadata(&path)
+            .map(|meta| meta.is_dir())
+            .unwrap_or(false)
+        {
+            return path;
+        }
+    }
+    root.to_path_buf()
+}
+
+fn visible_judgment(root: &Path, id: &str) -> bool {
+    let path = review_directory(root).join("reviews").join("review.md");
+    let Ok(meta) = fs::symlink_metadata(&path) else {
+        return false;
+    };
+    if !meta.file_type().is_file() || meta.len() > REVIEW_BODY_CAP {
+        return false;
+    }
+    let Ok(text) = fs::read_to_string(&path) else {
+        return false;
+    };
+    if text.len() as u64 > REVIEW_BODY_CAP {
+        return false;
+    }
+    shows_non_author_judgment(&text, id)
+}
+
+/// True only when a person can read `text` as a judgment of `id`
+/// and can see that the judge is not the author.
+/// Both parts are required. The spelling is the named test's.
+/// Returns no name and stores no name.
+fn shows_non_author_judgment(text: &str, id: &str) -> bool {
+    text.contains(&format!("Judgment of {id}: the judge is not the author."))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1031,5 +1077,250 @@ epoch\trole\tkind\ttext
         let went = fs::read_to_string(path.join("MESSAGES.tsv")).unwrap();
         assert!(went.contains("9\torchestrator\tdispatched\tA\n"), "{went}");
         let _ = fs::remove_dir_all(&path);
+    }
+
+    fn said(id: &str) -> Said {
+        Said {
+            role: "machine".to_string(),
+            kind: "landed".to_string(),
+            text: id.to_string(),
+        }
+    }
+
+    fn judgment(id: &str) -> String {
+        format!("Judgment of {id}: the judge is not the author.\n")
+    }
+
+    fn plant_real(root: &Path, attempt: &str, id: &str) {
+        let dir = root.join("attempts").join(attempt);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("meta.tsv"),
+            format!(
+                "\
+attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of
+{attempt}\t{id}\t-\twid\tmaker\tmk1\tkindA\tA1\tFOCUSED\tRETURNED\t1\t2\t-
+"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            dir.join("events.tsv"),
+            "\
+state\tepoch\tpid\treason
+RETURNED\t1\t1\tdrive worker exit 0
+",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("result.md"),
+            format!("OUTCOME: PASS\nNEXT: CLOSE\nITEM: {id}\n"),
+        )
+        .unwrap();
+    }
+
+    fn write_review(root: &Path, body: &str) {
+        write_review_bytes(root, body.as_bytes());
+    }
+
+    fn write_review_bytes(root: &Path, bytes: &[u8]) {
+        let dir = root.join("reviews");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("review.md"), bytes).unwrap();
+    }
+
+    fn assert_refused(root: &Path, id: &str) {
+        assert!(landed(&[said(id)], id));
+        assert_eq!(maker_landed(root, id).unwrap(), false);
+        match require_maker_landed(root, id) {
+            Err(GuidedError::Message(text)) => {
+                assert_eq!(
+                    text,
+                    format!("landed {id} has no visible non-author judgment")
+                );
+                assert_ne!(text, format!("landed {id} has no PASS CLOSE result"));
+                assert_ne!(text, format!("landed {id} has no maker shell"));
+            }
+            other => panic!("expected the judgment refusal, got {other:?}"),
+        }
+    }
+
+    fn assert_accepted(root: &Path, id: &str) {
+        assert!(landed(&[said(id)], id));
+        assert_eq!(maker_landed(root, id).unwrap(), true);
+        require_maker_landed(root, id).unwrap();
+    }
+
+    #[test]
+    fn visible_judgment_blocks_landed_without_a_non_author_judgment() {
+        let root = dir("vj-none");
+        plant_real(&root, "A1700000000.1.1", "A");
+        assert_refused(&root, "A");
+        assert!(!root.join("reviews").join("review.md").exists());
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-other");
+        plant_real(&root, "A1700000000.1.1", "A");
+        write_review(
+            &root,
+            "Order A is named here.\nJudgment of other: the judge is not the author.\n",
+        );
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-author");
+        plant_real(&root, "A1700000000.1.1", "A");
+        write_review(
+            &root,
+            "\
+Judgment of A: the judge is the author.
+The judge is not the author of an unrelated note.
+",
+        );
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-empty");
+        plant_real(&root, "A1700000000.1.1", "A");
+        write_review(&root, "");
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-yes");
+        plant_real(&root, "A1700000000.1.1", "A");
+        write_review(&root, &judgment("A"));
+        assert_accepted(&root, "A");
+        fs::remove_file(
+            root.join("attempts")
+                .join("A1700000000.1.1")
+                .join("result.md"),
+        )
+        .unwrap();
+        assert!(landed(&[said("A")], "A"));
+        assert_eq!(maker_landed(&root, "A").unwrap(), false);
+        match require_maker_landed(&root, "A") {
+            Err(GuidedError::Message(text)) => {
+                assert_eq!(text, "landed A has no PASS CLOSE result");
+            }
+            other => panic!("expected the missing result, got {other:?}"),
+        }
+        fs::write(
+            root.join("attempts")
+                .join("A1700000000.1.1")
+                .join("result.md"),
+            "OUTCOME: PASS\nNEXT: CLOSE\nITEM: A\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("attempts")
+                .join("A1700000000.1.1")
+                .join("events.tsv"),
+            "\
+state\tepoch\tpid\treason
+RETURNED\t1\t1\thand-finished
+",
+        )
+        .unwrap();
+        assert_eq!(maker_landed(&root, "A").unwrap(), false);
+        match require_maker_landed(&root, "A") {
+            Err(GuidedError::Message(text)) => {
+                assert_eq!(text, "landed A has no maker shell");
+                assert_ne!(text, "landed A has no visible non-author judgment");
+            }
+            other => panic!("expected the missing shell, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-ids");
+        plant_real(&root, "A1700000000.1.1", "A");
+        plant_real(&root, "A1700000000.1.2", "B");
+        plant_real(&root, "A1700000000.1.3", "C");
+        write_review(&root, &judgment("A"));
+        assert_accepted(&root, "A");
+        assert_refused(&root, "B");
+        assert_refused(&root, "C");
+        write_review(&root, &format!("{}{}", judgment("A"), judgment("B")));
+        assert_accepted(&root, "A");
+        assert_accepted(&root, "B");
+        assert_refused(&root, "C");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-norepo");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir_all(elsewhere.join("reviews")).unwrap();
+        fs::write(elsewhere.join("reviews").join("review.md"), judgment("A")).unwrap();
+        fs::write(root.join("review.md"), judgment("A")).unwrap();
+        assert_refused(&root, "A");
+        write_review(&root, &judgment("A"));
+        assert_accepted(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-repo");
+        let repo = dir("vj-repo-product");
+        plant_real(&root, "A1700000000.1.1", "A");
+        fs::write(root.join("PROGRAM"), format!("repo: {}\n", repo.display())).unwrap();
+        write_review(&root, &judgment("A"));
+        assert_refused(&root, "A");
+        fs::remove_dir_all(root.join("reviews")).unwrap();
+        write_review(&repo, &judgment("A"));
+        assert_accepted(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&repo);
+
+        let root = dir("vj-repofile");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let repo_file = root.join("not-a-repo");
+        fs::write(&repo_file, "nope\n").unwrap();
+        fs::write(
+            root.join("PROGRAM"),
+            format!("repo: {}\n", repo_file.display()),
+        )
+        .unwrap();
+        assert_refused(&root, "A");
+        write_review(&root, &judgment("A"));
+        assert_accepted(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn visible_judgment_rejects_a_body_the_page_does_not_show() {
+        let body = judgment("A");
+
+        let root = dir("vj-cap");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let mut exact = body.as_bytes().to_vec();
+        exact.resize(262_144, b' ');
+        assert_eq!(exact.len(), 262_144);
+        write_review_bytes(&root, &exact);
+        assert_accepted(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-over");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let mut over = body.as_bytes().to_vec();
+        over.resize(262_145, b' ');
+        assert_eq!(over.len(), 262_145);
+        write_review_bytes(&root, &over);
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-link");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let target = root.join("shown.md");
+        fs::write(&target, &body).unwrap();
+        fs::create_dir_all(root.join("reviews")).unwrap();
+        std::os::unix::fs::symlink(&target, root.join("reviews").join("review.md")).unwrap();
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
+
+        let root = dir("vj-utf8");
+        plant_real(&root, "A1700000000.1.1", "A");
+        let mut bytes = body.into_bytes();
+        bytes.push(0xff);
+        assert!(bytes.len() <= 262_144);
+        write_review_bytes(&root, &bytes);
+        assert_refused(&root, "A");
+        let _ = fs::remove_dir_all(&root);
     }
 }
