@@ -4784,6 +4784,16 @@ fn plant_run_graph(root: &Path, orders: &str, assembly: &str) -> PathBuf {
     prog
 }
 
+fn plant_visible_judgment(product: &Path, ids: &[&str]) {
+    let mut body = String::new();
+    for id in ids {
+        body.push_str(&format!("Judgment of {id}: the judge is not the author.\n"));
+    }
+    let dir = product.join("reviews");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("review.md"), body).unwrap();
+}
+
 #[test]
 fn orchestrate_run_lands_orders_through_drive_and_result() {
     let tmp = Tmp::new();
@@ -4798,6 +4808,7 @@ assembly\tA,B\t-\tassembly.sh
         "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
     plant_closed(&prog, "B");
+    plant_visible_judgment(&tmp.root, &["A", "B"]);
     let out = orch_output(&tmp.root);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -4852,6 +4863,7 @@ assembly\tA,B,C\t-\tassembly.sh
     );
     plant_closed(&prog, "B");
     plant_closed(&prog, "C");
+    plant_visible_judgment(&three.root, &["A", "B", "C"]);
     let out = orch_output(&three.root);
     assert!(
         out.status.success(),
@@ -4889,6 +4901,7 @@ assembly\tA,B\t-\tassembly.sh
         "#!/bin/sh\necho once >> stamp\nexit 0\n",
     );
     plant_closed(&prog, "B");
+    plant_visible_judgment(&tmp.root, &["A", "B"]);
     factory_ok(&tmp.root, &["message", "machine", "need-a-fact", "A"]);
     let mut child = spawn_orch(&tmp.root);
     wait_until(&prog, |facts| {
