@@ -215,9 +215,13 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
         }
         "next" => with_program_root(|root| guided_ok(crucible_guided::inspect::next(root))),
         "agents" => with_program_root(|root| guided_ok(crucible_guided::inspect::agents(root))),
-        "dashboard" => {
-            with_program_root(|root| guided_ok(Ok(crucible_guided::dashboard::dashboard(root))))
-        }
+        "dashboard" => match crucible_guided::program_root() {
+            Ok(root) => match crucible_guided::dashboard::dashboard_dir(&root, &args) {
+                Ok(dir) => guided_ok(Ok(crucible_guided::dashboard::dashboard(dir))),
+                Err(err) => guided_fail(err),
+            },
+            Err(err) => guided_fail(err),
+        },
         "target" => {
             with_program_root(|root| guided_ok(crucible_guided::inspect::target(root, &args)))
         }

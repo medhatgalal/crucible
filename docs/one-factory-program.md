@@ -14,6 +14,18 @@ Medhat superseded the S6 rule that `attempt restart`, and `attempt resume` of a 
 
 The build gate for a new row is a bet, then one order on this board whose done-when is the sentence that was bet, then one seam note, then the nine steps below. `MAP-ACCEPT` is not required.
 
+## Decisions recorded 2026-10-05
+
+Medhat confirmed three choices. B1 stays the restart and resume behavior, and it is not the first build. The dashboard choice is `2=c`: the one tab in the crucible workspace becomes the factory report, and each block has a time. That is its own later pitch. herdr-init stays unedited. The pitch choice is `3=a`: the shipped pitch stays sealed, and each remaining behavior gets its own pitch. The pitch now in shaping is that a slice does not reach main unless someone who did not write it has judged it. On 2026-10-05 he accepted that frame and started shaping. Later the same day he accepted the shaped package, then accepted the bet. The one order is visible judgment. Its done-when is: before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author. The handover is the markdown file in the shaping run. He chose that file and did not ask for HTML, a Google Doc, Word, or JSON. Shaping stopped. On 2026-10-05 he approved that spec. The seam architecture is written and reviewed, with zero open findings. The design is written and reviewed, with zero open issues, in `architecture/visible-judgment-design.md`. It is on main at `181cd59` (pull request 125). The dashboard pitch is next. B1 is after that.
+
+## Decisions recorded 2026-10-08
+
+Medhat answered `1` to the question whose options were: speak both records, leave both stops, or bet the sealed package without those records. The verbatim reply is `1`. It selects the two records in that question. The generic read of one project-local command file is inside attaching Crucible's herdr as configuration tied to Crucible. The stop below allows that one generic edit. The edit must not put a Crucible name inside herdr-init. Herdr-init stays generic. This answer is not a bet, does not open an order, and does not start code.
+
+## Bet recorded 2026-10-08
+
+Medhat answered `1` to the later question whose options were: bet this dashboard package and open one order, or hold the bet. The verbatim reply is `1`. It is the bet. The done-when is the sentence on the `dashboard-tab` row. It is not a separate team-accept sentence, and it does not by itself show the tab.
+
 ## What is already on main
 
 `35fbd55` shows `.wm/FLOOR.md` in the Floor area and adds `Publish, delete, or leave this machine.` only when a queue line is already `paused` or `escalated`. Pull request 111.
@@ -29,6 +41,10 @@ The build gate for a new row is a bet, then one order on this board whose done-w
 7. Wait until `refusals` and `refusals-bsd` pass.
 8. Squash-merge. Fast-forward local `main`. Leave the remote branch.
 9. Mark the row `done` with the merge commit. Start the next row.
+
+## Stand-in
+
+This checkout is the engine ledger. A guided room or `orchestrate run` here drives that ledger, so an engine slice is not built by the factory loop. Until a guided checkout other than this ledger can carry one order through `drive`, an independent `reviews/review.md`, and a land step that refuses without that record and both required checks, engine work follows `.grok/rules/grok-stand-in.md`.
 
 ## Slices
 
@@ -122,6 +138,127 @@ Proof: `room_joins_the_existing_workspace_and_leaves_herdr_init`.
 
 S3 through S10 each get a short design note in this file before their tests. S1 and S2 are fixes to contracts the code already states.
 
+## Orders
+
+A row here is a bet. The visible-judgment spec is approved. The seam architecture and the design are reviewed, with zero open findings. It is on main at `181cd59` (pull request 125).
+
+| Id | Status | Work | Done when |
+| --- | --- | --- | --- |
+| visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
+| dashboard-tab | building | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
+
+## visible-judgment spec
+
+One order. The proof sentence is the done-when on the visible-judgment row. This note is the seam. It is not architecture, not a design, and not code.
+
+### Objective
+
+A person can tell that someone who did not write a slice judged it before that slice reached main. The user is that person. Success is the done-when sentence.
+
+Today `landed` in `crates/guided/src/orchestrate.rs` is true when a message row has kind `landed` and text equal to the id. `classify_landed` in the same file returns Real for a maker attempt whose result says OUTCOME PASS, NEXT CLOSE, ITEM equal to the id, state RETURNED, and reason `drive worker exit 0`. Neither check reads a judgment. This file is not claimed to be the only way onto main.
+
+### Seam
+
+The module that already owns the behavior is `landed` and `classify_landed` in `crates/guided/src/orchestrate.rs`. Callers stay callers of that decision. No second land command is added.
+
+It reads the message rows and the maker attempt it already reads. It also reads the judgment text in `reviews/review.md`, the file the existing review instruction already names. The dashboard already prints that text when the file is readable. This order does not move the decision into the dashboard.
+
+It writes no new file and no new field. It changes only when the existing decision treats the id as landed. The slice is not treated as landed until a person can see a judgment of that slice and can see that the judge is not the author. The maker PASS CLOSE result stays necessary. It is not the judgment.
+
+It must not become a new review command, a new queue, a new store, a parsed judge-name field, or a cryptographic identity. The exact sentences inside the review file are chosen when the failing test is written. This note does not invent them. It does not say the judge must be a person or may be an agent.
+
+### Scope
+
+In: the done-when sentence, met by extending this land decision and reading the existing review file.
+
+### Non-goals
+
+The dashboard pitch. B1. herdr-init. The sealed one-loop pitch. A second walker, a second message command, a second queue, or a second meaning of GET /api/walk. Jira. GitLab. Treating `refusals` or `refusals-bsd` as the judgment. Treating a pull-request count as the judgment. MAP-ACCEPT as the judgment. Installing into another repository.
+
+### Commands
+
+Build: `cargo build -p crucible-guided`
+
+Test this order: `cargo test -p crucible-guided visible_judgment_blocks_landed_without_a_non_author_judgment`
+
+The wider suite stays `scripts/selftest.sh`. The required checks stay `refusals` and `refusals-bsd`. Those checks are not this order's proof.
+
+### Project structure
+
+The change stays in `crates/guided/src/orchestrate.rs`. The new test is added in the test module already in that file. `skills/review/SKILL.md` already names `reviews/review.md`. This order does not add a command to `crucible-cli` and does not add an HTTP route.
+
+### Code style
+
+Match the surrounding file and run rustfmt on the touched Rust. Keep the existing message-row check and the existing Real class. Add the wait beside them. Do not add a public verb.
+
+### Testing strategy
+
+The named test does not exist yet. It is written failing before the behavior change. It fails while a maker PASS CLOSE result and a `landed` message row are treated as landed with no review text a person can read as a judgment by someone other than the author. It passes when that same fixture is not treated as landed, and when a readable judgment by someone other than the author lets the existing maker checks decide. The test does not call the two CI jobs. Removing the wait must make this test fail.
+
+### Boundaries
+
+Always: keep the maker result and the review text as different facts. Keep home as this checkout. Leave the exact error sentence to the implementation that writes the test.
+
+Ask first: a change that needs a second land path, a new file, or a parsed judge-name field. That need stops this order.
+
+Never: depend on Jira or GitLab. Copy an existing capability into a second walker, message command, queue, or meaning of GET /api/walk. Add a capability the eleven notes did not name. Change herdr-init beyond attaching Crucible's herdr as configuration tied to Crucible. Treat a validation checkout as the permanent product home. Rewrite the sealed pitch. Make the two CI jobs or a pull-request count the judgment. Add a review command or a review queue. Invent cryptographic identity.
+
+### Success criteria
+
+Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author. The named test is the check for that sentence on this land decision.
+
+### Open
+
+Whether that someone must be a person or may be an agent stays out of this order. It is not a question for this spec.
+
+## dashboard-tab seam
+
+One order. The proof sentence is the done-when on the row. This note is the seam. The bet is the `1` recorded above. The shaped package is the three pieces below. The 2026-10-08 attach exception allows the generic read. It does not name Crucible inside herdr-init.
+
+### Objective
+
+Medhat looks at the one dashboard tab in the crucible workspace and reads a time on each block of the existing factory report. The page, the `dashboard` verb, and one room pane are not that tab.
+
+### Scope
+
+In: a generic read of `.herdr-config/dashboard.command` in the herdr-init source the installer publishes. Missing, absent, or empty keeps `layout-tree.py`, `agents-live.sh`, `recent-activity.sh`, and `reaper-log.sh`. One non-empty line, of at most 4096 bytes, runs that line. A symlink, a file over that size, or any other text does not launch. The reader has no Crucible name, no new profile key, and no report command of its own. A new dashboard does not split. Recovery of one pane, or of those four labels, uses that read and does not unsplit, so each idle shell runs the line. A pane that is not an idle shell, and is not already running that line, is preserved. This checkout gets that file, and its one line prints `dashboard` for the directory the launcher already has. `dashboard` stamps one captured instant on all seven blocks. The body bytes under each heading stay the bytes they are today.
+
+### Non-goals
+
+B1. B9. B10. B11. A second dashboard, a second queue, or a second meaning of `GET /api/dashboard`. An edit of `orchestrate.rs`, of `crates/cli/tests/cli.rs`, or of `program_root`. A maximum age. The four-second camera sleep as a required poll. The layout header clock or the camera header clock as this time. A hand-edit of an installed herdr-init revision. A Crucible name inside herdr-init. `VERSION`, a tag, a branch delete, or a live `crucible room` against this ledger. A claim that the cargo test is the tab.
+
+### Commands
+
+Test this order's clock: `cargo test -p crucible-guided dashboard_stamps_one_instant_on_all_seven_blocks`
+
+The herdr-init reader test lives in that source's own tree. Its fixture line is not a Crucible command. It is not this cargo test. The wider suite stays `scripts/selftest.sh`. The required checks stay `refusals` and `refusals-bsd`. Those checks are not this order's proof.
+
+### Shape of the time
+
+Each block is the heading, a newline, the instant, a newline, then the existing body. The same instant is captured once. That includes the agents block from `agent_records` and the failure text `agents\nunreadable\n`. The production instant is UTC `YYYY-MM-DDTHH:MM:SSZ`. Tests pass the instant in. This is the shape the research spike checked. The bet required a readable time and did not name a second shape.
+
+### Command line
+
+On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still prints `dashboard` for `program_root()`. `crucible dashboard DIR` prints `dashboard` for `DIR`. Two arguments, an empty argument, or an argument that starts with `-` are refused with `usage: crucible dashboard [DIR]`. Other verbs still resolve `program_root()`. The panes are created with the launcher's cwd. This checkout's `.herdr-config/dashboard.command` is the one line `crucible dashboard .` The generic read of that file is in the herdr-init source. The installed launcher does not read it yet.
+
+### Proof
+
+`dashboard_stamps_one_instant_on_all_seven_blocks` is the clock proof. It passed locally on 2026-10-08. It is not on `main`. It fails while a block has no instant, while two blocks show different instants, or while a body byte changes to make room for the time. It passes when all seven blocks show the injected instant and the bodies are otherwise unchanged, including `agents\nunreadable\n`.
+
+The tab proof is a look after the installer-published launcher is the one running. A green cargo test, the page, and the verb do not pass that look.
+
+### Boundaries
+
+Always: one report, one instant, one generic read, no Crucible name in herdr-init.
+
+Ask first: a third launch behavior for a file that is neither empty nor one line. That need stops this order.
+
+Never: depend on Jira or GitLab. Install this repo into another repository. Edit herdr-init beyond the generic read. Treat this checkout as a second product home.
+
+### Where the order is
+
+The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` passed locally and are not on `main`. The checkout file is written and is not on `main`. The generic read is in the herdr-init source, and `DashboardCommandTests` passed locally in that repo; neither is on that repo's default branch. The installed launcher does not read the file. The look at the tab is not started. The row stays `building` until the done-when is met.
+
 ## Named backlog
 
 A row here is not an order. It becomes an order only after its own pitch is bet. S0–S10 stay closed.
@@ -135,4 +272,4 @@ A row here is not an order. It becomes an order only after its own pitch is bet.
 
 ## Stop
 
-Stop before editing herdr-init, creating a workspace, deleting a branch, installing into another repository, bumping `VERSION`, or sending work to another factory. A red required check is fixed on the same branch. A check that cannot be fixed stops the slice.
+Stop before editing herdr-init, creating a workspace, deleting a branch, installing into another repository, bumping `VERSION`, or sending work to another factory. The 2026-10-08 choice allows one exception to the herdr-init clause: a generic read of one project-local command file, with no Crucible name inside herdr-init. That exception is not a bet and does not open an order. A red required check is fixed on the same branch. A check that cannot be fixed stops the slice.
