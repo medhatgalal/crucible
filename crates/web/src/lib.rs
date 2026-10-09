@@ -3075,6 +3075,44 @@ evidence:
         assert!(!page.contains("/api/queue"));
     }
 
+    fn without_dashboard_instants(text: &str) -> String {
+        let mut out = String::new();
+        let mut skip_instant = false;
+        for line in text.split_inclusive('\n') {
+            if skip_instant {
+                skip_instant = false;
+                continue;
+            }
+            let bare = line.trim_end_matches(['\r', '\n']);
+            out.push_str(line);
+            skip_instant = matches!(
+                bare,
+                "agents" | "repo" | "reviews" | "next" | "blocked" | "git" | "intake"
+            );
+        }
+        out
+    }
+
+    fn dashboard_instants(text: &str) -> Vec<&str> {
+        let lines: Vec<&str> = text.lines().collect();
+        let mut cursor = 0;
+        let mut found = Vec::new();
+        for heading in [
+            "agents", "repo", "reviews", "next", "blocked", "git", "intake",
+        ] {
+            let Some(offset) = lines[cursor..].iter().position(|line| *line == heading) else {
+                return found;
+            };
+            let at = cursor + offset;
+            if at + 1 >= lines.len() {
+                return found;
+            }
+            found.push(lines[at + 1]);
+            cursor = at + 2;
+        }
+        found
+    }
+
     #[test]
     fn dashboard_get_returns_the_served_directory() {
         let tmp = Tmp::new();
@@ -3106,7 +3144,17 @@ evidence:
                 .contains("text/plain; charset=utf-8"),
             "{headers}"
         );
-        assert_eq!(body, crucible_guided::dashboard::dashboard(&tmp.root));
+        let expected = crucible_guided::dashboard::dashboard(&tmp.root);
+        assert_eq!(
+            without_dashboard_instants(&body),
+            without_dashboard_instants(&expected),
+            "{body}"
+        );
+        let stamps = dashboard_instants(&body);
+        assert_eq!(stamps.len(), 7, "{body}");
+        assert!(stamps.iter().all(|stamp| *stamp == stamps[0]), "{body}");
+        assert_eq!(stamps[0].len(), 20, "{body}");
+        assert!(stamps[0].ends_with('Z'), "{body}");
         assert!(body.contains("idea: a small idea\n"), "{body}");
         assert!(body.contains("branch dash-proof\n"), "{body}");
         assert!(!body.contains("secret-order"), "{body}");
