@@ -16,7 +16,7 @@ The build gate for a new row is a bet, then one order on this board whose done-w
 
 ## Decisions recorded 2026-10-05
 
-Medhat confirmed three choices. B1 stays the restart and resume behavior, and it is not the first build. The dashboard choice is `2=c`: the one tab in the crucible workspace becomes the factory report, and each block has a time. That is its own later pitch. herdr-init stays unedited. The pitch choice is `3=a`: the shipped pitch stays sealed, and each remaining behavior gets its own pitch. The pitch now in shaping is that a slice does not reach main unless someone who did not write it has judged it. On 2026-10-05 he accepted that frame and started shaping. Later the same day he accepted the shaped package, then accepted the bet. The one order is visible judgment. Its done-when is: before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author. The handover is the markdown file in the shaping run. He chose that file and did not ask for HTML, a Google Doc, Word, or JSON. Shaping stopped. On 2026-10-05 he approved that spec. The seam architecture is written and reviewed, with zero open findings. The design is written and reviewed, with zero open issues, in `architecture/visible-judgment-design.md`. It is on main at `181cd59` (pull request 125). The dashboard pitch is next. B1 is after that.
+Medhat confirmed three choices. B1 stays the restart and resume behavior, and it is not the first build. The dashboard choice is `2=c`: the one tab in the crucible workspace becomes the factory report, and each block has a time. That is its own later pitch. herdr-init stays unedited. The pitch choice is `3=a`: the shipped pitch stays sealed, and each remaining behavior gets its own pitch. The pitch now in shaping is that a slice does not reach main unless someone who did not write it has judged it. On 2026-10-05 he accepted that frame and started shaping. Later the same day he accepted the shaped package, then accepted the bet. The one order is visible judgment. Its done-when is: before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author. The handover is the markdown file in the shaping run. He chose that file and did not ask for HTML, a Google Doc, Word, or JSON. Shaping stopped. On 2026-10-05 he approved that spec. The behavior is on main at `181cd59` (pull request 125), in `crates/guided/src/orchestrate.rs`. The dashboard pitch is next. B1 is after that.
 
 ## Decisions recorded 2026-10-08
 
@@ -140,76 +140,12 @@ S3 through S10 each get a short design note in this file before their tests. S1 
 
 ## Orders
 
-A row here is a bet. The visible-judgment spec is approved. The seam architecture and the design are reviewed, with zero open findings. It is on main at `181cd59` (pull request 125).
+A row here is a bet. Visible judgment is on main at `181cd59` (pull request 125).
 
 | Id | Status | Work | Done when |
 | --- | --- | --- | --- |
 | visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
 | dashboard-tab | building | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
-
-## visible-judgment spec
-
-One order. The proof sentence is the done-when on the visible-judgment row. This note is the seam. It is not architecture, not a design, and not code.
-
-### Objective
-
-A person can tell that someone who did not write a slice judged it before that slice reached main. The user is that person. Success is the done-when sentence.
-
-Today `landed` in `crates/guided/src/orchestrate.rs` is true when a message row has kind `landed` and text equal to the id. `classify_landed` in the same file returns Real for a maker attempt whose result says OUTCOME PASS, NEXT CLOSE, ITEM equal to the id, state RETURNED, and reason `drive worker exit 0`. Neither check reads a judgment. This file is not claimed to be the only way onto main.
-
-### Seam
-
-The module that already owns the behavior is `landed` and `classify_landed` in `crates/guided/src/orchestrate.rs`. Callers stay callers of that decision. No second land command is added.
-
-It reads the message rows and the maker attempt it already reads. It also reads the judgment text in `reviews/review.md`, the file the existing review instruction already names. The dashboard already prints that text when the file is readable. This order does not move the decision into the dashboard.
-
-It writes no new file and no new field. It changes only when the existing decision treats the id as landed. The slice is not treated as landed until a person can see a judgment of that slice and can see that the judge is not the author. The maker PASS CLOSE result stays necessary. It is not the judgment.
-
-It must not become a new review command, a new queue, a new store, a parsed judge-name field, or a cryptographic identity. The exact sentences inside the review file are chosen when the failing test is written. This note does not invent them. It does not say the judge must be a person or may be an agent.
-
-### Scope
-
-In: the done-when sentence, met by extending this land decision and reading the existing review file.
-
-### Non-goals
-
-The dashboard pitch. B1. herdr-init. The sealed one-loop pitch. A second walker, a second message command, a second queue, or a second meaning of GET /api/walk. Jira. GitLab. Treating `refusals` or `refusals-bsd` as the judgment. Treating a pull-request count as the judgment. MAP-ACCEPT as the judgment. Installing into another repository.
-
-### Commands
-
-Build: `cargo build -p crucible-guided`
-
-Test this order: `cargo test -p crucible-guided visible_judgment_blocks_landed_without_a_non_author_judgment`
-
-The wider suite stays `scripts/selftest.sh`. The required checks stay `refusals` and `refusals-bsd`. Those checks are not this order's proof.
-
-### Project structure
-
-The change stays in `crates/guided/src/orchestrate.rs`. The new test is added in the test module already in that file. `skills/review/SKILL.md` already names `reviews/review.md`. This order does not add a command to `crucible-cli` and does not add an HTTP route.
-
-### Code style
-
-Match the surrounding file and run rustfmt on the touched Rust. Keep the existing message-row check and the existing Real class. Add the wait beside them. Do not add a public verb.
-
-### Testing strategy
-
-The named test does not exist yet. It is written failing before the behavior change. It fails while a maker PASS CLOSE result and a `landed` message row are treated as landed with no review text a person can read as a judgment by someone other than the author. It passes when that same fixture is not treated as landed, and when a readable judgment by someone other than the author lets the existing maker checks decide. The test does not call the two CI jobs. Removing the wait must make this test fail.
-
-### Boundaries
-
-Always: keep the maker result and the review text as different facts. Keep home as this checkout. Leave the exact error sentence to the implementation that writes the test.
-
-Ask first: a change that needs a second land path, a new file, or a parsed judge-name field. That need stops this order.
-
-Never: depend on Jira or GitLab. Copy an existing capability into a second walker, message command, queue, or meaning of GET /api/walk. Add a capability the eleven notes did not name. Change herdr-init beyond attaching Crucible's herdr as configuration tied to Crucible. Treat a validation checkout as the permanent product home. Rewrite the sealed pitch. Make the two CI jobs or a pull-request count the judgment. Add a review command or a review queue. Invent cryptographic identity.
-
-### Success criteria
-
-Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author. The named test is the check for that sentence on this land decision.
-
-### Open
-
-Whether that someone must be a person or may be an agent stays out of this order. It is not a question for this spec.
 
 ## dashboard-tab seam
 
