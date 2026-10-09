@@ -175,11 +175,11 @@ Each block is the heading, a newline, the instant, a newline, then the existing 
 
 ### Command line
 
-On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still prints `dashboard` for `program_root()`. `crucible dashboard DIR` prints `dashboard` for `DIR` and does not resolve `program_root()`. Two arguments, an empty argument, or an argument that starts with `-` are refused with `usage: crucible dashboard [DIR]`. Other verbs still resolve `program_root()`. The panes are created with the launcher's cwd. This checkout's `.herdr-config/dashboard.command` is the one line `crucible dashboard .` The generic read of that file is in the herdr-init source. The installed launcher does not read it yet.
+On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still prints `dashboard` for `program_root()`. `crucible dashboard DIR` prints `dashboard` for `DIR` and does not resolve `program_root()`. Two arguments, an empty argument, or an argument that starts with `-` are refused with `usage: crucible dashboard [DIR]`. Other verbs still resolve `program_root()`. The panes are created with the launcher's cwd. This checkout's `.herdr-config/dashboard.command` is the one line `crucible dashboard .` The generic read of that file is in the herdr-init source on its default branch at `0a3eb0d`. On 2026-10-09 the reviewed installer plan published herdr-init revision `62ec7499ae98c1a1137143ea337f269379c5ee9b70edb9589e5eeda7d7f3af63` from that commit. That revision reads the file and contains no Crucible name.
 
 ### Proof
 
-`dashboard_stamps_one_instant_on_all_seven_blocks` is the clock proof. It passed locally on 2026-10-08. It is not on `main`. It fails while a block has no instant, while two blocks show different instants, or while a body byte changes to make room for the time. It passes when all seven blocks show the injected instant and the bodies are otherwise unchanged, including `agents\nunreadable\n`.
+`dashboard_stamps_one_instant_on_all_seven_blocks` is the clock proof. It is on `main` at `7e90bcd`. It fails while a block has no instant, while two blocks show different instants, or while a body byte changes to make room for the time. It passes when all seven blocks show the injected instant and the bodies are otherwise unchanged, including `agents\nunreadable\n`.
 
 The tab proof is a look after the installer-published launcher is the one running. A green cargo test, the page, and the verb do not pass that look.
 
@@ -193,7 +193,7 @@ Never: depend on Jira or GitLab. Install this repo into another repository. Edit
 
 ### Where the order is
 
-The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` passed locally and are not on `main`. The checkout file is written and is not on `main`. The generic read is on the herdr-init source's default branch. The installed launcher does not read the file. The look at the tab is not started. The row stays `building` until the done-when is met.
+The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` are on `main` at `7e90bcd`. The checkout file is on `main`. The generic read is on the herdr-init source's default branch at `0a3eb0d`, and the 2026-10-09 publish of revision `62ec7499ae98c1a1137143ea337f269379c5ee9b70edb9589e5eeda7d7f3af63` reads the file. The look at the tab is not started. The row stays `building` until the done-when is met.
 
 ## Named backlog
 
