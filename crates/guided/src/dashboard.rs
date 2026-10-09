@@ -15,15 +15,13 @@ pub fn dashboard(cwd: &Path) -> String {
     dashboard_at(cwd, &utc_instant(unix_secs()))
 }
 
-/// No argument keeps `program`. One directory prints the report for that directory.
+/// No argument means the caller uses `program_root()`. One directory is that path.
 /// Two arguments, an empty argument, or an argument that starts with `-` are refused.
-pub fn dashboard_dir<'a>(
-    program: &'a Path,
-    args: &'a [&str],
-) -> Result<&'a Path, crate::GuidedError> {
+/// An explicit directory does not consult `program_root()`.
+pub fn dashboard_dir<'a>(args: &'a [&str]) -> Result<Option<&'a Path>, crate::GuidedError> {
     match args {
-        [] => Ok(program),
-        [one] if !one.is_empty() && !one.starts_with('-') => Ok(Path::new(one)),
+        [] => Ok(None),
+        [one] if !one.is_empty() && !one.starts_with('-') => Ok(Some(Path::new(one))),
         _ => Err(crate::message("usage: crucible dashboard [DIR]")),
     }
 }
@@ -674,24 +672,23 @@ mod tests {
         )
         .unwrap();
 
-        let chosen = dashboard_dir(&program, &[]).unwrap();
-        assert_eq!(chosen, program.as_path());
-        let report = dashboard_at(chosen, INSTANT);
+        assert!(dashboard_dir(&[]).unwrap().is_none());
+        let report = dashboard_at(&program, INSTANT);
         assert!(!report.contains("bea "), "{report}");
 
         let arg = other.display().to_string();
         let args = [arg.as_str()];
-        let chosen = dashboard_dir(&program, &args).unwrap();
+        let chosen = dashboard_dir(&args).unwrap().unwrap();
         assert_eq!(chosen, other.as_path());
         let report = dashboard_at(chosen, INSTANT);
         assert!(report.contains("bea new\n"), "{report}");
         assert!(!report.contains(&program.display().to_string()), "{report}");
 
-        let err = dashboard_dir(&program, &["one", "two"]).unwrap_err();
+        let err = dashboard_dir(&["one", "two"]).unwrap_err();
         assert_eq!(err.to_string(), "usage: crucible dashboard [DIR]");
-        let flagged = dashboard_dir(&program, &["--bind"]).unwrap_err();
+        let flagged = dashboard_dir(&["--bind"]).unwrap_err();
         assert_eq!(flagged.to_string(), "usage: crucible dashboard [DIR]");
-        let empty = dashboard_dir(&program, &[""]).unwrap_err();
+        let empty = dashboard_dir(&[""]).unwrap_err();
         assert_eq!(empty.to_string(), "usage: crucible dashboard [DIR]");
 
         let _ = fs::remove_dir_all(&program);

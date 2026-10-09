@@ -239,7 +239,7 @@ Each block is the heading, a newline, the instant, a newline, then the existing 
 
 ### Command line
 
-On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still prints `dashboard` for `program_root()`. `crucible dashboard DIR` prints `dashboard` for `DIR`. Two arguments, an empty argument, or an argument that starts with `-` are refused with `usage: crucible dashboard [DIR]`. Other verbs still resolve `program_root()`. The panes are created with the launcher's cwd. This checkout's `.herdr-config/dashboard.command` is the one line `crucible dashboard .` The generic read of that file is in the herdr-init source. The installed launcher does not read it yet.
+On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still prints `dashboard` for `program_root()`. `crucible dashboard DIR` prints `dashboard` for `DIR` and does not resolve `program_root()`. Two arguments, an empty argument, or an argument that starts with `-` are refused with `usage: crucible dashboard [DIR]`. Other verbs still resolve `program_root()`. The panes are created with the launcher's cwd. This checkout's `.herdr-config/dashboard.command` is the one line `crucible dashboard .` The generic read of that file is in the herdr-init source. The installed launcher does not read it yet.
 
 ### Proof
 
@@ -257,7 +257,7 @@ Never: depend on Jira or GitLab. Install this repo into another repository. Edit
 
 ### Where the order is
 
-The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` passed locally and are not on `main`. The checkout file is written and is not on `main`. The generic read is in the herdr-init source, and `DashboardCommandTests` passed locally in that repo; neither is on that repo's default branch. The installed launcher does not read the file. The look at the tab is not started. The row stays `building` until the done-when is met.
+The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` passed locally and are not on `main`. The checkout file is written and is not on `main`. The generic read is on the herdr-init source's default branch. The installed launcher does not read the file. The look at the tab is not started. The row stays `building` until the done-when is met.
 
 ## Named backlog
 
