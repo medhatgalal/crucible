@@ -10,28 +10,92 @@ const IDEA_CAP: usize = 200;
 
 /// Headings `agents`, `repo`, `reviews`, `next`, `blocked`, `git`, and `intake`.
 /// A missing record leaves the heading with nothing under it.
+/// Each block is heading, newline, one shared UTC instant, newline, then that body.
 pub fn dashboard(cwd: &Path) -> String {
+    dashboard_at(cwd, &utc_instant(unix_secs()))
+}
+
+/// No argument means the caller uses `program_root()`. One directory is that path.
+/// Two arguments, an empty argument, or an argument that starts with `-` are refused.
+/// An explicit directory does not consult `program_root()`.
+pub fn dashboard_dir<'a>(args: &'a [&str]) -> Result<Option<&'a Path>, crate::GuidedError> {
+    match args {
+        [] => Ok(None),
+        [one] if !one.is_empty() && !one.starts_with('-') => Ok(Some(Path::new(one))),
+        _ => Err(crate::message("usage: crucible dashboard [DIR]")),
+    }
+}
+
+fn dashboard_at(cwd: &Path, instant: &str) -> String {
     let program = factory_dir(cwd);
     let repo_value = crate::cycle::program_field(&program, "repo");
     let product = product_dir(cwd, repo_value.as_deref());
-    let mut out = match crate::agents::agent_records(&program) {
+    let agents = match crate::agents::agent_records(&program) {
         Ok(text) => text,
         Err(_) => "agents\nunreadable\n".to_string(),
     };
-    push_section(&mut out, "repo", &repo_line(repo_value.as_deref()));
-    push_section(&mut out, "reviews", &review_body(&product));
+    let (agents_heading, agents_body) = split_heading(&agents);
+    let mut out = String::new();
+    push_stamped(&mut out, agents_heading, instant, agents_body);
+    push_stamped(&mut out, "repo", instant, &repo_line(repo_value.as_deref()));
+    push_stamped(&mut out, "reviews", instant, &review_body(&product));
     let state = read_state(&program);
-    push_section(&mut out, "next", &state_lines(&state, "ACTIVE"));
-    push_section(&mut out, "blocked", &state_lines(&state, "BLOCKED"));
-    push_section(&mut out, "git", &git_body(&program, &product));
-    push_section(&mut out, "intake", &intake_body(&product));
+    push_stamped(&mut out, "next", instant, &state_lines(&state, "ACTIVE"));
+    push_stamped(
+        &mut out,
+        "blocked",
+        instant,
+        &state_lines(&state, "BLOCKED"),
+    );
+    push_stamped(&mut out, "git", instant, &git_body(&program, &product));
+    push_stamped(&mut out, "intake", instant, &intake_body(&product));
     out
 }
 
-fn push_section(out: &mut String, heading: &str, body: &str) {
+fn push_stamped(out: &mut String, heading: &str, instant: &str, body: &str) {
     out.push_str(heading);
     out.push('\n');
+    out.push_str(instant);
+    out.push('\n');
     out.push_str(body);
+}
+
+fn split_heading(text: &str) -> (&str, &str) {
+    text.split_once('\n').unwrap_or((text, ""))
+}
+
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn utc_instant(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let (year, month, day) = ymd_from_unix_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60
+    )
+}
+
+/// Howard Hinnant, `civil_from_days`. `days` is days since 1970-01-01.
+fn ymd_from_unix_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    (year as i32, month as u32, day as u32)
 }
 
 fn repo_line(repo: Option<&str>) -> String {
@@ -350,6 +414,8 @@ fn is_real_dir(path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    const INSTANT: &str = "2026-10-07T22:57:09Z";
+
     fn scratch(line: u32) -> PathBuf {
         let dir =
             std::env::temp_dir().join(format!("crucible-dashboard-{}-{line}", std::process::id()));
@@ -362,8 +428,10 @@ mod tests {
     fn dashboard_shows_records_that_exist_and_not_the_queue() {
         let dir = scratch(line!());
         assert_eq!(
-            dashboard(&dir),
-            "agents\nrepo\nreviews\nnext\nblocked\ngit\nintake\n"
+            dashboard_at(&dir, INSTANT),
+            format!(
+                "agents\n{INSTANT}\nrepo\n{INSTANT}\nreviews\n{INSTANT}\nnext\n{INSTANT}\nblocked\n{INSTANT}\ngit\n{INSTANT}\nintake\n{INSTANT}\n"
+            )
         );
 
         let attempts = dir.join("attempts").join("A1.2.3");
@@ -423,11 +491,11 @@ mod tests {
         )
         .unwrap();
 
-        let text = dashboard(&dir);
+        let text = dashboard_at(&dir, INSTANT);
         assert_eq!(
             text,
             format!(
-                "agents\nada in progress\nrepo\n{}\nreviews\nlens one\nnext\nalpha BUILD\nblocked\nbeta HOLD\ngit\nbranch dash-proof\nalpha branch feature/s5 off main\nintake\nidea: a small idea\nready: door\n",
+                "agents\n{INSTANT}\nada in progress\nrepo\n{INSTANT}\n{}\nreviews\n{INSTANT}\nlens one\nnext\n{INSTANT}\nalpha BUILD\nblocked\n{INSTANT}\nbeta HOLD\ngit\n{INSTANT}\nbranch dash-proof\nalpha branch feature/s5 off main\nintake\n{INSTANT}\nidea: a small idea\nready: door\n",
                 dir.display()
             )
         );
@@ -444,7 +512,7 @@ mod tests {
 
         fs::remove_dir_all(dir.join(".git")).unwrap();
         fs::write(dir.join(".git"), "gitdir: /does/not/open\n").unwrap();
-        let detached = dashboard(&dir);
+        let detached = dashboard_at(&dir, INSTANT);
         assert!(!detached.contains("branch dash-proof"), "{detached}");
         assert!(!detached.contains("/does/not/open"), "{detached}");
         assert!(
@@ -453,8 +521,11 @@ mod tests {
         );
 
         fs::write(dir.join("reviews").join("review.md"), [0xff, 0xfe]).unwrap();
-        let bad = dashboard(&dir);
-        assert!(bad.contains("reviews\nreview unreadable\n"), "{bad}");
+        let bad = dashboard_at(&dir, INSTANT);
+        assert!(
+            bad.contains(&format!("reviews\n{INSTANT}\nreview unreadable\n")),
+            "{bad}"
+        );
         assert!(bad.contains("ada in progress\n"), "{bad}");
 
         let _ = fs::remove_dir_all(&dir);
@@ -488,11 +559,11 @@ mod tests {
         fs::create_dir_all(dir.join("reviews")).unwrap();
         fs::write(dir.join("reviews").join("review.md"), "served review\n").unwrap();
 
-        let text = dashboard(&dir);
+        let text = dashboard_at(&dir, INSTANT);
         assert!(text.contains("ada new\n"), "{text}");
         assert!(text.contains("served review\n"), "{text}");
         assert!(
-            text.contains(&format!("repo\n{}\n", dir.display())),
+            text.contains(&format!("repo\n{INSTANT}\n{}\n", dir.display())),
             "{text}"
         );
 
@@ -518,12 +589,116 @@ mod tests {
             "state\tepoch\tpid\treason\nDISPATCHED\t2\t-\tfixture\n",
         )
         .unwrap();
-        let both = dashboard(&dir);
+        let both = dashboard_at(&dir, INSTANT);
         assert!(!both.contains("ada "), "{both}");
         assert!(!both.contains("bea "), "{both}");
-        assert!(both.starts_with("agents\nrepo\n"), "{both}");
+        assert!(
+            both.starts_with(&format!("agents\n{INSTANT}\nrepo\n")),
+            "{both}"
+        );
         assert!(both.contains("served review\n"), "{both}");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dashboard_stamps_one_instant_on_all_seven_blocks() {
+        let dir = scratch(line!());
+        let attempts = dir.join("attempts").join("A1.2.3");
+        fs::create_dir_all(&attempts).unwrap();
+        fs::write(
+            attempts.join("meta.tsv"),
+            "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\nA1.2.3\titem\t-\tCLAIM\tmaker\tada\tkind\t-\tFOCUSED\tDISPATCHED\t1\t2\t-\n",
+        )
+        .unwrap();
+        fs::write(
+            attempts.join("events.tsv"),
+            "state\tepoch\tpid\treason\nRUNNING\t9\t-\tfixture\n",
+        )
+        .unwrap();
+        let text = dashboard_at(&dir, INSTANT);
+        assert_eq!(
+            text,
+            format!("agents\n{INSTANT}\nada in progress\nrepo\n{INSTANT}\nreviews\n{INSTANT}\nnext\n{INSTANT}\nblocked\n{INSTANT}\ngit\n{INSTANT}\nintake\n{INSTANT}\n")
+        );
+        assert_eq!(text.matches(INSTANT).count(), 7, "{text}");
+
+        fs::remove_dir_all(dir.join("attempts")).unwrap();
+        fs::write(dir.join("attempts"), "not a directory").unwrap();
+        let unreadable = dashboard_at(&dir, INSTANT);
+        assert!(
+            unreadable.starts_with(&format!("agents\n{INSTANT}\nunreadable\n")),
+            "{unreadable}"
+        );
+        assert_eq!(unreadable.matches(INSTANT).count(), 7, "{unreadable}");
+        assert!(!unreadable.contains("ada "), "{unreadable}");
+
+        let live = dashboard(&dir);
+        let lines: Vec<&str> = live.lines().collect();
+        let mut cursor = 0;
+        let mut found = Vec::new();
+        for heading in [
+            "agents", "repo", "reviews", "next", "blocked", "git", "intake",
+        ] {
+            let at = lines[cursor..]
+                .iter()
+                .position(|line| *line == heading)
+                .map(|offset| cursor + offset)
+                .unwrap_or_else(|| panic!("{heading} missing in {live}"));
+            found.push(lines[at + 1]);
+            cursor = at + 2;
+        }
+        assert!(found.iter().all(|instant| *instant == found[0]), "{live}");
+        assert_eq!(found[0].len(), 20, "{live}");
+        assert!(found[0].ends_with('Z'), "{live}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dashboard_dir_uses_the_argument_and_leaves_the_default() {
+        let program = scratch(line!());
+        let other = scratch(line!());
+        let attempts = other.join("attempts").join("A1.4.1");
+        fs::create_dir_all(&attempts).unwrap();
+        fs::write(
+            attempts.join("meta.tsv"),
+            "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\nA1.4.1\titem\t-\tCLAIM\tmaker\tbea\tkind\t-\tFOCUSED\tDISPATCHED\t1\t2\t-\n",
+        )
+        .unwrap();
+        fs::write(
+            attempts.join("events.tsv"),
+            "state\tepoch\tpid\treason\nDISPATCHED\t4\t-\tfixture\n",
+        )
+        .unwrap();
+
+        assert!(dashboard_dir(&[]).unwrap().is_none());
+        let report = dashboard_at(&program, INSTANT);
+        assert!(!report.contains("bea "), "{report}");
+
+        let arg = other.display().to_string();
+        let args = [arg.as_str()];
+        let chosen = dashboard_dir(&args).unwrap().unwrap();
+        assert_eq!(chosen, other.as_path());
+        let report = dashboard_at(chosen, INSTANT);
+        assert!(report.contains("bea new\n"), "{report}");
+        assert!(!report.contains(&program.display().to_string()), "{report}");
+
+        let err = dashboard_dir(&["one", "two"]).unwrap_err();
+        assert_eq!(err.to_string(), "usage: crucible dashboard [DIR]");
+        let flagged = dashboard_dir(&["--bind"]).unwrap_err();
+        assert_eq!(flagged.to_string(), "usage: crucible dashboard [DIR]");
+        let empty = dashboard_dir(&[""]).unwrap_err();
+        assert_eq!(empty.to_string(), "usage: crucible dashboard [DIR]");
+
+        let _ = fs::remove_dir_all(&program);
+        let _ = fs::remove_dir_all(&other);
+    }
+
+    #[test]
+    fn utc_instant_formats_known_epochs() {
+        assert_eq!(utc_instant(0), "1970-01-01T00:00:00Z");
+        assert_eq!(utc_instant(1_700_000_000), "2023-11-14T22:13:20Z");
+        assert_eq!(utc_instant(1_791_413_829), "2026-10-07T22:57:09Z");
     }
 }
