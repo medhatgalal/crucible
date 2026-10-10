@@ -800,7 +800,7 @@ fn handoff(
     Ok(())
 }
 
-fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedError> {
+pub(crate) fn deliver(root: &Path, clock: &dyn Clock, order: &str) -> Result<(), GuidedError> {
     if !root.join("items").join(order).is_dir() {
         return Err(message(format!("no such item: {order}")));
     }

@@ -90,19 +90,17 @@ Proof: `dashboard_shows_records_that_exist_and_not_the_queue` and `dashboard_use
 
 ## S6 design
 
-`attempt stop`, `attempt resume`, `attempt restart`, and `attempt correct` are subcommands of the existing `attempt` verb. None calls `orchestrate run`. None spawns a worker. None is `drive stop`.
+`attempt stop`, `attempt resume`, `attempt restart`, and `attempt correct` are subcommands of the existing `attempt` verb. None calls `orchestrate run`. None is `drive stop`. `attempt restart` of a stopped attempt, and `attempt resume` of a dead pid, run the maker through the existing `deliver`. `attempt stop` and `attempt correct` do not.
 
 `attempt stop ATTEMPT` requires `RUNNING` or `OVERDUE`. It reads the recorded pid. A pid of 2 or more is signaled with `kill -TERM` on that pid only, not its process group. A pid of `-` or empty is not signaled. A pid below 2 is refused with `refusing pid N`, and `STOPPED` is not written. A failed signal does not write `STOPPED`. On success it records `STOPPED` with reason `operator-stop` and blocks the item the same way `attempt finish` does.
 
-`attempt resume ATTEMPT` requires `STOPPED`. The recorded pid must still be alive. A dead pid is refused with `resume requires the recorded pid of ATTEMPT to be alive`, nothing is spawned, and the events stay as they were. A live pid records `RUNNING` with reason `operator-resume` and sets the item `ACTIVE` with that same attempt in flight. The only exit from a terminal state is `STOPPED` to `RUNNING`, and only through this command.
+`attempt resume ATTEMPT` requires `STOPPED`. A live recorded pid records `RUNNING` with reason `operator-resume` and sets the item `ACTIVE` with that same attempt in flight. That path does not call `deliver`. A dead pid, including a recorded pid of `-`, appends one events row `DISPATCHED` with pid `-` and reason `dead-pid` on that same attempt id, sets the meta `state` column to `DISPATCHED`, sets the item `ACTIVE` with that same attempt in flight, and calls `deliver` with the item slug. It does not take a new id. When `deliver` returns `Ok`, the command prints `{id} DISPATCHED`. Any error from `deliver` propagates. The only `attempt_event` exit from a terminal state remains `STOPPED` to `RUNNING`, and only on the live path.
 
-`attempt restart ATTEMPT NEW` requires `STOPPED`. `NEW` must be an attempt id that does not already exist. It copies the attempt meta, sets the new id, state `DISPATCHED`, and `retry_of` to the old id. The new events row is `DISPATCHED` with pid `-` and reason `restart`. The item becomes `ACTIVE` with the new attempt in flight. The old attempt stays `STOPPED`. Nothing is spawned or signaled.
+`attempt restart ATTEMPT NEW` requires `STOPPED`. `NEW` must be an attempt id that does not already exist. It copies the attempt meta, sets the new id, state `DISPATCHED`, and `retry_of` to the old id. The new events row is `DISPATCHED` with pid `-` and reason `restart`. For each of `contract.md`, `transport`, and `contract-audit.md`, a source that `is_file` is copied onto the new attempt with `std::fs::copy`. A missing file is skipped. The item becomes `ACTIVE` with the new attempt in flight. The old attempt stays `STOPPED`. It then calls `deliver` with the item slug. When `deliver` returns `Ok`, the command prints `{new_id} DISPATCHED retry of {id}`. Any error from `deliver` propagates, and the new attempt is left in place. Nothing is signaled.
 
 `attempt correct ATTEMPT TEXT` records one manager message of kind `correction`. It does not print the messages path, does not add an orders row, and does not clear a pause.
 
-Proof: `stop_signals_the_recorded_pid_and_refuses_pid_one`, `resume_requires_the_recorded_pid_to_be_alive`, `restart_records_a_new_dispatched_attempt_without_spawning`, and `correct_records_a_manager_correction_and_leaves_the_pause`.
-
-The paragraphs above are what the code does today. Medhat superseded the spawn-nothing rule for restart and for resume of a dead pid. B1 builds that. Until B1 lands, those two commands still do not run the maker.
+Proof: `stop_signals_the_recorded_pid_and_refuses_pid_one`, `resume_requires_the_recorded_pid_to_be_alive`, `restart_records_a_new_dispatched_attempt_without_spawning`, `restart_and_dead_pid_resume_start_the_maker_through_deliver`, and `correct_records_a_manager_correction_and_leaves_the_pause`.
 
 ## S7 design
 
@@ -150,7 +148,7 @@ A row here is a bet. Visible judgment is on main at `181cd59` (pull request 125)
 | --- | --- | --- | --- |
 | visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
 | dashboard-tab | done | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
-| B1 | building | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
+| B1 | done | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
 
 ## dashboard-tab seam
 
