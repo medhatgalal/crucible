@@ -5,7 +5,8 @@
 //! Not `SystemTime`. Stop signals the recorded pid only. It does not scan
 //! processes and it does not start `orchestrate run`.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -329,18 +330,77 @@ fn attempt_resume(
     if attempt_state(root, id)? != "STOPPED" {
         return Err(message("attempt resume requires STOPPED"));
     }
-    if !attempt_pid_alive(root, id)? {
-        return Err(message(format!(
-            "resume requires the recorded pid of {id} to be alive"
-        )));
+    if attempt_pid_alive(root, id)? {
+        let pid = attempt_pid(root, id)?;
+        attempt_resume_event(root, clock, id, &pid)?;
+        let slug = attempt_meta(root, id, 2)?;
+        if !is_claim_slug(&slug) {
+            state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
+        }
+        return Ok(format!("{id} RUNNING pid {pid}\n"));
     }
-    let pid = attempt_pid(root, id)?;
-    attempt_resume_event(root, clock, id, &pid)?;
-    let slug = attempt_meta(root, id, 2)?;
-    if !is_claim_slug(&slug) {
-        state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
+    let ad = attempt_dir(root, id)?;
+    let events_path = ad.join("events.tsv");
+    let meta_path = ad.join("meta.tsv");
+    let state_path = root.join("STATE.tsv");
+    let events_before = fs::read(&events_path)?;
+    let meta_before = fs::read(&meta_path)?;
+    let state_before = if state_path.is_file() {
+        Some(fs::read(&state_path)?)
+    } else {
+        None
+    };
+    let ran = (|| -> Result<String, GuidedError> {
+        {
+            let mut file = OpenOptions::new().append(true).open(&events_path)?;
+            file.write_all(format!("DISPATCHED\t{}\t-\tdead-pid\n", clock.now_unix()).as_bytes())?;
+        }
+        let text = fs::read_to_string(&meta_path)?;
+        let mut lines: Vec<String> = crate::records(&text)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        if lines.len() < 2 {
+            return Err(message(format!("attempt {id} meta is unreadable")));
+        }
+        let mut fields: Vec<String> = lines[1].split('\t').map(str::to_string).collect();
+        if fields.len() < 10 {
+            return Err(message(format!("attempt {id} meta is unreadable")));
+        }
+        fields[9] = "DISPATCHED".to_string();
+        lines[1] = fields.join("\t");
+        let mut out = lines.join("\n");
+        out.push('\n');
+        fs::write(&meta_path, out)?;
+        let slug = attempt_meta(root, id, 2)?;
+        if !is_claim_slug(&slug) {
+            state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
+        }
+        crate::orchestrate::deliver(root, clock, &slug)?;
+        Ok(format!("{id} DISPATCHED\n"))
+    })();
+    match ran {
+        Ok(text) => Ok(text),
+        Err(err) => {
+            let events_now = fs::read_to_string(&events_path)?;
+            let last = events_now.lines().rev().find(|line| !line.is_empty());
+            let still_last = last.is_some_and(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                fields.len() == 4
+                    && fields[0] == "DISPATCHED"
+                    && fields[2] == "-"
+                    && fields[3] == "dead-pid"
+            });
+            if still_last {
+                fs::write(&events_path, &events_before)?;
+                fs::write(&meta_path, &meta_before)?;
+                if let Some(bytes) = state_before {
+                    fs::write(&state_path, bytes)?;
+                }
+            }
+            Err(err)
+        }
     }
-    Ok(format!("{id} RUNNING pid {pid}\n"))
 }
 
 fn attempt_restart(
@@ -364,7 +424,12 @@ fn attempt_restart(
         return Err(message("attempt restart requires STOPPED"));
     }
     let old = attempt_dir(root, id)?;
-    let meta = retry_meta(&fs::read_to_string(old.join("meta.tsv"))?, new_id, id)?;
+    let meta = retry_meta(
+        &fs::read_to_string(old.join("meta.tsv"))?,
+        new_id,
+        id,
+        clock.now_unix(),
+    )?;
     fs::create_dir(&new_dir)?;
     fs::write(new_dir.join("meta.tsv"), meta)?;
     fs::write(
@@ -374,14 +439,21 @@ fn attempt_restart(
             clock.now_unix()
         ),
     )?;
+    for name in ["contract.md", "transport", "contract-audit.md"] {
+        let src = old.join(name);
+        if src.is_file() {
+            fs::copy(&src, new_dir.join(name))?;
+        }
+    }
     let slug = attempt_meta(root, id, 2)?;
     if !is_claim_slug(&slug) {
         state_attempt_update(root, clock, &slug, "ACTIVE", new_id, "-")?;
     }
+    crate::orchestrate::deliver(root, clock, &slug)?;
     Ok(format!("{new_id} DISPATCHED retry of {id}\n"))
 }
 
-fn retry_meta(text: &str, new_id: &str, old_id: &str) -> Result<String, GuidedError> {
+fn retry_meta(text: &str, new_id: &str, old_id: &str, now: i64) -> Result<String, GuidedError> {
     let mut lines: Vec<String> = crate::records(text)
         .into_iter()
         .map(str::to_string)
@@ -396,6 +468,13 @@ fn retry_meta(text: &str, new_id: &str, old_id: &str) -> Result<String, GuidedEr
     fields[0] = new_id.to_string();
     fields[9] = "DISPATCHED".to_string();
     fields[12] = old_id.to_string();
+    let old_epoch = fields[10].parse::<i64>().unwrap_or(0);
+    let started = if now > old_epoch {
+        now
+    } else {
+        old_epoch.saturating_add(1)
+    };
+    fields[10] = started.to_string();
     lines[1] = fields.join("\t");
     let mut out = lines.join("\n");
     out.push('\n');
@@ -920,28 +999,6 @@ mod tests {
                 .to_string(),
             "attempt resume requires STOPPED"
         );
-        seed_attempt(
-            root,
-            dead,
-            "alpha",
-            "-",
-            "STOPPED",
-            "999999",
-            EPOCH + 1800,
-            "-",
-        );
-        let before = fs::read(root.join("attempts").join(dead).join("events.tsv")).unwrap();
-        assert_eq!(
-            attempt(root, &["resume", dead], &clock())
-                .unwrap_err()
-                .to_string(),
-            format!("resume requires the recorded pid of {dead} to be alive")
-        );
-        assert_eq!(
-            fs::read(root.join("attempts").join(dead).join("events.tsv")).unwrap(),
-            before
-        );
-
         let id = "A1700000000.9.10";
         let pid = std::process::id().to_string();
         seed_attempt(root, id, "alpha", "-", "STOPPED", &pid, EPOCH + 1800, "-");
@@ -956,10 +1013,6 @@ mod tests {
         assert!(state.contains(&format!(
             "alpha\tACTIVE\tBUILD\twid\tLOW\t{id}\t-\t1700000000\n"
         )));
-        assert_eq!(
-            fs::read(root.join("attempts").join(dead).join("events.tsv")).unwrap(),
-            before
-        );
     }
 
     #[test]
@@ -1009,10 +1062,16 @@ mod tests {
             format!("attempt {id} already exists")
         );
         let new_id = "A1700000000.9.12";
-        assert_eq!(
-            attempt(root, &["restart", id, new_id], &clock()).unwrap(),
-            format!("{new_id} DISPATCHED retry of {id}\n")
-        );
+        let err = {
+            let _herdr = HerdrGuard::unset();
+            attempt(root, &["restart", id, new_id], &clock()).unwrap_err()
+        };
+        assert!(err.to_string().contains("no such item: alpha"), "{err}");
+        assert!(!root
+            .join("attempts")
+            .join(new_id)
+            .join("invoke.log")
+            .exists());
         assert_eq!(
             fs::read(root.join("attempts").join(id).join("events.tsv")).unwrap(),
             old_events
@@ -1027,6 +1086,44 @@ mod tests {
         assert!(state.contains(&format!(
             "alpha\tACTIVE\tBUILD\twid\tLOW\t{new_id}\t-\t1700000000\n"
         )));
+    }
+
+    #[test]
+    fn dead_pid_resume_restores_the_attempt_when_deliver_fails_before_the_maker() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        managed(root);
+        let id = "A1700000000.9.11";
+        seed_attempt(
+            root,
+            id,
+            "alpha",
+            "-",
+            "STOPPED",
+            "999999",
+            EPOCH + 1800,
+            "-",
+        );
+        state_row(root, "alpha", "BLOCKED", "BUILD", "-", "OPERATOR_DECISION");
+        let events_path = root.join("attempts").join(id).join("events.tsv");
+        let meta_path = root.join("attempts").join(id).join("meta.tsv");
+        let state_path = root.join("STATE.tsv");
+        let events = fs::read(&events_path).unwrap();
+        let meta = fs::read(&meta_path).unwrap();
+        let state = fs::read(&state_path).unwrap();
+        let err = {
+            let _herdr = HerdrGuard::unset();
+            attempt(root, &["resume", id], &clock()).unwrap_err()
+        };
+        assert!(err.to_string().contains("no such item: alpha"), "{err}");
+        let restored = fs::read(&events_path).unwrap();
+        assert_eq!(restored, events);
+        assert!(!restored
+            .windows(b"dead-pid".len())
+            .any(|chunk| chunk == b"dead-pid"));
+        assert_eq!(fs::read(&meta_path).unwrap(), meta);
+        assert_eq!(fs::read(&state_path).unwrap(), state);
+        assert_eq!(attempt_state(root, id).unwrap(), "STOPPED");
     }
 
     #[test]
@@ -1065,5 +1162,305 @@ mod tests {
         assert_eq!(crate::messages::queue(root).unwrap(), paused);
         let messages = fs::read_to_string(root.join("MESSAGES.tsv")).unwrap();
         assert!(messages.contains(&format!("{EPOCH}\tmanager\tcorrection\tuse the door\n")));
+    }
+
+    struct HerdrGuard {
+        saved: Vec<(String, String)>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl HerdrGuard {
+        fn unset() -> Self {
+            let lock = crate::claims::ENV_LOCK
+                .lock()
+                .unwrap_or_else(|err| err.into_inner());
+            let saved: Vec<(String, String)> = std::env::vars()
+                .filter(|(key, _)| key.starts_with("HERDR_"))
+                .collect();
+            for (key, _) in &saved {
+                // SAFETY: this guard holds ENV_LOCK until the previous values are restored.
+                unsafe { std::env::remove_var(key) };
+            }
+            Self { saved, _lock: lock }
+        }
+    }
+
+    impl Drop for HerdrGuard {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                // SAFETY: ENV_LOCK is still held; claims::unset_env restores the same way.
+                unsafe { std::env::set_var(key, value) };
+            }
+        }
+    }
+
+    fn program_guided(prog: &Path, repo: &Path) {
+        fs::create_dir_all(prog).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!(
+                "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+                repo.display()
+            ),
+        )
+        .unwrap();
+        fs::write(prog.join("STATE.tsv"), format!("{STATE_HEADER}\n")).unwrap();
+    }
+
+    fn agents_with_touch(prog: &Path, command: &str) {
+        fs::write(
+            prog.join("agents.tsv"),
+            format!(
+                "\
+c0\tkindA\tm\thigh\ttrue\n\
+a1\tkindA\tm\thigh\techo {{BRIEF}}\n\
+a2\tkindB\tm\thigh\techo {{BRIEF}}\n\
+mk1\tkindA\tm\thigh\t{command}\n\
+j1\tkindB\tm\thigh\techo {{BRIEF}}\n\
+j2\tkindB\tm\thigh\techo {{BRIEF}}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    fn panel_fixture(prog: &Path) {
+        fs::write(
+            prog.join("PANEL.md"),
+            "\
+# Panel
+
+## Agents
+
+- c0, a1, a2, mk1, j1, j2
+
+## Roles
+
+Cast in PANEL.ASSIGN.tsv.
+
+## Risk posture
+
+LOW for fixture onboarding verification.
+
+## Isolation transport
+
+Prefer multi-agent. ACP before subagent on single-product hosts.
+
+## Independence ladder
+
+1. multi-agent
+2. acp
+3. subagent after ACP probe failure
+
+## Waivers
+
+NONE for this fixture.
+",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("PANEL.ASSIGN.tsv"),
+            "\
+role\tagent\trequired\tnotes
+coordinator\tc0\tyes\tthis session
+claim-auditor\ta1\tyes\t
+claim-auditor\ta2\tyes\t
+scout\ta1\tno\t
+maker\tmk1\tyes\t
+reviewer\tj1\tyes\t
+contract-auditor\tj2\tyes\t
+",
+        )
+        .unwrap();
+    }
+
+    fn spawn_fixture(tmp: &Path, sentinel: &Path) -> PathBuf {
+        let repo = tmp.join("repo");
+        let prog = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        program_guided(&prog, &repo);
+        assert!(
+            !sentinel
+                .display()
+                .to_string()
+                .chars()
+                .any(char::is_whitespace),
+            "sentinel path has whitespace: {}",
+            sentinel.display()
+        );
+        agents_with_touch(&prog, &format!("touch {}", sentinel.display()));
+        panel_fixture(&prog);
+        crate::cycle::cycle(&prog, &["approve-panel"], &clock()).unwrap();
+        fs::create_dir_all(prog.join("items").join("alpha")).unwrap();
+        fs::write(
+            prog.join("ORDERS.tsv"),
+            "order_id\tdepends_on\tpaths_file\tverify_script\nalpha\t-\ta.paths\ta.sh\n",
+        )
+        .unwrap();
+        prog
+    }
+
+    fn seed_stopped_maker(root: &Path, id: &str, pid: &str) {
+        let ad = root.join("attempts").join(id);
+        fs::create_dir_all(&ad).unwrap();
+        fs::write(
+            ad.join("meta.tsv"),
+            format!(
+                "attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class\tstate\tstarted_epoch\tdeadline_epoch\tretry_of\n{id}\talpha\t-\twid\tmaker\tmk1\tkindA\tA1\tFOCUSED\tDISPATCHED\t{EPOCH}\t{}\t-\n",
+                EPOCH + 1800
+            ),
+        )
+        .unwrap();
+        fs::write(
+            ad.join("events.tsv"),
+            format!("state\tepoch\tpid\treason\nSTOPPED\t{EPOCH}\t{pid}\tseed\n"),
+        )
+        .unwrap();
+        fs::write(ad.join("contract.md"), "contract\n").unwrap();
+        fs::write(ad.join("transport"), "multi-agent\n").unwrap();
+        fs::write(ad.join("contract-audit.md"), "VERDICT: PASS\n").unwrap();
+    }
+
+    #[test]
+    fn restart_and_dead_pid_resume_start_the_maker_through_deliver() {
+        let _herdr = HerdrGuard::unset();
+        let old = "A1700000000.9.11";
+        let new_id = "A1700000000.9.1";
+
+        let restart_tmp = Tmp::new();
+        let restart_sentinel = restart_tmp.0.join("sentinel");
+        let restart_root = spawn_fixture(&restart_tmp.0, &restart_sentinel);
+        seed_stopped_maker(&restart_root, old, "999999");
+        state_row(&restart_root, "alpha", "ACTIVE", "BUILD", old, "-");
+        let old_events =
+            fs::read(restart_root.join("attempts").join(old).join("events.tsv")).unwrap();
+        let restart_err = attempt(&restart_root, &["restart", old, new_id], &clock()).unwrap_err();
+        assert!(
+            restart_err.to_string().contains("result did not land alpha"),
+            "{restart_err}"
+        );
+        let new_epoch = attempt_meta(&restart_root, new_id, 11).unwrap();
+        let old_epoch = attempt_meta(&restart_root, old, 11).unwrap();
+        assert!(
+            new_epoch.parse::<i64>().unwrap() > old_epoch.parse::<i64>().unwrap(),
+            "new {new_epoch} old {old_epoch}"
+        );
+        assert!(restart_sentinel.is_file());
+        let new_events =
+            fs::read_to_string(restart_root.join("attempts").join(new_id).join("events.tsv"))
+                .unwrap();
+        assert!(
+            new_events.contains("drive worker exit 0"),
+            "{new_events}"
+        );
+        assert!(restart_root
+            .join("attempts")
+            .join(new_id)
+            .join("invoke.log")
+            .is_file());
+        assert_eq!(
+            fs::read(restart_root.join("attempts").join(old).join("events.tsv")).unwrap(),
+            old_events
+        );
+        assert_eq!(attempt_state(&restart_root, old).unwrap(), "STOPPED");
+        let messages = fs::read_to_string(restart_root.join("MESSAGES.tsv")).unwrap_or_default();
+        assert!(
+            !messages.contains("orchestrator\tdispatched"),
+            "{messages}"
+        );
+        attempt(&restart_root, &["correct", old, "alpha"], &clock()).unwrap();
+        let shown = crate::messages::append(&restart_root, &["show"], &clock()).unwrap();
+        assert!(
+            shown.contains("1700000000\tmanager\tcorrection\talpha\n"),
+            "{shown}"
+        );
+        let queued = crate::messages::queue(&restart_root).unwrap();
+        assert_eq!(
+            queued,
+            "queue\nalpha waiting\ngraph\nalpha -\npaused\nescalated\n"
+        );
+        assert!(!queued.contains("correction"));
+
+        let resume_tmp = Tmp::new();
+        let resume_sentinel = resume_tmp.0.join("sentinel");
+        let resume_root = spawn_fixture(&resume_tmp.0, &resume_sentinel);
+        seed_stopped_maker(&resume_root, old, "999999");
+        let meta_path = resume_root.join("attempts").join(old).join("meta.tsv");
+        let planted = fs::read_to_string(&meta_path).unwrap().replace(
+            &format!("\tDISPATCHED\t{EPOCH}\t"),
+            &format!("\tSTOPPED\t{EPOCH}\t"),
+        );
+        fs::write(&meta_path, planted).unwrap();
+        assert_eq!(attempt_meta(&resume_root, old, 10).unwrap(), "STOPPED");
+        state_row(&resume_root, "alpha", "BLOCKED", "BUILD", "-", "OPERATOR_DECISION");
+        let resume_err = attempt(&resume_root, &["resume", old], &clock()).unwrap_err();
+        assert!(
+            resume_err.to_string().contains("result did not land alpha"),
+            "{resume_err}"
+        );
+        let messages = fs::read_to_string(resume_root.join("MESSAGES.tsv")).unwrap_or_default();
+        assert!(
+            !messages.contains("orchestrator\tdispatched"),
+            "{messages}"
+        );
+        assert!(resume_sentinel.is_file());
+        let resume_events =
+            fs::read_to_string(resume_root.join("attempts").join(old).join("events.tsv")).unwrap();
+        let dead_at = resume_events
+            .find("DISPATCHED\t1700000000\t-\tdead-pid\n")
+            .expect("dead-pid row");
+        let exit_at = resume_events
+            .find("drive worker exit 0")
+            .expect("worker exit");
+        assert!(dead_at < exit_at, "{resume_events}");
+        assert!(!resume_events.contains("operator-resume"), "{resume_events}");
+        assert!(resume_root
+            .join("attempts")
+            .join(old)
+            .join("invoke.log")
+            .is_file());
+        assert_eq!(attempt_meta(&resume_root, old, 10).unwrap(), "DISPATCHED");
+        let resume_state = fs::read_to_string(resume_root.join("STATE.tsv")).unwrap();
+        assert!(
+            resume_state.contains(&format!(
+                "alpha\tACTIVE\tBUILD\twid\tLOW\t{old}\t-\t1700000000\n"
+            )),
+            "{resume_state}"
+        );
+
+        let stopped_tmp = Tmp::new();
+        let stopped_root = stopped_tmp.0.as_path();
+        seed_attempt(
+            stopped_root,
+            old,
+            "alpha",
+            "-",
+            "STOPPED",
+            "999999",
+            EPOCH + 1800,
+            "-",
+        );
+        fs::write(
+            stopped_root.join("ORDERS.tsv"),
+            "order_id\tdepends_on\tpaths_file\tverify_script\nalpha\t-\ta.paths\ta.sh\n",
+        )
+        .unwrap();
+        fs::write(
+            stopped_root.join("MESSAGES.tsv"),
+            "epoch\trole\tkind\ttext\n1700000000\torchestrator\tdispatched\talpha\n",
+        )
+        .unwrap();
+        let run_err =
+            crate::orchestrate::orchestrate(stopped_root, &["run"], &clock()).unwrap_err();
+        assert!(
+            run_err
+                .to_string()
+                .contains("maker shell exited nonzero for alpha"),
+            "{run_err}"
+        );
+        assert!(!stopped_root
+            .join("attempts")
+            .join(old)
+            .join("invoke.log")
+            .exists());
     }
 }
