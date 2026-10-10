@@ -350,51 +350,57 @@ fn attempt_resume(
     } else {
         None
     };
-    {
-        let mut file = OpenOptions::new().append(true).open(&events_path)?;
-        file.write_all(format!("DISPATCHED\t{}\t-\tdead-pid\n", clock.now_unix()).as_bytes())?;
-    }
-    let text = fs::read_to_string(&meta_path)?;
-    let mut lines: Vec<String> = crate::records(&text)
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    if lines.len() < 2 {
-        return Err(message(format!("attempt {id} meta is unreadable")));
-    }
-    let mut fields: Vec<String> = lines[1].split('\t').map(str::to_string).collect();
-    if fields.len() < 10 {
-        return Err(message(format!("attempt {id} meta is unreadable")));
-    }
-    fields[9] = "DISPATCHED".to_string();
-    lines[1] = fields.join("\t");
-    let mut out = lines.join("\n");
-    out.push('\n');
-    fs::write(&meta_path, out)?;
-    let slug = attempt_meta(root, id, 2)?;
-    if !is_claim_slug(&slug) {
-        state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
-    }
-    if let Err(err) = crate::orchestrate::deliver(root, clock, &slug) {
-        let events_now = fs::read_to_string(&events_path)?;
-        let last = events_now.lines().rev().find(|line| !line.is_empty());
-        let still_last = last.is_some_and(|line| {
-            let fields: Vec<&str> = line.split('\t').collect();
-            fields.len() == 4
-                && fields[0] == "DISPATCHED"
-                && fields[2] == "-"
-                && fields[3] == "dead-pid"
-        });
-        if still_last {
-            fs::write(&events_path, &events_before)?;
-            fs::write(&meta_path, &meta_before)?;
-            if let Some(bytes) = state_before {
-                fs::write(&state_path, bytes)?;
-            }
+    let ran = (|| -> Result<String, GuidedError> {
+        {
+            let mut file = OpenOptions::new().append(true).open(&events_path)?;
+            file.write_all(format!("DISPATCHED\t{}\t-\tdead-pid\n", clock.now_unix()).as_bytes())?;
         }
-        return Err(err);
+        let text = fs::read_to_string(&meta_path)?;
+        let mut lines: Vec<String> = crate::records(&text)
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        if lines.len() < 2 {
+            return Err(message(format!("attempt {id} meta is unreadable")));
+        }
+        let mut fields: Vec<String> = lines[1].split('\t').map(str::to_string).collect();
+        if fields.len() < 10 {
+            return Err(message(format!("attempt {id} meta is unreadable")));
+        }
+        fields[9] = "DISPATCHED".to_string();
+        lines[1] = fields.join("\t");
+        let mut out = lines.join("\n");
+        out.push('\n');
+        fs::write(&meta_path, out)?;
+        let slug = attempt_meta(root, id, 2)?;
+        if !is_claim_slug(&slug) {
+            state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
+        }
+        crate::orchestrate::deliver(root, clock, &slug)?;
+        Ok(format!("{id} DISPATCHED\n"))
+    })();
+    match ran {
+        Ok(text) => Ok(text),
+        Err(err) => {
+            let events_now = fs::read_to_string(&events_path)?;
+            let last = events_now.lines().rev().find(|line| !line.is_empty());
+            let still_last = last.is_some_and(|line| {
+                let fields: Vec<&str> = line.split('\t').collect();
+                fields.len() == 4
+                    && fields[0] == "DISPATCHED"
+                    && fields[2] == "-"
+                    && fields[3] == "dead-pid"
+            });
+            if still_last {
+                fs::write(&events_path, &events_before)?;
+                fs::write(&meta_path, &meta_before)?;
+                if let Some(bytes) = state_before {
+                    fs::write(&state_path, bytes)?;
+                }
+            }
+            Err(err)
+        }
     }
-    Ok(format!("{id} DISPATCHED\n"))
 }
 
 fn attempt_restart(
@@ -418,7 +424,12 @@ fn attempt_restart(
         return Err(message("attempt restart requires STOPPED"));
     }
     let old = attempt_dir(root, id)?;
-    let meta = retry_meta(&fs::read_to_string(old.join("meta.tsv"))?, new_id, id)?;
+    let meta = retry_meta(
+        &fs::read_to_string(old.join("meta.tsv"))?,
+        new_id,
+        id,
+        clock.now_unix(),
+    )?;
     fs::create_dir(&new_dir)?;
     fs::write(new_dir.join("meta.tsv"), meta)?;
     fs::write(
@@ -442,7 +453,7 @@ fn attempt_restart(
     Ok(format!("{new_id} DISPATCHED retry of {id}\n"))
 }
 
-fn retry_meta(text: &str, new_id: &str, old_id: &str) -> Result<String, GuidedError> {
+fn retry_meta(text: &str, new_id: &str, old_id: &str, now: i64) -> Result<String, GuidedError> {
     let mut lines: Vec<String> = crate::records(text)
         .into_iter()
         .map(str::to_string)
@@ -457,6 +468,13 @@ fn retry_meta(text: &str, new_id: &str, old_id: &str) -> Result<String, GuidedEr
     fields[0] = new_id.to_string();
     fields[9] = "DISPATCHED".to_string();
     fields[12] = old_id.to_string();
+    let old_epoch = fields[10].parse::<i64>().unwrap_or(0);
+    let started = if now > old_epoch {
+        now
+    } else {
+        old_epoch.saturating_add(1)
+    };
+    fields[10] = started.to_string();
     lines[1] = fields.join("\t");
     let mut out = lines.join("\n");
     out.push('\n');
@@ -1306,7 +1324,7 @@ contract-auditor\tj2\tyes\t
     fn restart_and_dead_pid_resume_start_the_maker_through_deliver() {
         let _herdr = HerdrGuard::unset();
         let old = "A1700000000.9.11";
-        let new_id = "A1700000000.9.12";
+        let new_id = "A1700000000.9.1";
 
         let restart_tmp = Tmp::new();
         let restart_sentinel = restart_tmp.0.join("sentinel");
@@ -1319,6 +1337,12 @@ contract-auditor\tj2\tyes\t
         assert!(
             restart_err.to_string().contains("result did not land alpha"),
             "{restart_err}"
+        );
+        let new_epoch = attempt_meta(&restart_root, new_id, 11).unwrap();
+        let old_epoch = attempt_meta(&restart_root, old, 11).unwrap();
+        assert!(
+            new_epoch.parse::<i64>().unwrap() > old_epoch.parse::<i64>().unwrap(),
+            "new {new_epoch} old {old_epoch}"
         );
         assert!(restart_sentinel.is_file());
         let new_events =
