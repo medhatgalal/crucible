@@ -145,7 +145,7 @@ A row here is a bet. Visible judgment is on main at `181cd59` (pull request 125)
 | Id | Status | Work | Done when |
 | --- | --- | --- | --- |
 | visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
-| dashboard-tab | building | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
+| dashboard-tab | done | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
 
 ## dashboard-tab seam
 
@@ -181,7 +181,7 @@ On 2026-10-08 Medhat answered `1`. `crucible dashboard` with no argument still p
 
 `dashboard_stamps_one_instant_on_all_seven_blocks` is the clock proof. It is on `main` at `7e90bcd`. It fails while a block has no instant, while two blocks show different instants, or while a body byte changes to make room for the time. It passes when all seven blocks show the injected instant and the bodies are otherwise unchanged, including `agents\nunreadable\n`.
 
-The tab proof is a look after the installer-published launcher is the one running. A green cargo test, the page, and the verb do not pass that look.
+The tab proof is a look after the installer-published launcher is the one running. A green cargo test, the page, and the verb do not pass that look. On 2026-10-10 that launcher typed the checkout line into a new idle dashboard pane. The pane showed agents, repo, reviews, next, blocked, git, and intake, each at `2026-10-10T05:03:29Z`.
 
 ### Boundaries
 
@@ -193,7 +193,7 @@ Never: depend on Jira or GitLab. Install this repo into another repository. Edit
 
 ### Where the order is
 
-The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` are on `main` at `7e90bcd`. The checkout file is on `main`. The generic read is on the herdr-init source's default branch at `0a3eb0d`, and the 2026-10-09 publish of revision `62ec7499ae98c1a1137143ea337f269379c5ee9b70edb9589e5eeda7d7f3af63` reads the file. The look at the tab is not started. The row stays `building` until the done-when is met.
+The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` are on `main` at `7e90bcd`. The checkout file is on `main`. The generic read is on the herdr-init source's default branch at `0a3eb0d`, and the 2026-10-09 publish of revision `62ec7499ae98c1a1137143ea337f269379c5ee9b70edb9589e5eeda7d7f3af63` reads the file. On 2026-10-10 the dashboard tab showed that report, and the seven blocks showed `2026-10-10T05:03:29Z`. The earlier four-pane camera tab remains, under another label, and its running camera was left in place. The row is `done`.
 
 ## Named backlog
 
