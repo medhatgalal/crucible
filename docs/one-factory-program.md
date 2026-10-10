@@ -26,6 +26,10 @@ Medhat answered `1` to the question whose options were: speak both records, leav
 
 Medhat answered `1` to the later question whose options were: bet this dashboard package and open one order, or hold the bet. The verbatim reply is `1`. It is the bet. The done-when is the sentence on the `dashboard-tab` row. It is not a separate team-accept sentence, and it does not by itself show the tab.
 
+## Bet recorded 2026-10-10
+
+Medhat answered `1` to the question whose options were: bet B1, or hold the bet. The verbatim reply is `1`. It is the bet. The done-when is the sentence on the `B1` row. It is not a pitch document, and it does not by itself change `attempt restart` or `attempt resume`.
+
 ## What is already on main
 
 `35fbd55` shows `.wm/FLOOR.md` in the Floor area and adds `Publish, delete, or leave this machine.` only when a queue line is already `paused` or `escalated`. Pull request 111.
@@ -146,10 +150,11 @@ A row here is a bet. Visible judgment is on main at `181cd59` (pull request 125)
 | --- | --- | --- | --- |
 | visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
 | dashboard-tab | done | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
+| B1 | building | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
 
 ## dashboard-tab seam
 
-One order. The proof sentence is the done-when on the row. This note is the seam. The bet is the `1` recorded above. The shaped package is the three pieces below. The 2026-10-08 attach exception allows the generic read. It does not name Crucible inside herdr-init.
+One order. The proof sentence is the done-when on the row. This note is the seam. The bet is the `1` recorded on 2026-10-08. The shaped package is the three pieces below. The 2026-10-08 attach exception allows the generic read. It does not name Crucible inside herdr-init.
 
 ### Objective
 
@@ -195,13 +200,20 @@ Never: depend on Jira or GitLab. Install this repo into another repository. Edit
 
 The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` are on `main` at `7e90bcd`. The checkout file is on `main`. The generic read is on the herdr-init source's default branch at `0a3eb0d`, and the 2026-10-09 publish of revision `62ec7499ae98c1a1137143ea337f269379c5ee9b70edb9589e5eeda7d7f3af63` reads the file. On 2026-10-10 the dashboard tab showed that report, and the seven blocks showed `2026-10-10T05:03:29Z`. The earlier four-pane camera tab remains, under another label, and its running camera was left in place. The row is `done`.
 
+## B1 seam
+
+One order. The proof sentence is the done-when on the row. The bet is the `1` recorded on 2026-10-10.
+
+The verbs live in `crates/guided/src/attempt.rs`. `attempt restart` and `attempt resume` read the recorded attempt. Resume also reads the recorded pid. Today a restart writes a new `DISPATCHED` attempt and spawns nothing. A resume of a dead pid writes nothing. The maker path this order uses is the existing `deliver` in `crates/guided/src/orchestrate.rs`. A correction is the existing manager message of kind `correction`.
+
+This order must not become a second `orchestrate run`, a change to `attempt stop`, a change to `attempt correct`, or a new deliver path. The S6 paragraphs remain what the code does until this order lands.
+
 ## Named backlog
 
 A row here is not an order. It becomes an order only after its own pitch is bet. S0–S10 stay closed.
 
 | Id | Status | Work | Done when |
 | --- | --- | --- | --- |
-| B1 | waiting | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
 | B9 | named | Page appearance | The same verbs and the same sections, after a visual pass. Its own pitch |
 | B10 | named | Human-feedback eval | A rating record that is not `answer` or `correction`. Its own pitch |
 | B11 | named | Telemetry export | A defined export. The TSV files are not that export. Its own pitch |
