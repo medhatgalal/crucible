@@ -339,11 +339,21 @@ fn attempt_resume(
         }
         return Ok(format!("{id} RUNNING pid {pid}\n"));
     }
-    let mut file = OpenOptions::new()
-        .append(true)
-        .open(attempt_dir(root, id)?.join("events.tsv"))?;
-    file.write_all(format!("DISPATCHED\t{}\t-\tdead-pid\n", clock.now_unix()).as_bytes())?;
-    let meta_path = attempt_dir(root, id)?.join("meta.tsv");
+    let ad = attempt_dir(root, id)?;
+    let events_path = ad.join("events.tsv");
+    let meta_path = ad.join("meta.tsv");
+    let state_path = root.join("STATE.tsv");
+    let events_before = fs::read(&events_path)?;
+    let meta_before = fs::read(&meta_path)?;
+    let state_before = if state_path.is_file() {
+        Some(fs::read(&state_path)?)
+    } else {
+        None
+    };
+    {
+        let mut file = OpenOptions::new().append(true).open(&events_path)?;
+        file.write_all(format!("DISPATCHED\t{}\t-\tdead-pid\n", clock.now_unix()).as_bytes())?;
+    }
     let text = fs::read_to_string(&meta_path)?;
     let mut lines: Vec<String> = crate::records(&text)
         .into_iter()
@@ -365,7 +375,25 @@ fn attempt_resume(
     if !is_claim_slug(&slug) {
         state_attempt_update(root, clock, &slug, "ACTIVE", id, "-")?;
     }
-    crate::orchestrate::deliver(root, clock, &slug)?;
+    if let Err(err) = crate::orchestrate::deliver(root, clock, &slug) {
+        let events_now = fs::read_to_string(&events_path)?;
+        let last = events_now.lines().rev().find(|line| !line.is_empty());
+        let still_last = last.is_some_and(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            fields.len() == 4
+                && fields[0] == "DISPATCHED"
+                && fields[2] == "-"
+                && fields[3] == "dead-pid"
+        });
+        if still_last {
+            fs::write(&events_path, &events_before)?;
+            fs::write(&meta_path, &meta_before)?;
+            if let Some(bytes) = state_before {
+                fs::write(&state_path, bytes)?;
+            }
+        }
+        return Err(err);
+    }
     Ok(format!("{id} DISPATCHED\n"))
 }
 
@@ -1043,6 +1071,44 @@ mod tests {
     }
 
     #[test]
+    fn dead_pid_resume_restores_the_attempt_when_deliver_fails_before_the_maker() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        managed(root);
+        let id = "A1700000000.9.11";
+        seed_attempt(
+            root,
+            id,
+            "alpha",
+            "-",
+            "STOPPED",
+            "999999",
+            EPOCH + 1800,
+            "-",
+        );
+        state_row(root, "alpha", "BLOCKED", "BUILD", "-", "OPERATOR_DECISION");
+        let events_path = root.join("attempts").join(id).join("events.tsv");
+        let meta_path = root.join("attempts").join(id).join("meta.tsv");
+        let state_path = root.join("STATE.tsv");
+        let events = fs::read(&events_path).unwrap();
+        let meta = fs::read(&meta_path).unwrap();
+        let state = fs::read(&state_path).unwrap();
+        let err = {
+            let _herdr = HerdrGuard::unset();
+            attempt(root, &["resume", id], &clock()).unwrap_err()
+        };
+        assert!(err.to_string().contains("no such item: alpha"), "{err}");
+        let restored = fs::read(&events_path).unwrap();
+        assert_eq!(restored, events);
+        assert!(!restored
+            .windows(b"dead-pid".len())
+            .any(|chunk| chunk == b"dead-pid"));
+        assert_eq!(fs::read(&meta_path).unwrap(), meta);
+        assert_eq!(fs::read(&state_path).unwrap(), state);
+        assert_eq!(attempt_state(root, id).unwrap(), "STOPPED");
+    }
+
+    #[test]
     fn correct_records_a_manager_correction_and_leaves_the_pause() {
         let tmp = Tmp::new();
         let root = tmp.0.as_path();
@@ -1306,6 +1372,11 @@ contract-auditor\tj2\tyes\t
         assert!(
             resume_err.to_string().contains("result did not land alpha"),
             "{resume_err}"
+        );
+        let messages = fs::read_to_string(resume_root.join("MESSAGES.tsv")).unwrap_or_default();
+        assert!(
+            !messages.contains("orchestrator\tdispatched"),
+            "{messages}"
         );
         assert!(resume_sentinel.is_file());
         let resume_events =

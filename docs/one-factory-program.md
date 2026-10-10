@@ -202,9 +202,9 @@ The clock proof and `dashboard_dir_uses_the_argument_and_leaves_the_default` are
 
 One order. The proof sentence is the done-when on the row. The bet is the `1` recorded on 2026-10-10.
 
-The verbs live in `crates/guided/src/attempt.rs`. `attempt restart` and `attempt resume` read the recorded attempt. Resume also reads the recorded pid. Today a restart writes a new `DISPATCHED` attempt and spawns nothing. A resume of a dead pid writes nothing. The maker path this order uses is the existing `deliver` in `crates/guided/src/orchestrate.rs`. A correction is the existing manager message of kind `correction`.
+The verbs live in `crates/guided/src/attempt.rs`. `attempt restart` of a stopped attempt records the new `DISPATCHED` attempt, then calls the existing `deliver` in `crates/guided/src/orchestrate.rs`. A dead-pid `attempt resume`, including a recorded pid of `-`, writes `DISPATCHED` with reason `dead-pid` on that same attempt id and calls that same `deliver`. A live pid still does not call `deliver`. A correction is still the existing manager message of kind `correction`.
 
-This order must not become a second `orchestrate run`, a change to `attempt stop`, a change to `attempt correct`, or a new deliver path. The S6 paragraphs remain what the code does until this order lands.
+This order must not become a second `orchestrate run`, a change to `attempt stop`, a change to `attempt correct`, or a new deliver path. The S6 paragraphs are that behavior. If `deliver` returns before it appends any later events row on a dead-pid resume, that resume restores the attempt events, the attempt meta, and `STATE.tsv` to the bytes from before the resume write, then returns the error. A later events row stays, including `drive worker exit 0`.
 
 ## Named backlog
 
