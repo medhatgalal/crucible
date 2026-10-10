@@ -1294,6 +1294,13 @@ contract-auditor\tj2\tyes\t
         let resume_sentinel = resume_tmp.0.join("sentinel");
         let resume_root = spawn_fixture(&resume_tmp.0, &resume_sentinel);
         seed_stopped_maker(&resume_root, old, "999999");
+        let meta_path = resume_root.join("attempts").join(old).join("meta.tsv");
+        let planted = fs::read_to_string(&meta_path).unwrap().replace(
+            &format!("\tDISPATCHED\t{EPOCH}\t"),
+            &format!("\tSTOPPED\t{EPOCH}\t"),
+        );
+        fs::write(&meta_path, planted).unwrap();
+        assert_eq!(attempt_meta(&resume_root, old, 10).unwrap(), "STOPPED");
         state_row(&resume_root, "alpha", "BLOCKED", "BUILD", "-", "OPERATOR_DECISION");
         let resume_err = attempt(&resume_root, &["resume", old], &clock()).unwrap_err();
         assert!(
