@@ -40,8 +40,9 @@ fn page_html() -> String {
 <meta charset="utf-8">
 <title>Crucible</title>
 <style>
-body { font: 16px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 2rem; }
-pre { background: #f4f4f4; padding: 1rem; overflow: auto; }
+body { font: 16px/1.4 ui-sans-serif, system-ui, sans-serif; margin: 2rem auto; max-width: 40rem; }
+h2 { border-bottom: 2px solid #222; padding-bottom: 0.25rem; }
+pre { background: #f4f4f4; padding: 1rem; overflow: auto; border: 2px solid #222; }
 label { display: block; margin: 0.25rem 0; }
 </style>
 </head>
@@ -3063,6 +3064,25 @@ evidence:
             page.contains("<h2>Walk</h2><pre id=\"walk\"></pre>\n<h2>Floor</h2><pre id=\"floor\"></pre>\n<h2>Factory</h2><pre id=\"factory\"></pre>\n<pre id=\"question\"></pre>\n"),
             "Floor pre is absent"
         );
+    }
+
+    #[test]
+    fn page_style_shows_the_visual_pass() {
+        let page = page_html();
+        let style = page
+            .split_once("<style>")
+            .and_then(|(_, rest)| rest.split_once("</style>"))
+            .map(|(style, _)| style)
+            .expect("style element");
+        assert!(style.contains("max-width: 40rem"), "{style}");
+        assert!(
+            style.contains("h2 { border-bottom: 2px solid #222;"),
+            "{style}"
+        );
+        assert!(style.contains("border: 2px solid #222;"), "{style}");
+        assert!(style.contains("background: #f4f4f4;"), "{style}");
+        assert!(!page.contains("<h2>Options</h2>"));
+        assert!(!page.contains("data-verb=\""));
     }
 
     #[test]
