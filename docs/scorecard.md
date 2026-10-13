@@ -16,18 +16,18 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 
 | Id | Sentence | E | T | Blocked by |
 | --- | --- | --- | --- | --- |
-| SC-1 | Proof is a run of the real binary, not a checklist or a model saying it worked | 1 | 0 | No fresh-host receipt |
-| SC-2 | An architect check happens before code that crosses a boundary | 1 | 0 | This note covers the role-text boundary only. No host receipt |
+| SC-1 | Proof is a run of the real binary, not a checklist or a model saying it worked | 0 | 0 | No `./crucible` receipt on this commit |
+| SC-2 | An architect check happens before code that crosses a boundary | 0 | 0 | The note is in the same change as the code. No `./crucible` receipt |
 | SC-3 | Boundaries are folders, and a gate rejects illegal imports and banned slop before review | 0 | 0 | Crates exist. No import gate |
-| SC-4 | One paved path for each job | 1 | 0 | Guided drive is the path that has run here. `IDEA.md` remains the unported kernel walk |
-| SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 1 | 0 | The missing-role tests are on this branch. Side T is not run for this row |
+| SC-4 | One paved path for each job | 0 | 0 | No `./crucible` receipt on this commit. `IDEA.md` remains the unported kernel walk |
+| SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 0 | 0 | The discriminator is a library test. No `./crucible` receipt on this commit |
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
 | SC-7 | A gardener pass proposes a new rule or a deletion | 0 | 0 | No gardener |
-| SC-8 | Nothing merges without evidence | 1 | 0 | `refusals` and `refusals-bsd` are the hosted checks. This branch is not merged |
-| SC-9 | The repo holds status, skills, and allowlists | 1 | 0 | This file is the scorecard. The guided `STATUS.md` stays the cycle card |
+| SC-8 | Nothing merges without evidence | 0 | 0 | A green selftest is not a receipt that a merge without evidence is refused |
+| SC-9 | The repo holds status, skills, and allowlists | 0 | 0 | This file is not a `./crucible` receipt |
 | SC-10 | Autopilot and parallel runs stay blocked until SC-5 through SC-13 are all 2 | 0 | 0 | Stays blocked |
 | SC-11 | Parallel work has join rules before merge | 0 | 0 | Stays blocked with SC-10 |
-| SC-12 | Work resumes after a crash | 1 | 0 | Restart and dead-pid resume are on main. No host receipt |
+| SC-12 | Work resumes after a crash | 0 | 0 | Restart and dead-pid resume are on main and were not re-run on this commit |
 | SC-13 | Each work order is isolated in its own branch and folder | 0 | 0 | Stays blocked with SC-10 |
 
 ## Not in SC-5 through SC-13

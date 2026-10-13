@@ -19,8 +19,9 @@ unless the intent is engine work — and then do not `go` a product to patch
 engine source, `adopt <program> --managed` writes a state-only record under
 `.crucible/<program>/` and does not copy the engine; `./crucible drive` uses
 that record; `--refresh` from this same checkout is refused. Dispatch reads
-`roles/<role>.md` from that engine tree when the program directory has no
-`roles/` and no copied `crucible` binary. A copied `roles/<role>.md` still wins.
+`roles/<role>.md` from the directory named by the program `repo:` field when
+the program directory has no `roles/` and no copied `crucible` binary. A parent
+directory is not that lookup. A copied `roles/<role>.md` still wins.
 
 Protocol: [START.md](../START.md). Guided outer loop: [drive.md](drive.md).
 Working-mode outer loop: `/crucible` (Grok, Kiro CLI, or Codex) then [working-mode.md](working-mode.md).

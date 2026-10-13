@@ -2345,10 +2345,21 @@ mod tests {
     #[test]
     fn state_only_program_reads_the_role_from_the_engine_tree() {
         let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
         let engine = tmp.0.join("engine");
-        let prog = engine.join(".crucible/work");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\n",
+        )
+        .unwrap();
         fs::create_dir_all(engine.join("roles")).unwrap();
-        fs::write(engine.join("roles/claim-auditor.md"), "purpose: audit\n").unwrap();
+        fs::write(
+            engine.join("roles/claim-auditor.md"),
+            "purpose: repo-bytes\n",
+        )
+        .unwrap();
         fs::create_dir_all(&prog).unwrap();
         fs::write(
             prog.join("PROGRAM"),
@@ -2359,14 +2370,20 @@ mod tests {
         )
         .unwrap();
         let found = role_markdown(&prog, "claim-auditor").unwrap();
-        assert_eq!(fs::read_to_string(found).unwrap(), "purpose: audit\n");
+        assert_eq!(found, engine.join("roles/claim-auditor.md"));
+        let body = fs::read_to_string(&found).unwrap();
+        assert_eq!(body, "purpose: repo-bytes\n");
+        assert!(!body.contains("parent-decoy"), "{body}");
     }
 
     #[test]
     fn copied_role_wins_over_the_engine_tree() {
         let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
         let engine = tmp.0.join("engine");
-        let prog = engine.join(".crucible/work");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(parent.join("roles/claim-auditor.md"), "parent-decoy\n").unwrap();
         fs::create_dir_all(engine.join("roles")).unwrap();
         fs::write(engine.join("roles/claim-auditor.md"), "engine\n").unwrap();
         fs::create_dir_all(prog.join("roles")).unwrap();
@@ -2383,8 +2400,11 @@ mod tests {
     #[test]
     fn copied_binary_does_not_read_the_engine_tree() {
         let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
         let engine = tmp.0.join("engine");
-        let prog = engine.join(".crucible/work");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(parent.join("roles/claim-auditor.md"), "parent-decoy\n").unwrap();
         fs::create_dir_all(engine.join("roles")).unwrap();
         fs::write(engine.join("roles/claim-auditor.md"), "engine\n").unwrap();
         fs::create_dir_all(&prog).unwrap();
@@ -2400,12 +2420,19 @@ mod tests {
     #[test]
     fn state_only_dispatch_uses_the_engine_role_text() {
         let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
         let engine = tmp.0.join("engine");
-        let prog = engine.join(".crucible/work");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\nmay-read: code\nmust-not-read: verdicts\nreturn: TRUE\nverify: read\n\n## Instructions\nParent.\n",
+        )
+        .unwrap();
         fs::create_dir_all(engine.join("roles")).unwrap();
         fs::write(
             engine.join("roles/claim-auditor.md"),
-            "purpose: engine-audit\nmay-read: code\nmust-not-read: verdicts\nreturn: TRUE\nverify: read\n\n## Instructions\nLook.\n",
+            "purpose: repo-bytes\nmay-read: code\nmust-not-read: verdicts\nreturn: TRUE\nverify: read\n\n## Instructions\nLook.\n",
         )
         .unwrap();
         fs::create_dir_all(&prog).unwrap();
@@ -2445,17 +2472,34 @@ mod tests {
         let brief =
             fs::read_to_string(prog.join("claims/C1/dispatches/1-claim-auditor-bea.md")).unwrap();
         assert!(
-            brief.contains("engine-audit"),
-            "dispatch did not read the engine role file: {brief}"
+            brief.contains("repo-bytes"),
+            "dispatch did not read the repo: role file: {brief}"
+        );
+        assert!(
+            !brief.contains("parent-decoy"),
+            "dispatch read the parent decoy: {brief}"
         );
     }
 
     #[test]
     fn missing_role_stays_missing_when_the_engine_has_none() {
         let tmp = Tmp::new();
-        let prog = tmp.0.join("prog");
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let elsewhere = tmp.0.join("elsewhere");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\n",
+        )
+        .unwrap();
         fs::create_dir_all(&prog).unwrap();
-        fs::write(prog.join("PROGRAM"), format!("repo: {}\n", tmp.0.display())).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!("repo: {}\n", elsewhere.display()),
+        )
+        .unwrap();
         assert!(role_markdown(&prog, "claim-auditor").is_none());
     }
 
