@@ -2129,6 +2129,71 @@ attempt_id\titem\ttask_id\twork_id\trole\tagent\tkind\tcriterion\tevidence_class
     }
 
     #[test]
+    fn parent_role_is_not_the_repo_role() {
+        let tmp = Tmp::new();
+        let parent = tmp.root.join("parent");
+        let prog = parent.join("program");
+        let elsewhere = tmp.root.join("elsewhere");
+        let sentinel = tmp.root.join("coordinator-ran");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\n",
+        )
+        .unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        program(&prog, &elsewhere, "");
+        assert!(!prog.join("roles").exists());
+        assert!(!prog.join("crucible").exists());
+        agents(&prog, &format!("touch {}", sentinel.display()));
+        panel(&prog);
+        let clock = clock();
+        cycle(&prog, &["approve-panel"], &clock).unwrap();
+        fs::write(
+            prog.join("PROBLEM.md"),
+            "# Gap\n\nA falsifiable outcome is missing.\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "# CLAIMS\n\n### C1 scope is wrong\n    status: OPEN\n",
+        )
+        .unwrap();
+        let attempt = prog.join("attempts").join("A1700000000.3.1");
+        fs::create_dir_all(&attempt).unwrap();
+        fs::write(
+            attempt.join("contract.md"),
+            "Read this file and follow it exactly.\nAuditing claim C1.\n",
+        )
+        .unwrap();
+        fs::write(attempt.join("transport"), "multi-agent\n").unwrap();
+        fs::write(
+            attempt.join("meta.tsv"),
+            meta_row("A1700000000.3.1", "C1", "claim-auditor", "a1", "DISPATCHED"),
+        )
+        .unwrap();
+        fs::write(
+            attempt.join("events.tsv"),
+            "state\tepoch\tpid\treason\nDISPATCHED\t1\t-\tfixture\n",
+        )
+        .unwrap();
+        let err = drive(&prog, &["tick"], &clock).unwrap_err().to_string();
+        assert!(err.contains("no such role: claim-auditor"), "{err}");
+        assert!(!attempt.join("contract-audit.md").exists(), "{err}");
+        assert!(
+            !sentinel.exists() && !prog.join("DRIVE.BRIEF.md").exists(),
+            "{err}"
+        );
+        let briefs = prog.join("claims/C1/dispatches");
+        if briefs.is_dir() {
+            for entry in fs::read_dir(&briefs).unwrap() {
+                let body = fs::read_to_string(entry.unwrap().path()).unwrap();
+                assert!(!body.contains("parent-decoy"), "{body}");
+            }
+        }
+    }
+
+    #[test]
     fn refused_phase_to_build_does_not_start_sealed_worker() {
         let tmp = Tmp::new();
         let repo = tmp.root.join("repo");

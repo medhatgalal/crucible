@@ -299,10 +299,8 @@ fn dispatch_claim(root: &Path, clock: &dyn Clock, args: &[&str]) -> Result<Strin
     let role = args[1];
     let name = args[2];
     require_panel_approval(root)?;
-    let role_path = root.join("roles").join(format!("{role}.md"));
-    if !role_path.is_file() {
-        return Err(message(format!("no such role: {role}")));
-    }
+    let role_path =
+        role_markdown(root, role).ok_or_else(|| message(format!("no such role: {role}")))?;
     require_registered(root, name)?;
     require_role_cast(root, role, name)?;
     let claims = root.join("CLAIMS.md");
@@ -655,10 +653,8 @@ pub(crate) fn dispatch_managed(
     if !matches!(class, "FOCUSED" | "FULL_SUITE" | "EXTERNAL" | "MANUAL") {
         return Err(message(format!("invalid evidence class: {class}")));
     }
-    let role_path = root.join("roles").join(format!("{role}.md"));
-    if !role_path.is_file() {
-        return Err(message(format!("no such role: {role}")));
-    }
+    let role_path =
+        role_markdown(root, role).ok_or_else(|| message(format!("no such role: {role}")))?;
     require_registered(root, agent)?;
     require_role_cast(root, role, agent)?;
     let lock = root.join(".dispatch.lock");
@@ -1275,13 +1271,12 @@ fn git_capture(repo: &str, args: &[&str]) -> Option<String> {
 fn dispatch_legacy(root: &Path, slug: &str, role: &str, name: &str) -> Result<String, GuidedError> {
     let dir = need(root, slug)?;
     require_panel_approval(root)?;
-    let role_path = root.join("roles").join(format!("{role}.md"));
-    if !role_path.is_file() {
-        return Err(message(format!(
+    let role_path = role_markdown(root, role).ok_or_else(|| {
+        message(format!(
             "no such role: {role} (see {}/roles/)",
             root.display()
-        )));
-    }
+        ))
+    })?;
     require_registered(root, name)?;
     let wid = workid(root, slug)?;
     let self_cmd = self_path(root);
@@ -2288,6 +2283,27 @@ pub fn task_render_file(root: &Path, slug: &str, out: &Path) -> Result<(), Guide
     Ok(())
 }
 
+/// Copied installs keep role text in the program. A state-only engine checkout
+/// has no `roles/` and no program `crucible` binary; the text stays at
+/// `<repo>/roles/<role>.md`. A file in the program still wins.
+fn role_markdown(program: &Path, role: &str) -> Option<PathBuf> {
+    let name = format!("{role}.md");
+    let local = program.join("roles").join(&name);
+    if local.is_file() {
+        return Some(local);
+    }
+    if program.join("crucible").exists() {
+        return None;
+    }
+    let repo = program_field(program, "repo")?;
+    let from_engine = Path::new(&repo).join("roles").join(&name);
+    if from_engine.is_file() {
+        Some(from_engine)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2324,6 +2340,167 @@ mod tests {
     fn approve(root: &Path) {
         let id = panel_id(root).unwrap().unwrap();
         fs::write(root.join("PANEL.APPROVAL"), format!("panel-id: {id}\n")).unwrap();
+    }
+
+    #[test]
+    fn state_only_program_reads_the_role_from_the_engine_tree() {
+        let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let engine = tmp.0.join("engine");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\n",
+        )
+        .unwrap();
+        fs::create_dir_all(engine.join("roles")).unwrap();
+        fs::write(
+            engine.join("roles/claim-auditor.md"),
+            "purpose: repo-bytes\n",
+        )
+        .unwrap();
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!(
+                "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+                engine.display()
+            ),
+        )
+        .unwrap();
+        let found = role_markdown(&prog, "claim-auditor").unwrap();
+        assert_eq!(found, engine.join("roles/claim-auditor.md"));
+        let body = fs::read_to_string(&found).unwrap();
+        assert_eq!(body, "purpose: repo-bytes\n");
+        assert!(!body.contains("parent-decoy"), "{body}");
+    }
+
+    #[test]
+    fn copied_role_wins_over_the_engine_tree() {
+        let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let engine = tmp.0.join("engine");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(parent.join("roles/claim-auditor.md"), "parent-decoy\n").unwrap();
+        fs::create_dir_all(engine.join("roles")).unwrap();
+        fs::write(engine.join("roles/claim-auditor.md"), "engine\n").unwrap();
+        fs::create_dir_all(prog.join("roles")).unwrap();
+        fs::write(prog.join("roles/claim-auditor.md"), "local\n").unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!("repo: {}\n", engine.display()),
+        )
+        .unwrap();
+        let found = role_markdown(&prog, "claim-auditor").unwrap();
+        assert_eq!(fs::read_to_string(found).unwrap(), "local\n");
+    }
+
+    #[test]
+    fn copied_binary_does_not_read_the_engine_tree() {
+        let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let engine = tmp.0.join("engine");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(parent.join("roles/claim-auditor.md"), "parent-decoy\n").unwrap();
+        fs::create_dir_all(engine.join("roles")).unwrap();
+        fs::write(engine.join("roles/claim-auditor.md"), "engine\n").unwrap();
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(prog.join("crucible"), b"bin").unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!("repo: {}\n", engine.display()),
+        )
+        .unwrap();
+        assert!(role_markdown(&prog, "claim-auditor").is_none());
+    }
+
+    #[test]
+    fn state_only_dispatch_uses_the_engine_role_text() {
+        let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let engine = tmp.0.join("engine");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\nmay-read: code\nmust-not-read: verdicts\nreturn: TRUE\nverify: read\n\n## Instructions\nParent.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(engine.join("roles")).unwrap();
+        fs::write(
+            engine.join("roles/claim-auditor.md"),
+            "purpose: repo-bytes\nmay-read: code\nmust-not-read: verdicts\nreturn: TRUE\nverify: read\n\n## Instructions\nLook.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(&prog).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!(
+                "repo: {}\nprogram: work\nlifecycle: managed\ncycle: guided\n",
+                engine.display()
+            ),
+        )
+        .unwrap();
+        fs::write(prog.join("PANEL.md"), "panel body\n").unwrap();
+        fs::write(
+            prog.join("PANEL.ASSIGN.tsv"),
+            "role\tagent\trequired\tnotes\nclaim-auditor\tbea\tyes\t-\n",
+        )
+        .unwrap();
+        fs::write(
+            prog.join("agents.tsv"),
+            "bea\tkindA\tm\thigh\techo {BRIEF}\n",
+        )
+        .unwrap();
+        approve(&prog);
+        fs::write(
+            prog.join("CLAIMS.md"),
+            "# CLAIMS\n\n### C1 the widget is absent\nbody\n",
+        )
+        .unwrap();
+        assert!(!prog.join("roles").exists());
+        assert!(!prog.join("crucible").exists());
+        dispatch(
+            &prog,
+            &["C1", "claim-auditor", "bea"],
+            &FixedClock::new(EPOCH),
+        )
+        .unwrap();
+        let brief =
+            fs::read_to_string(prog.join("claims/C1/dispatches/1-claim-auditor-bea.md")).unwrap();
+        assert!(
+            brief.contains("repo-bytes"),
+            "dispatch did not read the repo: role file: {brief}"
+        );
+        assert!(
+            !brief.contains("parent-decoy"),
+            "dispatch read the parent decoy: {brief}"
+        );
+    }
+
+    #[test]
+    fn missing_role_stays_missing_when_the_engine_has_none() {
+        let tmp = Tmp::new();
+        let parent = tmp.0.join("parent");
+        let prog = parent.join("program");
+        let elsewhere = tmp.0.join("elsewhere");
+        fs::create_dir_all(parent.join("roles")).unwrap();
+        fs::write(
+            parent.join("roles/claim-auditor.md"),
+            "purpose: parent-decoy\n",
+        )
+        .unwrap();
+        fs::create_dir_all(&prog).unwrap();
+        fs::create_dir_all(&elsewhere).unwrap();
+        fs::write(
+            prog.join("PROGRAM"),
+            format!("repo: {}\n", elsewhere.display()),
+        )
+        .unwrap();
+        assert!(role_markdown(&prog, "claim-auditor").is_none());
     }
 
     #[test]
