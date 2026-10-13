@@ -135,6 +135,7 @@ MEDIUM
 - crucible
 - scripts/verify-managed-lifecycle.sh
 - tracked.txt
+- reviews/review.md
 
 ## Acceptance criteria
 
@@ -168,7 +169,9 @@ $P/crucible attempt start "$maker_attempt" "$$" >/dev/null
   cd "$repo"
   git checkout -qb ai/alpha
   printf 'implemented\n' >> tracked.txt
-  git add tracked.txt
+  mkdir -p reviews
+  printf 'Judgment of alpha: the judge is not the author.\n' > reviews/review.md
+  git add tracked.txt reviews/review.md
   git -c user.name=test -c user.email=test@example.invalid commit -qm implementation
 )
 maker_out=$(cd "$repo" && .crucible/p/crucible run alpha mk1 -- sh -c 'echo focused-maker')

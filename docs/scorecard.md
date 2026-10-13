@@ -23,7 +23,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 0 | 0 | The discriminator is a library test. No `./crucible` receipt on this commit |
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
 | SC-7 | A gardener pass proposes a new rule or a deletion | 0 | 0 | No gardener |
-| SC-8 | Nothing merges without evidence | 0 | 0 | A green selftest is not a receipt that a merge without evidence is refused |
+| SC-8 | Nothing merges without evidence | 0 | 0 | Close requires the product review. No receipt yet that a merge without that file is refused on both sides |
 | SC-9 | The repo holds status, skills, and allowlists | 0 | 0 | This file is not a `./crucible` receipt |
 | SC-10 | Autopilot and parallel runs stay blocked until SC-5 through SC-13 are all 2 | 0 | 0 | Stays blocked |
 | SC-11 | Parallel work has join rules before merge | 0 | 0 | Stays blocked with SC-10 |
@@ -38,7 +38,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | Board | A stage board is generated from git and can show several work orders | 0 |
 | Plugs | Grok, Codex, Kiro, and Claude stay adapters | Not re-proved on a host |
 | Auth | Real authentication for actors | Open. One OS user cannot prove identity. Do not record this as closed |
-| Docs | Standing docs match the live policy | The role-text sentence is in `docs/install.md` on this branch |
+| Docs | Standing docs match the live policy | The role-text sentence is in `docs/install.md`. The close sentence is in `docs/drive.md`. Scores stay 0 |
 | Report title | The seven-block report prints the problem title | Not this branch. Not a bet |
 
 `TRY.md` is the host file the operator writes. It is not a third intake verb. The kernel walk on `IDEA.md` stays refused until a later bet.
