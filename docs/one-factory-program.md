@@ -48,7 +48,7 @@ Medhat answered `1` to the question whose options were: bet B1, or hold the bet.
 
 ## Stand-in
 
-This checkout is the engine ledger. A guided room or `orchestrate run` here drives that ledger, so an engine slice is not built by the factory loop. Until a guided checkout other than this ledger can carry one order through `drive`, an independent `reviews/review.md`, and a land step that refuses without that record and both required checks, engine work follows `.grok/rules/grok-stand-in.md`.
+This checkout is the engine ledger. A guided room or `orchestrate run` here still drives this ledger. A guided checkout other than this ledger carried one order through `drive` to done. A reviewer who is not the maker wrote `reviews/review.md` with `Judgment of marker: the judge is not the author.` With that file removed and the checkout on the order base, `crucible land marker` exited 2 and printed `crucible: refused: merge of ai/marker without reviews/review.md`. The base commit did not move. `LESSONS.md` was unchanged. Land did not write `STATUS: CLOSED`.
 
 ## Slices
 
