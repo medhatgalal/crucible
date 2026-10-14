@@ -34,6 +34,7 @@ const GUIDED_USAGE: &str = r#"Crucible runs one durable problem-to-done cycle fo
   crucible cycle approve-panel         record approval of the agent panel
   crucible cycle approve               record approval of the current proposal
   crucible drive [tick|stop]           Ralph-style outer loop; stop releases leftover lock
+  crucible land SLUG                   merge the order branch; refuse without reviews/review.md
   crucible help protocol               show internal agent protocol primitives
 
 Operators normally do not run these commands. Point a fresh agent at START.md with a problem.
@@ -203,6 +204,9 @@ fn dispatch_verb(verb: &str, rest: &[String], cwd: &Path, clock: &dyn Clock) -> 
                     Err(err) => guided_fail(err),
                 },
             )
+        }
+        "land" => {
+            with_program_root(|root| guided_ok(crucible_guided::orchestrate::land(root, &args)))
         }
         "evidence" => {
             with_program_root(|root| guided_ok(crucible_guided::inspect::evidence(root, &args)))
