@@ -48,7 +48,7 @@ Medhat answered `1` to the question whose options were: bet B1, or hold the bet.
 
 ## Stand-in
 
-This checkout is the engine ledger. A guided room or `orchestrate run` here drives that ledger, so an engine slice is not built by the factory loop. Until a guided checkout other than this ledger can carry one order through `drive`, an independent `reviews/review.md`, and a land step that refuses without that record and both required checks, engine work follows `.grok/rules/grok-stand-in.md`.
+The stand-in file is removed in this change. A guided checkout other than this engine ledger drove one order to done. Proposal `b7a518c9f13d` was approved, and the cycle then reported no admittable claim, worth `NO-BUILD`. On that checkout, item `proof` is in review at work id `49f5bc4c2bbf`. Maker `mk1`'s recorded command printed `maker wrote keep.txt`. Judge `j1`'s recorded command printed `wrote reviews/review.md` and exited 0. While that file was absent, `close` refused: lessons stayed unchanged and `STATUS: CLOSED` was not written. This ledger is not that receipt.
 
 ## Slices
 
