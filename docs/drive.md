@@ -94,6 +94,8 @@ that check does, and the refusal does not append `LESSONS.md` or write `STATUS: 
 sentence shows a non-author judgment. It does not authenticate the judge. One operating-system
 user can still write the diff and the sentence.
 
+`crucible land SLUG` merges the branch named in `items/<SLUG>/TARGET` into the current checkout of that `repo:`. It uses the same review file as `check`. When that file is absent, or is not a visible judgment, land returns `refused: merge of BRANCH without reviews/review.md` and does not run `git merge`. The refusal does not append `LESSONS.md` or write `STATUS: CLOSED`. `close` does not merge.
+
 A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation is resumed when every remaining porcelain path is
 harness or an owned file. Drive then follows the item's stage instead of stopping on that same line.
 

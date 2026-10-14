@@ -545,6 +545,41 @@ fn shows_non_author_judgment(text: &str, id: &str) -> bool {
     text.contains(&format!("Judgment of {id}: the judge is not the author."))
 }
 
+/// Merge the order branch named in `items/<slug>/TARGET`.
+/// Refuse before `git merge` when `reviews/review.md` is not a visible judgment.
+pub fn land(root: &Path, args: &[&str]) -> Result<String, GuidedError> {
+    let slug = args.first().copied().unwrap_or("");
+    if slug.is_empty() || args.len() != 1 {
+        return Err(message("usage: crucible land SLUG"));
+    }
+    let repo = crate::dispatch::tgt(root, slug, "repo")?;
+    let branch = crate::dispatch::tgt(root, slug, "branch")?;
+    if repo.is_empty() || branch.is_empty() {
+        return Err(message(format!("refused: {slug} has no order branch")));
+    }
+    let repo_path = Path::new(&repo);
+    if !repo_path.is_dir() {
+        return Err(message(format!(
+            "refused: {slug} order repo is not a directory"
+        )));
+    }
+    if !visible_judgment(root, slug) {
+        return Err(message(format!(
+            "refused: merge of {branch} without reviews/review.md"
+        )));
+    }
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["merge", "--no-edit", &branch])
+        .output()?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(message(format!("refused: merge of {branch} failed: {err}")));
+    }
+    Ok(format!("merged {branch}\n"))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LandedClass {
     Real,
@@ -1004,6 +1039,160 @@ A\t-\ta.paths\ta.sh
 B\tA,assembly\tb.paths\tb.sh
 assembly\tA,B\t-\tassembly.sh
 ";
+
+    fn git(repo: &Path, args: &[&str]) {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn rev(repo: &Path) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn land_refuses_merge_when_review_file_is_absent() {
+        let root = dir("land-absent");
+        let repo = dir("land-absent-repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("keep.txt"), "keep\n").unwrap();
+        git(&repo, &["add", "keep.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "keep",
+            ],
+        );
+        let base = rev(&repo);
+        git(&repo, &["checkout", "-q", "-b", "ai/marker"]);
+        fs::write(repo.join("marker.txt"), "marker\n").unwrap();
+        git(&repo, &["add", "marker.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "marker",
+            ],
+        );
+        git(&repo, &["checkout", "-q", "main"]);
+        fs::write(
+            root.join("PROGRAM"),
+            format!("repo: {}\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("items/marker")).unwrap();
+        fs::write(
+            root.join("items/marker/TARGET"),
+            format!("repo: {}\nbranch: ai/marker\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        let err = land(&root, &["marker"]).unwrap_err();
+        let text = match err {
+            GuidedError::Message(text) => text,
+            GuidedError::Io(err) => panic!("io {err}"),
+        };
+        assert_eq!(
+            text,
+            "refused: merge of ai/marker without reviews/review.md"
+        );
+        assert_eq!(rev(&repo), base, "absent review must not move HEAD");
+        assert!(!repo.join("marker.txt").exists());
+        assert!(!root.join("LESSONS.md").exists());
+        assert!(!root.join("items/marker/ITEM.md").exists());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn land_merges_the_order_branch_when_the_review_is_visible() {
+        let root = dir("land-present");
+        let repo = dir("land-present-repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("keep.txt"), "keep\n").unwrap();
+        git(&repo, &["add", "keep.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "keep",
+            ],
+        );
+        let base = rev(&repo);
+        git(&repo, &["checkout", "-q", "-b", "ai/marker"]);
+        fs::write(repo.join("marker.txt"), "marker\n").unwrap();
+        git(&repo, &["add", "marker.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "marker",
+            ],
+        );
+        git(&repo, &["checkout", "-q", "main"]);
+        fs::create_dir_all(repo.join("reviews")).unwrap();
+        fs::write(
+            repo.join("reviews/review.md"),
+            "Judgment of marker: the judge is not the author.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("PROGRAM"),
+            format!("repo: {}\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("items/marker")).unwrap();
+        fs::write(
+            root.join("items/marker/TARGET"),
+            format!("repo: {}\nbranch: ai/marker\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        let text = land(&root, &["marker"]).unwrap();
+        assert_eq!(text, "merged ai/marker\n");
+        assert_ne!(rev(&repo), base);
+        assert_eq!(
+            fs::read_to_string(repo.join("marker.txt")).unwrap(),
+            "marker\n"
+        );
+        assert!(!root.join("LESSONS.md").exists());
+        assert!(!root.join("items/marker/ITEM.md").exists());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&repo);
+    }
 
     #[test]
     fn step_dispatches_a_again_until_a_lands_then_b() {
