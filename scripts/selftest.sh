@@ -108,6 +108,8 @@ mkrun() {
       mv i.tmp items/it/ITEM.md; }
     [ "${1:-}" = nowork ] || { mkdir -p items/it/work; printf 'x=1\n' > items/it/work/a.py; }
     [ "${1:-}" = nomaker ] || printf 'mk\n' > items/it/MAKER
+    mkdir -p reviews
+    printf 'Judgment of it: the judge is not the author.\n' > reviews/review.md
   )
   printf '%s' "$d"
 }

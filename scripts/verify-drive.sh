@@ -945,5 +945,107 @@ grep -q 'Assess flags are missing' "$P/PROBLEM.md" && ok \
 ( cd "$repo" && "$C" adopt work --refresh --panel-from live >/dev/null 2>&1 ) \
   && bad '--refresh --panel-from was allowed' || ok
 
+# --- close requires the product review, not a copy under the program ---
+base=$(mktemp -d "$TMP/case.XXXXXX")
+repo="$base/repo"
+mkdir -p "$repo"
+(
+  cd "$repo"
+  git init -q -b main
+  printf 'product\n' > keep.txt
+  git add keep.txt
+  git -c user.name=test -c user.email=test@example.invalid commit -qm baseline
+  "$C" adopt gate >/dev/null
+)
+P="$repo/.crucible/gate"
+unset CRUCIBLE_WRAPPER CRUCIBLE_ROOT
+[ -x "$P/crucible" ] && ok || bad 'gate adopt did not copy a program binary'
+# add records TARGET ai/alpha. The branch has to exist, and a later product
+# commit would change that work id, so the refusing cases run before the verdicts.
+git -C "$repo" checkout -q -b ai/alpha
+printf 'mk1\tkindA\tm\thigh\ttrue\nj1\tkindB\tm\thigh\ttrue\nj2\tkindC\tm\thigh\ttrue\n' > "$P/agents.tsv"
+"$P/crucible" add alpha "close gate" >/dev/null
+sed 's|^TEMPLATE-FALSIFIER-UNWRITTEN.*|Undo the change; the named check fails.|' \
+  "$P/items/alpha/ITEM.md" > "$P/items/alpha/ITEM.tmp"
+mv "$P/items/alpha/ITEM.tmp" "$P/items/alpha/ITEM.md"
+mkdir -p "$P/items/alpha/work"
+printf 'x=1\n' > "$P/items/alpha/work/a.py"
+printf 'mk1\n' > "$P/items/alpha/MAKER"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "closeable with no product review: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "missing review refused for another reason: $out"
+fi
+lessons=$(cksum "$P/LESSONS.md")
+if "$P/crucible" close alpha 'should not land' >/dev/null 2>&1; then
+  bad 'close landed with no product review'
+else
+  ok
+fi
+[ "$(cksum "$P/LESSONS.md")" = "$lessons" ] && ok || bad 'refused close appended LESSONS.md'
+grep -q '^STATUS: CLOSED' "$P/items/alpha/ITEM.md" && bad 'refused close wrote CLOSED' || ok
+[ ! -d "$P/items/alpha/.closing" ] && ok || bad 'refused close left .closing'
+sentence='Judgment of alpha: the judge is not the author.'
+mkdir -p "$P/reviews"
+printf '%s\n' "$sentence" > "$P/reviews/review.md"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "program-dir review counted as the product review: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "program-dir review refused for another reason: $out"
+fi
+mkdir -p "$repo/reviews"
+ln -s "$P/reviews/review.md" "$repo/reviews/review.md"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "symlink review counted: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "symlink review refused for another reason: $out"
+fi
+rm "$repo/reviews/review.md"
+rmdir "$repo/reviews"
+ln -s "$P/reviews" "$repo/reviews"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "symlinked reviews directory counted: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "symlinked reviews directory refused for another reason: $out"
+fi
+rm "$repo/reviews"
+mkdir -p "$repo/reviews"
+printf 'Judgment of alpha: the judge is the author.\n' > "$repo/reviews/review.md"
+git -C "$repo" add reviews/review.md
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm 'wrong sentence'
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "author sentence counted: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "wrong sentence refused for another reason: $out"
+fi
+printf '%s\n' "$sentence" > "$repo/reviews/review.md"
+git -C "$repo" add reviews/review.md
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm judgment
+"$P/crucible" run alpha j1 -- sh -c 'echo j1 ran the falsifier' >/dev/null
+"$P/crucible" run alpha j2 -- sh -c 'echo j2 re-derived independently' >/dev/null
+w=$("$P/crucible" workid alpha)
+e1=$(ls "$P/items/alpha/evidence" | grep '^j1\.' | head -1)
+e2=$(ls "$P/items/alpha/evidence" | grep '^j2\.' | head -1)
+printf 'VERDICT: PASS\nWORK-ID: %s\nfalsifier run, see %s\n' "$w" "$e1" > "$P/items/alpha/verdicts/j1.md"
+printf 'VERDICT: PASS\nWORK-ID: %s\nindependent, see %s\n' "$w" "$e2" > "$P/items/alpha/verdicts/j2.md"
+expect 'product review is closeable' '^CLOSEABLE ' "$P/crucible" check alpha
+printf 'VERDICT: PASS\nself\n' > "$P/items/alpha/verdicts/mk1.md"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "maker verdict counted: $out"
+else
+  printf '%s\n' "$out" | grep -q 'may not judge' && ok \
+    || bad "maker verdict refused for another reason: $out"
+fi
+rm "$P/items/alpha/verdicts/mk1.md"
+expect 'product review stays closeable' '^CLOSEABLE ' "$P/crucible" check alpha
+expect 'close records the lesson' '^closed alpha at ' "$P/crucible" close alpha 'a verify-drive lesson'
+grep -q 'a verify-drive lesson' "$P/LESSONS.md" && ok || bad 'close did not append the lesson'
+grep -q '^STATUS: CLOSED' "$P/items/alpha/ITEM.md" && ok || bad 'close did not write CLOSED'
+
 printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

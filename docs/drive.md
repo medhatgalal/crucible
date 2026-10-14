@@ -84,6 +84,16 @@ item's owned files fails the close (`product porcelain outside owned files`). Li
 work id at `result` time. A re-verification whose evidence names the current commit can record
 PASS without a newer commit. Evidence that names an older id is refused.
 
+`crucible check` also requires `reviews/review.md` in the product directory. That directory is the
+`repo:` path when it is a directory, and otherwise the program directory. The file must be a
+regular file, not a symlink, at most 262144 bytes, and it must contain
+`Judgment of SLUG: the judge is not the author.` No directory on that path may be a symlink.
+A copy under `.crucible/` does not count when `repo:` names another directory, including when
+`reviews/` in the product directory is a symlink to that copy. `crucible close` refuses when
+that check does, and the refusal does not append `LESSONS.md` or write `STATUS: CLOSED`. The
+sentence shows a non-author judgment. It does not authenticate the judge. One operating-system
+user can still write the diff and the sentence.
+
 A `SCOPE_CONFLICT` or `NEEDS_CONTEXT` escalation is resumed when every remaining porcelain path is
 harness or an owned file. Drive then follows the item's stage instead of stopping on that same line.
 
