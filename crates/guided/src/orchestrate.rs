@@ -498,8 +498,30 @@ pub(crate) fn review_directory(root: &Path) -> PathBuf {
     root.to_path_buf()
 }
 
+/// `symlink_metadata` on the final file follows a symlinked parent.
+/// A `reviews` directory that only points at the program tree must not count.
+fn review_path_is_unlinked(dir: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(dir) else {
+        return false;
+    };
+    let mut cur = dir.to_path_buf();
+    for comp in rel.components() {
+        cur.push(comp);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => return false,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 pub(crate) fn visible_judgment(root: &Path, id: &str) -> bool {
-    let path = review_directory(root).join("reviews").join("review.md");
+    let dir = review_directory(root);
+    let path = dir.join("reviews").join("review.md");
+    if !review_path_is_unlinked(&dir, &path) {
+        return false;
+    }
     let Ok(meta) = fs::symlink_metadata(&path) else {
         return false;
     };

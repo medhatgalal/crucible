@@ -1004,6 +1004,16 @@ else
     || bad "symlink review refused for another reason: $out"
 fi
 rm "$repo/reviews/review.md"
+rmdir "$repo/reviews"
+ln -s "$P/reviews" "$repo/reviews"
+if out=$("$P/crucible" check alpha 2>&1); then
+  bad "symlinked reviews directory counted: $out"
+else
+  printf '%s\n' "$out" | grep -q 'no visible non-author judgment' && ok \
+    || bad "symlinked reviews directory refused for another reason: $out"
+fi
+rm "$repo/reviews"
+mkdir -p "$repo/reviews"
 printf 'Judgment of alpha: the judge is the author.\n' > "$repo/reviews/review.md"
 git -C "$repo" add reviews/review.md
 git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -qm 'wrong sentence'

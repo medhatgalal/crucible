@@ -1661,4 +1661,124 @@ A1700.1.1\talpha\tT1\tw\tmaker\tj1\tkindB\tA1\tFOCUSED\tRUNNING\t1\t2\t-
             .unwrap()
             .contains(&format!("STATUS: CLOSED {wid}\n")));
     }
+
+    fn commit_reviews_symlink(repo: &Path) {
+        let rel = "reviews";
+        let target = ".crucible/work/reviews";
+        let path = repo.join(rel);
+        std::os::unix::fs::symlink(target, &path).unwrap();
+        let mut child = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["hash-object", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(target.as_bytes())
+            .unwrap();
+        let hashed = child.wait_with_output().unwrap();
+        assert!(
+            hashed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&hashed.stderr)
+        );
+        let oid = String::from_utf8(hashed.stdout).unwrap();
+        git(
+            repo,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("120000,{},{rel}", oid.trim()),
+            ],
+        );
+        git(
+            repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "symlink reviews",
+            ],
+        );
+    }
+
+    #[test]
+    fn symlinked_reviews_directory_is_not_closeable() {
+        let _lock = env_lock();
+        let _judges = unset_env("CRUCIBLE_MIN_JUDGES");
+        let _kinds = unset_env("CRUCIBLE_MIN_KINDS");
+        let tmp = Tmp::new();
+        let repo = tmp.0.join("repo");
+        let root = repo.join(".crucible").join("work");
+        fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("keep.txt"), "keep\n").unwrap();
+        git(&repo, &["add", "keep.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+        );
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("PROGRAM"), format!("repo: {}\n", repo.display())).unwrap();
+        let (dir, _wid) = plant_two_judges(&root);
+        let clock = FixedClock::new(0);
+        fs::create_dir_all(root.join("reviews")).unwrap();
+        fs::write(
+            root.join("reviews/review.md"),
+            "Judgment of alpha: the judge is not the author.\n",
+        )
+        .unwrap();
+        assert_judgment_refused(&root, &repo);
+
+        commit_reviews_symlink(&repo);
+        let porcelain = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["status", "--porcelain"])
+            .output()
+            .unwrap();
+        let porcelain = String::from_utf8(porcelain.stdout).unwrap();
+        assert!(
+            porcelain.is_empty(),
+            "fixture porcelain not clean:\n{porcelain}"
+        );
+        let report = check(&root, &["alpha"]).unwrap();
+        assert_eq!(
+            report.status, 1,
+            "symlinked reviews directory was closeable:\n{}",
+            report.text
+        );
+        assert!(report.text.contains("NOT CLOSEABLE\n"), "{}", report.text);
+        let want = format!(
+            "FAIL no visible non-author judgment at {} (Judgment of alpha: the judge is not the author.)",
+            repo.join("reviews").join("review.md").display()
+        );
+        assert!(report.text.contains(&want), "{}", report.text);
+        let refused = close(&root, &["alpha", "should not land"], &clock).unwrap_err();
+        assert_eq!(refused.to_string(), "refused: alpha is not closeable");
+        assert!(!root.join("LESSONS.md").exists());
+        assert!(!fs::read_to_string(dir.join("ITEM.md"))
+            .unwrap()
+            .contains("STATUS: CLOSED"));
+        assert!(!dir.join(".closing").exists());
+    }
 }
