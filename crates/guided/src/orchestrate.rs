@@ -568,6 +568,7 @@ pub fn land(root: &Path, args: &[&str]) -> Result<String, GuidedError> {
             "refused: merge of {branch} without reviews/review.md"
         )));
     }
+    let started = merge_head_present(repo_path);
     let out = Command::new("git")
         .arg("-C")
         .arg(repo_path)
@@ -575,9 +576,33 @@ pub fn land(root: &Path, args: &[&str]) -> Result<String, GuidedError> {
         .output()?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
+        if !started && merge_head_present(repo_path) {
+            let abort = Command::new("git")
+                .arg("-C")
+                .arg(repo_path)
+                .args(["merge", "--abort"])
+                .output()?;
+            if !abort.status.success() {
+                let abort_err = String::from_utf8_lossy(&abort.stderr);
+                return Err(message(format!(
+                    "refused: merge of {branch} failed: {err}abort failed: {abort_err}"
+                )));
+            }
+        }
         return Err(message(format!("refused: merge of {branch} failed: {err}")));
     }
     Ok(format!("merged {branch}\n"))
+}
+
+/// True when `MERGE_HEAD` is present in `repo`.
+fn merge_head_present(repo: &Path) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1188,6 +1213,94 @@ assembly\tA,B\t-\tassembly.sh
             fs::read_to_string(repo.join("marker.txt")).unwrap(),
             "marker\n"
         );
+        assert!(!root.join("LESSONS.md").exists());
+        assert!(!root.join("items/marker/ITEM.md").exists());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn land_aborts_a_conflicted_merge() {
+        let root = dir("land-conflict");
+        let repo = dir("land-conflict-repo");
+        git(&repo, &["init", "-q", "-b", "main"]);
+        fs::write(repo.join("note.txt"), "base\n").unwrap();
+        git(&repo, &["add", "note.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "base",
+            ],
+        );
+        git(&repo, &["checkout", "-q", "-b", "ai/marker"]);
+        fs::write(repo.join("note.txt"), "branch\n").unwrap();
+        git(&repo, &["add", "note.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "branch",
+            ],
+        );
+        git(&repo, &["checkout", "-q", "main"]);
+        fs::write(repo.join("note.txt"), "main\n").unwrap();
+        git(&repo, &["add", "note.txt"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.email=t@example.invalid",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "main",
+            ],
+        );
+        let base = rev(&repo);
+        fs::create_dir_all(repo.join("reviews")).unwrap();
+        fs::write(
+            repo.join("reviews/review.md"),
+            "Judgment of marker: the judge is not the author.\n",
+        )
+        .unwrap();
+        fs::write(
+            root.join("PROGRAM"),
+            format!("repo: {}\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("items/marker")).unwrap();
+        fs::write(
+            root.join("items/marker/TARGET"),
+            format!("repo: {}\nbranch: ai/marker\nbase: main\n", repo.display()),
+        )
+        .unwrap();
+        let err = land(&root, &["marker"]).unwrap_err();
+        let text = match err {
+            GuidedError::Message(text) => text,
+            GuidedError::Io(err) => panic!("io {err}"),
+        };
+        assert!(
+            text.starts_with("refused: merge of ai/marker failed:"),
+            "{text}"
+        );
+        assert!(
+            !repo.join(".git/MERGE_HEAD").exists(),
+            "a refused merge must not leave MERGE_HEAD"
+        );
+        assert_eq!(rev(&repo), base, "a refused merge must not move HEAD");
+        assert_eq!(fs::read_to_string(repo.join("note.txt")).unwrap(), "main\n");
         assert!(!root.join("LESSONS.md").exists());
         assert!(!root.join("items/marker/ITEM.md").exists());
         let _ = fs::remove_dir_all(&root);
