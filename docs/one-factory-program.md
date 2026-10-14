@@ -48,7 +48,7 @@ Medhat answered `1` to the question whose options were: bet B1, or hold the bet.
 
 ## Stand-in
 
-This checkout is the engine ledger. A guided room or `orchestrate run` here drives that ledger, so an engine slice is not built by the factory loop. Until a guided checkout other than this ledger can carry one order through `drive`, an independent `reviews/review.md`, and a land step that refuses without that record and both required checks, engine work follows `.grok/rules/grok-stand-in.md`.
+The stand-in file is removed in this change. A guided checkout other than this engine ledger drove claim C1 to approval of proposal `58ec66218b5e`, then admitted that same claim as item `marker`. Maker `mk1` committed work `9db9c2f880dd`; its recorded command printed `maker wrote marker.txt`. Judge `j1` is not that maker. Its recorded command printed `wrote reviews/review.md`, and `reviews/review.md` contained `Judgment of marker: the judge is not the author.` With that file present, `check marker` printed `CLOSEABLE 9db9c2f880dd`. After the file was removed, `check marker` printed `FAIL no visible non-author judgment` and `NOT CLOSEABLE`, and `close marker` exited 2 with `refused: marker is not closeable`. Lessons stayed `1884163004 155`. `STATUS: CLOSED` was not written. A later tick printed `refused: j1 already has current-work PASS for judge/A1` and the drive exited 2. The review file and the close refusal are from item `marker`. This ledger is not that receipt.
 
 ## Slices
 
