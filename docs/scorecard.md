@@ -24,7 +24,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
 | SC-7 | A gardener pass proposes a new rule or a deletion | 0 | 0 | No gardener |
 | SC-8 | Nothing merges without evidence | 2 | 2 | Both sides refused `crucible land` when `reviews/review.md` was absent. The pull request links those two runs |
-| SC-9 | The repo holds status, skills, and allowlists | 0 | 0 | This file is not a `./crucible` receipt |
+| SC-9 | The repo holds status, skills, and allowlists | 2 | 2 | Both sides ran `crucible status --json`. Adopt `--working-mode` copied the skill names as regular files. `POST /act/not-a-verb` returned 404. The pull request links those receipts |
 | SC-10 | Autopilot and parallel runs stay blocked until SC-5 through SC-13 are all 2 | 0 | 0 | Stays blocked |
 | SC-11 | Parallel work has join rules before merge | 0 | 0 | Stays blocked with SC-10 |
 | SC-12 | Work resumes after a crash | 0 | 0 | Side E was not run: `deliver` would start the registered kiro maker against this ledger. Side T `attempt restart` and `attempt resume` each exited 2 with `crucible: no such item: sc12` and printed no dispatched id |
