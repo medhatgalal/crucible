@@ -23,11 +23,11 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 0 | 0 | The discriminator is a library test. No `./crucible` receipt on this commit |
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
 | SC-7 | A gardener pass proposes a new rule or a deletion | 0 | 0 | No gardener |
-| SC-8 | Nothing merges without evidence | 0 | 0 | Close requires the product review. No receipt yet that a merge without that file is refused on both sides |
+| SC-8 | Nothing merges without evidence | 2 | 2 | Both sides refused `crucible land` when `reviews/review.md` was absent. The pull request links those two runs |
 | SC-9 | The repo holds status, skills, and allowlists | 0 | 0 | This file is not a `./crucible` receipt |
 | SC-10 | Autopilot and parallel runs stay blocked until SC-5 through SC-13 are all 2 | 0 | 0 | Stays blocked |
 | SC-11 | Parallel work has join rules before merge | 0 | 0 | Stays blocked with SC-10 |
-| SC-12 | Work resumes after a crash | 0 | 0 | Restart and dead-pid resume are on main and were not re-run on this commit |
+| SC-12 | Work resumes after a crash | 0 | 0 | Side E was not run: `deliver` would start the registered kiro maker against this ledger. Side T `attempt restart` and `attempt resume` each exited 2 with `crucible: no such item: sc12` and printed no dispatched id |
 | SC-13 | Each work order is isolated in its own branch and folder | 0 | 0 | Stays blocked with SC-10 |
 
 ## Not in SC-5 through SC-13
