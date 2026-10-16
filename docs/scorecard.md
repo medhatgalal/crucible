@@ -16,7 +16,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 
 | Id | Sentence | E | T | Blocked by |
 | --- | --- | --- | --- | --- |
-| SC-1 | Proof is a run of the real binary, not a checklist or a model saying it worked | 0 | 0 | No `./crucible` receipt on this commit |
+| SC-1 | Proof is a run of the real binary, not a checklist or a model saying it worked | 2 | 2 | Both sides ran `crucible --version` and printed `1.28.0`. The pull request links those receipts |
 | SC-2 | An architect check happens before code that crosses a boundary | 0 | 0 | The note is in the same change as the code. No `./crucible` receipt |
 | SC-3 | Boundaries are folders, and a gate rejects illegal imports and banned slop before review | 0 | 0 | Crates exist. No import gate |
 | SC-4 | One paved path for each job | 0 | 0 | No `./crucible` receipt on this commit. `IDEA.md` remains the unported kernel walk |
