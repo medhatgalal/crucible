@@ -311,7 +311,8 @@ A missing owned file is not a removal. A symlink, including a symlinked parent, 
 copy is kept outside the product tree until the files are back, and a restore failure is an error.
 The command is not a shell. A command that cannot be started is refused. The probe runs only in
 REVIEW. A command that does not exit within 15 seconds is not a pass, and its process group is
-stopped before the files are put back. SIGINT and SIGTERM do that too. A killed check leaves a
+stopped before the files are put back. SIGINT and SIGTERM during the move, the run, or
+the restore put the files back too. A killed check leaves a
 manifest beside the product tree, and the next `check` puts the files back from it. A second
 check refuses `falsifier probe in progress` while the probe still holds that directory, and does
 not move the files. `close` removes

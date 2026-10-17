@@ -143,7 +143,7 @@ MEDIUM
 
 ## Focused falsifier
 
-scripts/verify-managed-lifecycle.sh
+/bin/test -f tracked.txt
 
 ## Expensive evidence
 

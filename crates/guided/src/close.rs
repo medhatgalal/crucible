@@ -258,15 +258,15 @@ const FALSIFIER_BOUND: Duration = Duration::from_secs(15);
 static HIDE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
-static FALSIFIER_BOUND_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
+thread_local! {
+    static FALSIFIER_BOUND_OVERRIDE: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
 
 fn falsifier_bound() -> Duration {
     #[cfg(test)]
     {
-        if let Some(bound) = *FALSIFIER_BOUND_OVERRIDE
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-        {
+        if let Some(bound) = FALSIFIER_BOUND_OVERRIDE.get() {
             return bound;
         }
     }
@@ -305,8 +305,15 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
         }
         paths.push(path);
     }
+    // Held across the move, the run, and the restore. A signal outside this
+    // function still kills the process; inside it, the files go back first.
+    let _signals = StopSignals::install();
     paths.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for path in paths {
+        if INTERRUPTED.swap(false, Ordering::SeqCst) {
+            hidden.restore()?;
+            return Err(message("refused: check interrupted"));
+        }
         let backup = hidden.dir.join(hidden.pairs.len().to_string());
         // The manifest names the backup before the rename. A kill in that gap
         // leaves the file in place; a kill after the rename is recoverable.
@@ -324,10 +331,16 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
     }
     if hidden.pairs.is_empty() {
         hidden.restore()?;
+        if INTERRUPTED.swap(false, Ordering::SeqCst) {
+            return Err(message("refused: check interrupted"));
+        }
         return Ok(());
     }
     let ran = falsifier_passed(&repo, &command);
     hidden.restore()?;
+    if INTERRUPTED.swap(false, Ordering::SeqCst) {
+        return Err(message("refused: check interrupted"));
+    }
     if ran? {
         return Err(message("refused: falsifier does not discriminate"));
     }
@@ -541,17 +554,13 @@ fn falsifier_passed(repo: &Path, line: &str) -> Result<bool, GuidedError> {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    // Installed before spawn so a signal cannot land in the gap after the child exists.
-    let _signals = StopSignals::install();
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Err(message("refused: falsifier did not run"));
-        }
         Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
             return Err(message("refused: check interrupted"));
         }
-        Err(err) => return Err(err.into()),
+        // NotFound, EACCES, and ENOEXEC all mean the command never ran.
+        Err(_) => return Err(message("refused: falsifier did not run")),
     };
     let started = Instant::now();
     let bound = falsifier_bound();
@@ -565,7 +574,10 @@ fn falsifier_passed(repo: &Path, line: &str) -> Result<bool, GuidedError> {
                 stop_falsifier_group(&mut child);
                 return Err(message("refused: check interrupted"));
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => {
+                stop_falsifier_group(&mut child);
+                return Err(err.into());
+            }
             Ok(Some(status)) => {
                 if INTERRUPTED.swap(false, Ordering::SeqCst) {
                     stop_falsifier_group(&mut child);
@@ -2408,17 +2420,13 @@ Stop if the owned file is not restored.
     struct BoundGuard;
     impl BoundGuard {
         fn set(bound: std::time::Duration) -> Self {
-            *super::FALSIFIER_BOUND_OVERRIDE
-                .lock()
-                .unwrap_or_else(|err| err.into_inner()) = Some(bound);
+            super::FALSIFIER_BOUND_OVERRIDE.set(Some(bound));
             Self
         }
     }
     impl Drop for BoundGuard {
         fn drop(&mut self) {
-            *super::FALSIFIER_BOUND_OVERRIDE
-                .lock()
-                .unwrap_or_else(|err| err.into_inner()) = None;
+            super::FALSIFIER_BOUND_OVERRIDE.set(None);
         }
     }
 
@@ -2561,6 +2569,25 @@ Stop if the owned file is not restored.
     }
 
     #[test]
+    fn discriminate_refuses_when_the_falsifier_is_not_executable() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let script = root.join("tools/not-exec.sh");
+        write_script(&script, "#!/bin/sh\nexit 0\n");
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&script, perms).unwrap();
+        plant_discriminate(root, script.to_str().unwrap(), true);
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier did not run");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
     fn discriminate_skips_the_probe_before_review() {
         let tmp = Tmp::new();
         let root = tmp.0.as_path();
@@ -2672,7 +2699,6 @@ Stop if the owned file is not restored.
 
     #[test]
     fn discriminate_a_second_check_does_not_take_the_hidden_file() {
-        let _bound = BoundGuard::set(std::time::Duration::from_secs(8));
         let tmp = Tmp::new();
         let root = tmp.0.as_path();
         plant_discriminate(root, "tools/linger.sh", true);
@@ -2681,7 +2707,10 @@ Stop if the owned file is not restored.
             "#!/bin/sh\nprintf ready\\n > tools/ready\nwhile true; do sleep 1; done\n",
         );
         let check_root = root.to_path_buf();
-        let worker = thread::spawn(move || check(&check_root, &["alpha"]));
+        let worker = thread::spawn(move || {
+            let _bound = BoundGuard::set(std::time::Duration::from_secs(8));
+            check(&check_root, &["alpha"])
+        });
         let ready = root.join("tools/ready");
         let started = std::time::Instant::now();
         while !ready.is_file() {
