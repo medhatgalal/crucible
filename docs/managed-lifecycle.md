@@ -316,10 +316,12 @@ the files are put back. A restore whose destination now resolves outside the pro
 tree is refused, and the hide directory is kept. SIGINT and SIGTERM during the move, the run, or
 the restore put the files back too. A killed check leaves a
 manifest beside the product tree, and the next `check` puts the files back from it. A second
-check refuses `falsifier probe in progress` while the probe still holds that directory, and does
-not move the files. Recovery ignores a hide directory owned by someone else, and refuses a
-restore path outside the product tree. An owned path that contains a tab, a newline, or a carriage return is refused
-before anything is moved. `close` removes
+check refuses `falsifier probe in progress` while another check holds the probe, including before
+either check has moved a file, and does not move the files. The lock file is outside the product
+tree. Recovery ignores a hide directory
+owned by someone else, and refuses a restore path outside the product tree. An owned path, or the
+product path itself, that contains a tab, a newline, a carriage return, or a byte that is not
+UTF-8 is refused before anything is moved. `close` removes
 its lock when this refusal returns.
 
 Managed maker dispatch records every maker in `MAKERS.tsv`. Reviewer contracts and results label their

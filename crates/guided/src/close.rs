@@ -5,7 +5,8 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -73,6 +74,9 @@ pub fn check(root: &Path, args: &[&str]) -> Result<CheckReport, GuidedError> {
     }
     if uses_managed_lifecycle(root)? {
         let repo = crate::orchestrate::review_directory(root);
+        // Held across recovery, the move, and the restore.
+        // A second check must not observe a file already renamed away.
+        let _probe_lock = acquire_probe_lock(&repo)?;
         // Before validation, so a killed probe is restored even when this check then refuses.
         recover_stranded(&repo)?;
         validate_managed_item(root, slug)?;
@@ -418,6 +422,9 @@ impl Hidden {
         let mut body = format!("repo\t{}\n", canon.display());
         for (index, (original, _)) in self.pairs.iter().enumerate() {
             let stored = fs::canonicalize(original).unwrap_or_else(|_| original.clone());
+            if !path_can_be_recorded(&stored) {
+                return Err(message("refused: owned path cannot be recorded"));
+            }
             body.push_str(&format!("{index}\t{}\n", stored.display()));
         }
         let tmp = self.dir.join("MANIFEST.tmp");
@@ -507,6 +514,91 @@ fn try_lock_hide(file: &File) -> Result<bool, std::io::Error> {
         return Ok(false);
     }
     Err(err)
+}
+
+fn path_can_be_recorded(path: &Path) -> bool {
+    let bytes = path.as_os_str().as_bytes();
+    std::str::from_utf8(bytes).is_ok()
+        && !bytes
+            .iter()
+            .any(|byte| matches!(byte, b'\t' | b'\n' | b'\r'))
+}
+
+fn probe_lock_dir(canon: &Path) -> Result<PathBuf, GuidedError> {
+    // Beside the product tree, on the same parent the hide directory uses.
+    // A temp directory can be unlinked while the lock is held, which splits the inode.
+    let Some(parent) = canon.parent() else {
+        return Err(message("refused: product path cannot be recorded"));
+    };
+    let dir = parent.join(".crucible-falsifier-locks");
+    if dir.starts_with(canon) {
+        return Err(message(
+            "refused: cannot hold the owned files outside the product tree",
+        ));
+    }
+    Ok(dir)
+}
+
+fn probe_lock_name(canon: &Path) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in canon.as_os_str().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn ensure_probe_lock_dir(dir: &Path) -> Result<(), GuidedError> {
+    match fs::symlink_metadata(dir) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            return Err(message("refused: cannot lock the falsifier probe"));
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            builder.mode(0o700);
+            if let Err(err) = builder.create(dir) {
+                if err.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(err.into());
+                }
+            }
+        }
+        Err(err) => return Err(err.into()),
+    }
+    let mut perms = fs::metadata(dir)?.permissions();
+    perms.set_mode(0o700);
+    fs::set_permissions(dir, perms)?;
+    Ok(())
+}
+
+/// Lock for one product tree. A second check fails until this file is dropped.
+fn acquire_probe_lock(repo: &Path) -> Result<File, GuidedError> {
+    let canon = match fs::canonicalize(repo) {
+        Ok(path) => path,
+        Err(err) => return Err(err.into()),
+    };
+    if !path_can_be_recorded(&canon) {
+        return Err(message("refused: product path cannot be recorded"));
+    }
+    let dir = probe_lock_dir(&canon)?;
+    ensure_probe_lock_dir(&dir)?;
+    let path = dir.join(probe_lock_name(&canon));
+    if fs::symlink_metadata(&path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(message("refused: cannot lock the falsifier probe"));
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).mode(0o600);
+    let file = options.open(&path)?;
+    let mut perms = fs::metadata(&path)?.permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(&path, perms)?;
+    if !try_lock_hide(&file)? {
+        return Err(message("refused: falsifier probe in progress"));
+    }
+    Ok(file)
 }
 
 fn put_back(original: &Path, backup: &Path) -> std::io::Result<()> {
@@ -1824,6 +1916,11 @@ mod tests {
     }
     impl Drop for Tmp {
         fn drop(&mut self) {
+            if let Ok(canon) = fs::canonicalize(&self.0) {
+                if let Ok(dir) = super::probe_lock_dir(&canon) {
+                    let _ = fs::remove_file(dir.join(super::probe_lock_name(&canon)));
+                }
+            }
             let _ = fs::remove_dir_all(&self.0);
         }
     }
@@ -3318,6 +3415,52 @@ Stop if the owned file is not restored.
             .status()
             .unwrap();
         assert!(!alive.success(), "writer {pid} still alive");
+    }
+
+    #[test]
+    fn discriminate_a_second_check_refuses_before_either_moves_a_file() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", true);
+        let held = super::acquire_probe_lock(root).unwrap();
+        let check_root = root.to_path_buf();
+        let err = thread::spawn(move || check(&check_root, &["alpha"]))
+            .join()
+            .expect("check thread")
+            .unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier probe in progress");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        drop(held);
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier does not discriminate");
+    }
+
+    #[test]
+    fn discriminate_refuses_a_product_path_that_cannot_be_recorded() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+        let mut raw = b"/tmp/crucible".to_vec();
+        raw.push(0xff);
+        assert!(!super::path_can_be_recorded(&PathBuf::from(
+            OsString::from_vec(raw)
+        )));
+        let root = std::env::temp_dir().join(format!(
+            "crucible\ttab-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let _cleanup = RemoveOnDrop(vec![root.clone()]);
+        plant_discriminate(&root, "/usr/bin/true", true);
+        let err = check(&root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: product path cannot be recorded");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
     }
 
     struct HidePrefixCleanup(PathBuf);
