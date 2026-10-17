@@ -4,7 +4,7 @@
 //! not `date +%Y-%m-%d`.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
@@ -348,6 +348,10 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
         }
         return Ok(());
     }
+    if let Err(err) = hidden.snapshot() {
+        hidden.restore()?;
+        return Err(err.into());
+    }
     let ran = falsifier_passed(&repo, &command);
     hidden.restore()?;
     if INTERRUPTED.swap(false, Ordering::SeqCst) {
@@ -363,6 +367,8 @@ struct Hidden {
     dir: PathBuf,
     repo: PathBuf,
     pairs: Vec<(PathBuf, PathBuf)>,
+    /// Private copies of the owned bytes, taken before the falsifier runs.
+    snaps: Vec<Vec<Snap>>,
     lock: Option<File>,
     /// A failed restore must not delete the manifest on a later `Drop`.
     pending_failure: bool,
@@ -410,6 +416,7 @@ impl Hidden {
             dir,
             repo: canon,
             pairs: Vec::new(),
+            snaps: Vec::new(),
             lock: Some(lock),
             pending_failure: false,
         };
@@ -441,11 +448,24 @@ impl Hidden {
         Ok(())
     }
 
+    fn snapshot(&mut self) -> std::io::Result<()> {
+        let mut seq = 0u64;
+        let mut all = Vec::with_capacity(self.pairs.len());
+        for (_, backup) in &self.pairs {
+            all.push(collect_snaps(&self.dir, backup, &mut seq)?);
+        }
+        self.snaps = all;
+        Ok(())
+    }
+
     fn restore(&mut self) -> Result<(), GuidedError> {
         if self.pending_failure {
             return Err(message("could not restore owned files"));
         }
         let mut first: Option<GuidedError> = None;
+        let mut snap_rows = std::mem::take(&mut self.snaps);
+        let mut snap_rows = snap_rows.drain(..).rev();
+        let mut seq = 0u64;
         for (original, backup) in self.pairs.drain(..).rev() {
             if !restore_target_inside(&self.repo, &original) {
                 self.pending_failure = true;
@@ -453,7 +473,13 @@ impl Hidden {
                     "refused: restore target is outside the product tree",
                 ));
             }
-            if let Err(err) = put_back(&original, &backup) {
+            let row = snap_rows.next();
+            let restored = if let Some(row) = row {
+                restore_from_snaps(&self.repo, &original, &backup, row, &mut seq)
+            } else {
+                put_back(&original, &backup)
+            };
+            if let Err(err) = restored {
                 if first.is_none() {
                     first = Some(message(format!(
                         "could not restore {}: {err}",
@@ -599,6 +625,201 @@ fn acquire_probe_lock(repo: &Path) -> Result<File, GuidedError> {
         return Err(message("refused: falsifier probe in progress"));
     }
     Ok(file)
+}
+
+struct Snap {
+    rel: PathBuf,
+    mode: u32,
+    kind: SnapKind,
+}
+
+enum SnapKind {
+    Dir,
+    File(File),
+    Link(PathBuf),
+}
+
+fn collect_snaps(hide: &Path, backup: &Path, seq: &mut u64) -> std::io::Result<Vec<Snap>> {
+    let mut out = Vec::new();
+    collect_one(hide, backup, Path::new(""), &mut out, seq)?;
+    Ok(out)
+}
+
+fn collect_one(
+    hide: &Path,
+    root: &Path,
+    rel: &Path,
+    out: &mut Vec<Snap>,
+    seq: &mut u64,
+) -> std::io::Result<()> {
+    let path = if rel.as_os_str().is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(rel)
+    };
+    let meta = fs::symlink_metadata(&path)?;
+    let mode = meta.permissions().mode() & 0o777;
+    if meta.file_type().is_symlink() {
+        out.push(Snap {
+            rel: rel.to_path_buf(),
+            mode,
+            kind: SnapKind::Link(fs::read_link(&path)?),
+        });
+        return Ok(());
+    }
+    if meta.is_dir() {
+        out.push(Snap {
+            rel: rel.to_path_buf(),
+            mode,
+            kind: SnapKind::Dir,
+        });
+        let mut names = Vec::new();
+        for entry in fs::read_dir(&path)? {
+            names.push(entry?.file_name());
+        }
+        names.sort();
+        for name in names {
+            collect_one(hide, root, &rel.join(name), out, seq)?;
+        }
+        return Ok(());
+    }
+    if !meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "owned backup is not a file",
+        ));
+    }
+    let tmp = hide.join(format!(".snap-{seq}"));
+    *seq += 1;
+    let mut input = File::open(&path)?;
+    let mut body = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)?;
+    std::io::copy(&mut input, &mut body)?;
+    body.sync_all()?;
+    fs::remove_file(&tmp)?;
+    body.seek(SeekFrom::Start(0))?;
+    out.push(Snap {
+        rel: rel.to_path_buf(),
+        mode,
+        kind: SnapKind::File(body),
+    });
+    Ok(())
+}
+
+fn restore_from_snaps(
+    repo: &Path,
+    original: &Path,
+    backup: &Path,
+    mut row: Vec<Snap>,
+    seq: &mut u64,
+) -> std::io::Result<()> {
+    for snap in &mut row {
+        if snap.rel.is_absolute()
+            || snap
+                .rel
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "snapshot path leaves the owned file",
+            ));
+        }
+        let dest = if snap.rel.as_os_str().is_empty() {
+            original.to_path_buf()
+        } else {
+            original.join(&snap.rel)
+        };
+        if !restore_target_inside(repo, &dest) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "snapshot destination is outside the product tree",
+            ));
+        }
+        place_snap(&dest, snap, seq)?;
+    }
+    for snap in &row {
+        let SnapKind::Dir = snap.kind else {
+            continue;
+        };
+        let dest = if snap.rel.as_os_str().is_empty() {
+            original.to_path_buf()
+        } else {
+            original.join(&snap.rel)
+        };
+        let mut perms = fs::symlink_metadata(&dest)?.permissions();
+        perms.set_mode(snap.mode);
+        fs::set_permissions(&dest, perms)?;
+    }
+    discard_backup(backup)
+}
+
+fn clear_occupant(path: &Path) -> std::io::Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => fs::remove_dir_all(path),
+        Ok(_) => fs::remove_file(path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+fn place_snap(dest: &Path, snap: &mut Snap, seq: &mut u64) -> std::io::Result<()> {
+    if let SnapKind::Dir = snap.kind {
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        // Replace a file or a symlink. `create_dir_all` would keep either.
+        clear_occupant(dest)?;
+        return fs::create_dir(dest);
+    }
+    let Some(parent) = dest.parent() else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "owned path has no parent",
+        ));
+    };
+    fs::create_dir_all(parent)?;
+    clear_occupant(dest)?;
+    match &mut snap.kind {
+        SnapKind::Dir => Ok(()),
+        SnapKind::Link(target) => std::os::unix::fs::symlink(target, dest),
+        SnapKind::File(body) => {
+            let tmp = parent.join(format!(".crucible-restore-{}-{}", std::process::id(), *seq));
+            *seq += 1;
+            // The falsifier can plant this name before it exits. Do not open it.
+            clear_occupant(&tmp)?;
+            body.seek(SeekFrom::Start(0))?;
+            let mut out = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .mode(0o600)
+                .open(&tmp)?;
+            std::io::copy(body, &mut out)?;
+            out.sync_all()?;
+            let mut perms = out.metadata()?.permissions();
+            perms.set_mode(snap.mode);
+            fs::set_permissions(&tmp, perms)?;
+            fs::rename(&tmp, dest)
+        }
+    }
+}
+
+fn discard_backup(backup: &Path) -> std::io::Result<()> {
+    let meta = match fs::symlink_metadata(backup) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if meta.is_dir() && !meta.file_type().is_symlink() {
+        fs::remove_dir_all(backup)
+    } else {
+        fs::remove_file(backup)
+    }
 }
 
 fn put_back(original: &Path, backup: &Path) -> std::io::Result<()> {
@@ -2785,7 +3006,7 @@ Stop if the owned file is not restored.
         .unwrap();
         write_script(
             &root.join("tools/recreate.sh"),
-            "#!/bin/sh\nmkdir -p src/widget\nprintf 'fake\\n' > src/widget/note\nexit 1\n",
+            "#!/bin/sh\nmkdir -p src/widget\nprintf 'fake\\n' > src/widget/note\nprintf 'extra\\n' > src/widget/extra\nexit 1\n",
         );
         let report = check(root, &["alpha"]).unwrap();
         assert!(
@@ -2797,6 +3018,7 @@ Stop if the owned file is not restored.
             fs::read_to_string(root.join("src/widget/note")).unwrap(),
             "live\n"
         );
+        assert!(!root.join("src/widget/extra").exists());
     }
 
     #[test]
@@ -3415,6 +3637,112 @@ Stop if the owned file is not restored.
             .status()
             .unwrap();
         assert!(!alive.success(), "writer {pid} still alive");
+    }
+
+    #[test]
+    fn discriminate_puts_back_bytes_the_falsifier_rewrote() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/tamper.sh", true);
+        write_script(
+            &root.join("tools/tamper.sh"),
+            "#!/bin/sh\nfor d in ../.crucible-falsifier-hide-*; do\n  if [ -f \"$d/0\" ]; then printf 'tampered\\n' > \"$d/0\"; fi\ndone\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_does_not_write_the_snapshot_through_a_planted_name() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/tamper.sh", true);
+        let outside = std::env::temp_dir().join(format!(
+            "crucible-restore-outside-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside).unwrap();
+        let _cleanup = RemoveOnDrop(vec![outside.clone()]);
+        let secret = outside.join("secret");
+        fs::write(&secret, "secret\n").unwrap();
+        std::os::unix::fs::symlink(
+            &secret,
+            root.join(format!("src/.crucible-restore-{}-0", std::process::id())),
+        )
+        .unwrap();
+        write_script(
+            &root.join("tools/tamper.sh"),
+            "#!/bin/sh\nfor d in ../.crucible-falsifier-hide-*; do\n  if [ -f \"$d/0\" ]; then printf 'tampered\\n' > \"$d/0\"; fi\ndone\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let meta = fs::symlink_metadata(root.join("src/kept.txt")).unwrap();
+        assert!(meta.is_file() && !meta.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert_eq!(fs::read_to_string(&secret).unwrap(), "secret\n");
+    }
+
+    #[test]
+    fn discriminate_replaces_a_directory_the_falsifier_swapped() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/swapdir.sh", false);
+        fs::create_dir_all(root.join("src/widget")).unwrap();
+        fs::write(root.join("src/widget/note"), "live\n").unwrap();
+        let item = fs::read_to_string(root.join("items/alpha/ITEM.md")).unwrap();
+        fs::write(
+            root.join("items/alpha/ITEM.md"),
+            item.replace("- src/kept.txt", "- src/widget"),
+        )
+        .unwrap();
+        let outside = std::env::temp_dir().join(format!(
+            "crucible-dir-outside-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("marker"), "keep\n").unwrap();
+        let _cleanup = RemoveOnDrop(vec![outside.clone()]);
+        write_script(
+            &root.join("tools/swapdir.sh"),
+            &format!(
+                "#!/bin/sh\nrm -rf src/widget\nln -s '{}' src/widget\nexit 1\n",
+                outside.display()
+            ),
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let meta = fs::symlink_metadata(root.join("src/widget")).unwrap();
+        assert!(meta.is_dir() && !meta.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/widget/note")).unwrap(),
+            "live\n"
+        );
+        assert_eq!(
+            fs::read_to_string(outside.join("marker")).unwrap(),
+            "keep\n"
+        );
+        assert!(!outside.join("note").exists());
     }
 
     #[test]

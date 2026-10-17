@@ -312,7 +312,8 @@ copy is kept outside the product tree until the files are back, and a restore fa
 The command is not a shell. A command that cannot be started is refused. The probe runs only in
 REVIEW. A command that does not exit within 15 seconds is not a pass. The process group is
 stopped when the command exits, and when it does not exit within 15 seconds, before
-the files are put back. A restore whose destination now resolves outside the product
+the files are put back. Those bytes are a copy taken before the command runs, so a write
+to the hidden file does not change them. A killed check still restores the named copy. A restore whose destination now resolves outside the product
 tree is refused, and the hide directory is kept. SIGINT and SIGTERM during the move, the run, or
 the restore put the files back too. A killed check leaves a
 manifest beside the product tree, and the next `check` puts the files back from it. A second
