@@ -477,7 +477,7 @@ impl Hidden {
             let restored = if let Some(row) = row {
                 restore_from_snaps(&self.repo, &original, &backup, row, &mut seq)
             } else {
-                put_back(&original, &backup)
+                put_back(&self.repo, &original, &backup)
             };
             if let Err(err) = restored {
                 if first.is_none() {
@@ -741,17 +741,18 @@ fn restore_from_snaps(
                 "snapshot destination is outside the product tree",
             ));
         }
-        place_snap(&dest, snap, seq)?;
+        place_snap(repo, &dest, snap, seq)?;
     }
     for snap in &row {
         let SnapKind::Dir = snap.kind else {
             continue;
         };
-        let dest = if snap.rel.as_os_str().is_empty() {
+        let raw = if snap.rel.as_os_str().is_empty() {
             original.to_path_buf()
         } else {
             original.join(&snap.rel)
         };
+        let dest = normalized_inside(repo, &raw)?;
         let mut perms = fs::symlink_metadata(&dest)?.permissions();
         perms.set_mode(snap.mode);
         fs::set_permissions(&dest, perms)?;
@@ -768,26 +769,143 @@ fn clear_occupant(path: &Path) -> std::io::Result<()> {
     }
 }
 
-fn place_snap(dest: &Path, snap: &mut Snap, seq: &mut u64) -> std::io::Result<()> {
-    if let SnapKind::Dir = snap.kind {
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        // Replace a file or a symlink. `create_dir_all` would keep either.
-        clear_occupant(dest)?;
-        return fs::create_dir(dest);
+fn restore_outside() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "restore target is outside the product tree",
+    )
+}
+
+/// Where the owned file lands, with `.` and `..` already collapsed.
+/// A path that enters through an outer symlink is rewritten under the canonical root.
+/// The highest matching ancestor wins, so an interior symlink to the root does not
+/// drop the components below it.
+fn normalized_inside(repo: &Path, dest: &Path) -> std::io::Result<PathBuf> {
+    let Some(collapsed) = lexical_absolute(dest) else {
+        return Err(restore_outside());
+    };
+    if collapsed.starts_with(repo) && collapsed.as_path() != repo {
+        return Ok(collapsed);
     }
-    let Some(parent) = dest.parent() else {
+    let mut cur = collapsed;
+    let mut suffix = Vec::new();
+    let mut best = None;
+    loop {
+        let Some(name) = cur.file_name() else {
+            return Err(restore_outside());
+        };
+        if name == ".." || name == "." {
+            return Err(restore_outside());
+        }
+        suffix.push(name.to_os_string());
+        if !cur.pop() || cur.as_os_str().is_empty() {
+            break;
+        }
+        if fs::canonicalize(&cur).ok().as_deref() == Some(repo) {
+            best = Some(suffix.clone());
+        }
+        if cur == Path::new("/") {
+            break;
+        }
+    }
+    let Some(suffix) = best else {
+        return Err(restore_outside());
+    };
+    let mut out = repo.to_path_buf();
+    for part in suffix.iter().rev() {
+        out.push(part);
+    }
+    if out.starts_with(repo) && out.as_path() != repo {
+        Ok(out)
+    } else {
+        Err(restore_outside())
+    }
+}
+
+fn symlink_proven_outside(repo: &Path, link: &Path) -> bool {
+    if let Ok(target) = fs::canonicalize(link) {
+        return !target.starts_with(repo);
+    }
+    let Ok(raw) = fs::read_link(link) else {
+        return false;
+    };
+    let joined = if raw.is_absolute() {
+        raw
+    } else {
+        let Some(parent) = link.parent() else {
+            return false;
+        };
+        parent.join(raw)
+    };
+    match lexical_absolute(&joined) {
+        Some(lexical) => !lexical.starts_with(repo),
+        None => false,
+    }
+}
+
+/// Ancestors inside the product tree have to be real directories.
+/// `create_dir_all` follows a symlink that already points at another directory in the tree.
+fn prepare_parent_dirs(repo: &Path, dest: &Path) -> std::io::Result<()> {
+    let dest = normalized_inside(repo, dest)?;
+    let rel = dest.strip_prefix(repo).map_err(|_| restore_outside())?;
+    let parts: Vec<_> = rel.components().collect();
+    if parts.is_empty()
+        || parts.iter().any(|part| {
+            matches!(
+                part,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err(restore_outside());
+    }
+    let mut cur = repo.to_path_buf();
+    for part in parts.iter().take(parts.len() - 1) {
+        cur.push(part);
+        if !cur.starts_with(repo) || cur.as_path() == repo {
+            return Err(restore_outside());
+        }
+        match fs::symlink_metadata(&cur) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => fs::create_dir(&cur)?,
+            Ok(meta) if meta.file_type().is_symlink() => {
+                if symlink_proven_outside(repo, &cur) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "restore target is outside the product tree",
+                    ));
+                }
+                fs::remove_file(&cur)?;
+                fs::create_dir(&cur)?;
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                clear_occupant(&cur)?;
+                fs::create_dir(&cur)?;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+fn place_snap(repo: &Path, dest: &Path, snap: &mut Snap, seq: &mut u64) -> std::io::Result<()> {
+    let dest = normalized_inside(repo, dest)?;
+    prepare_parent_dirs(repo, &dest)?;
+    if let SnapKind::Dir = snap.kind {
+        // Replace a file or a symlink. `create_dir_all` would keep either.
+        clear_occupant(&dest)?;
+        return fs::create_dir(&dest);
+    }
+    let Some(parent) = dest.parent().map(|path| path.to_path_buf()) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             "owned path has no parent",
         ));
     };
-    fs::create_dir_all(parent)?;
-    clear_occupant(dest)?;
+    clear_occupant(&dest)?;
     match &mut snap.kind {
         SnapKind::Dir => Ok(()),
-        SnapKind::Link(target) => std::os::unix::fs::symlink(target, dest),
+        SnapKind::Link(target) => std::os::unix::fs::symlink(target, &dest),
         SnapKind::File(body) => {
             let tmp = parent.join(format!(".crucible-restore-{}-{}", std::process::id(), *seq));
             *seq += 1;
@@ -804,7 +922,7 @@ fn place_snap(dest: &Path, snap: &mut Snap, seq: &mut u64) -> std::io::Result<()
             let mut perms = out.metadata()?.permissions();
             perms.set_mode(snap.mode);
             fs::set_permissions(&tmp, perms)?;
-            fs::rename(&tmp, dest)
+            fs::rename(&tmp, &dest)
         }
     }
 }
@@ -822,32 +940,37 @@ fn discard_backup(backup: &Path) -> std::io::Result<()> {
     }
 }
 
-fn put_back(original: &Path, backup: &Path) -> std::io::Result<()> {
+fn put_back(repo: &Path, original: &Path, backup: &Path) -> std::io::Result<()> {
     let backup_meta = match fs::symlink_metadata(backup) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             // Another check already restored, or the rename never happened.
-            // Do not unlink the live path.
-            if fs::symlink_metadata(original).is_ok() {
+            // Stat the collapsed landing. The manifest spelling can contain
+            // `..` and is not stat-able, and a success here must not come
+            // from that spelling. Do not unlink the live path.
+            let landing = normalized_inside(repo, original)?;
+            if fs::symlink_metadata(&landing).is_ok() {
                 return Ok(());
             }
             return Err(err);
         }
         Err(err) => return Err(err),
     };
-    if let Ok(meta) = fs::symlink_metadata(original) {
+    let landing = normalized_inside(repo, original)?;
+    prepare_parent_dirs(repo, &landing)?;
+    if let Ok(meta) = fs::symlink_metadata(&landing) {
         let original_is_dir = meta.is_dir() && !meta.file_type().is_symlink();
         let backup_is_file = backup_meta.is_file() || backup_meta.file_type().is_symlink();
         // `rename` replaces a file. It does not replace a directory.
         if original_is_dir || !backup_is_file {
             if original_is_dir {
-                fs::remove_dir_all(original)?;
+                fs::remove_dir_all(&landing)?;
             } else {
-                fs::remove_file(original)?;
+                fs::remove_file(&landing)?;
             }
         }
     }
-    fs::rename(backup, original)
+    fs::rename(backup, &landing)
 }
 
 /// A symlinked ancestor would make `rename` leave the product tree.
@@ -1297,7 +1420,7 @@ fn restore_hide_manifest(dir: &Path, repo: &Path) -> Result<(), GuidedError> {
     }
     pairs.sort_by_key(|(original, _)| original.components().count());
     for (original, backup) in pairs {
-        put_back(&original, &backup)
+        put_back(repo, &original, &backup)
             .map_err(|err| message(format!("could not restore {}: {err}", original.display())))?;
     }
     let _ = fs::remove_file(dir.join("MANIFEST"));
@@ -3246,7 +3369,7 @@ Stop if the owned file is not restored.
         let tmp = Tmp::new();
         let original = tmp.0.join("kept.txt");
         fs::write(&original, "live\n").unwrap();
-        super::put_back(&original, &tmp.0.join("missing-backup")).unwrap();
+        super::put_back(&tmp.0, &original, &tmp.0.join("missing-backup")).unwrap();
         assert_eq!(fs::read_to_string(&original).unwrap(), "live\n");
     }
 
@@ -3743,6 +3866,431 @@ Stop if the owned file is not restored.
             "keep\n"
         );
         assert!(!outside.join("note").exists());
+    }
+
+    #[test]
+    fn discriminate_does_not_follow_an_interior_parent_symlink() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/alias.sh", true);
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("other/marker"), "secret\n").unwrap();
+        write_script(
+            &root.join("tools/alias.sh"),
+            "#!/bin/sh\nmkdir -p other\nprintf 'secret\\n' > other/marker\nrmdir src\nln -s other src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        let kept = fs::symlink_metadata(root.join("src/kept.txt")).unwrap();
+        assert!(kept.is_file() && !kept.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("other/marker")).unwrap(),
+            "secret\n"
+        );
+        assert!(!root.join("other/kept.txt").exists());
+    }
+
+    #[test]
+    fn discriminate_does_not_follow_an_interior_symlink_of_a_directory() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/aliasdir.sh", false);
+        fs::create_dir_all(root.join("src/widget")).unwrap();
+        fs::write(root.join("src/widget/note"), "live\n").unwrap();
+        let item = fs::read_to_string(root.join("items/alpha/ITEM.md")).unwrap();
+        fs::write(
+            root.join("items/alpha/ITEM.md"),
+            item.replace("- src/kept.txt", "- src/widget"),
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("other/widget")).unwrap();
+        fs::write(root.join("other/widget/marker"), "secret\n").unwrap();
+        write_script(
+            &root.join("tools/aliasdir.sh"),
+            "#!/bin/sh\nrm -rf src\nln -s other src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        let widget = fs::symlink_metadata(root.join("src/widget")).unwrap();
+        assert!(widget.is_dir() && !widget.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/widget/note")).unwrap(),
+            "live\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("other/widget/marker")).unwrap(),
+            "secret\n"
+        );
+        assert!(!root.join("other/widget/note").exists());
+    }
+
+    #[test]
+    fn discriminate_replaces_a_file_where_a_parent_directory_must_be() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/block.sh", false);
+        fs::create_dir_all(root.join("src/widget")).unwrap();
+        fs::write(root.join("src/widget/note"), "live\n").unwrap();
+        let item = fs::read_to_string(root.join("items/alpha/ITEM.md")).unwrap();
+        fs::write(
+            root.join("items/alpha/ITEM.md"),
+            item.replace("- src/kept.txt", "- src/widget"),
+        )
+        .unwrap();
+        write_script(
+            &root.join("tools/block.sh"),
+            "#!/bin/sh\nfor d in ../.crucible-falsifier-hide-*; do\n  if [ -f \"$d/0/note\" ]; then printf 'tampered\\n' > \"$d/0/note\"; fi\ndone\nrm -rf src\nprintf 'blocked\\n' > src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/widget/note")).unwrap(),
+            "live\n"
+        );
+        let again = check(root, &["alpha"]).unwrap();
+        assert!(
+            !again.text.contains("falsifier does not discriminate"),
+            "{}",
+            again.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/widget/note")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_put_back_does_not_follow_an_interior_parent_symlink() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/false", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-interior-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _cleanup = RemoveOnDrop(vec![hide.clone()]);
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("other/marker"), "secret\n").unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::rename(root.join("src/kept.txt"), hide.join("0")).unwrap();
+        fs::remove_dir(root.join("src")).unwrap();
+        std::os::unix::fs::symlink(root.join("other"), root.join("src")).unwrap();
+        fs::write(
+            hide.join("MANIFEST"),
+            format!(
+                "repo\t{}\n0\t{}\n",
+                canon.display(),
+                canon.join("src/kept.txt").display()
+            ),
+        )
+        .unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("other/marker")).unwrap(),
+            "secret\n"
+        );
+        assert!(!root.join("other/kept.txt").exists());
+        assert!(!hide.exists(), "stranded hide was left");
+    }
+
+    fn alias_repo(root: &Path) -> (PathBuf, PathBuf) {
+        let canon = fs::canonicalize(root).unwrap();
+        let link = canon.parent().unwrap().join(format!(
+            "crucible-repo-alias-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&canon, &link).unwrap();
+        fs::write(
+            root.join("PROGRAM"),
+            format!("lifecycle: managed\nrepo: {}\n", link.display()),
+        )
+        .unwrap();
+        (canon, link)
+    }
+
+    fn inode_and_mode(path: &Path) -> (u64, u32) {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let meta = fs::symlink_metadata(path).unwrap();
+        (meta.ino(), meta.permissions().mode())
+    }
+
+    #[test]
+    fn discriminate_repairs_an_interior_symlink_through_a_repo_alias() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/alias.sh", true);
+        let (canon, link) = alias_repo(root);
+        let _cleanup = RemoveOnDrop(vec![link]);
+        fs::create_dir_all(root.join("other")).unwrap();
+        fs::write(root.join("other/marker"), "secret\n").unwrap();
+        let other_id = inode_and_mode(&root.join("other"));
+        let repo_id = inode_and_mode(&canon);
+        write_script(
+            &root.join("tools/alias.sh"),
+            "#!/bin/sh\nrmdir src\nln -s other src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(inode_and_mode(&root.join("other")), other_id);
+        assert_eq!(inode_and_mode(&canon), repo_id);
+        assert_eq!(
+            fs::read_to_string(root.join("other/marker")).unwrap(),
+            "secret\n"
+        );
+        assert!(!root.join("other/kept.txt").exists());
+        assert!(!root.join("kept.txt").exists());
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_creates_a_missing_parent_through_a_repo_alias() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/rmdir.sh", true);
+        let (canon, link) = alias_repo(root);
+        let _cleanup = RemoveOnDrop(vec![link]);
+        let repo_id = inode_and_mode(&canon);
+        write_script(
+            &root.join("tools/rmdir.sh"),
+            "#!/bin/sh\nrmdir src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(inode_and_mode(&canon), repo_id);
+        assert!(!root.join("kept.txt").exists());
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_replaces_a_file_parent_through_a_repo_alias() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/block.sh", true);
+        let (canon, link) = alias_repo(root);
+        let _cleanup = RemoveOnDrop(vec![link]);
+        let repo_id = inode_and_mode(&canon);
+        write_script(
+            &root.join("tools/block.sh"),
+            "#!/bin/sh\nrmdir src\nprintf 'blocked\\n' > src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(inode_and_mode(&canon), repo_id);
+        assert!(!root.join("kept.txt").exists());
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_does_not_collapse_a_parent_that_points_at_the_repo() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/self.sh", true);
+        let (canon, link) = alias_repo(root);
+        let _cleanup = RemoveOnDrop(vec![link]);
+        let repo_id = inode_and_mode(&canon);
+        write_script(
+            &root.join("tools/self.sh"),
+            "#!/bin/sh\nrmdir src\nln -s . src\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(inode_and_mode(&canon), repo_id);
+        assert!(!root.join("kept.txt").exists());
+        let src = fs::symlink_metadata(root.join("src")).unwrap();
+        assert!(src.is_dir() && !src.file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_does_not_touch_a_cancelled_outside_name() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/false", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let repo_name = canon.file_name().unwrap().to_os_string();
+        let victim = parent.join(format!(
+            "crucible-victim-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let missing = parent.join(format!(
+            "crucible-missing-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-cancel-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _cleanup = RemoveOnDrop(vec![victim.clone(), missing.clone(), hide.clone()]);
+        let _ = fs::remove_file(&victim);
+        let _ = fs::remove_dir_all(&missing);
+        let _ = fs::remove_dir_all(&hide);
+        fs::write(&victim, "safe\n").unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::rename(root.join("src/kept.txt"), hide.join("0")).unwrap();
+        let original = canon
+            .join("src")
+            .join("..")
+            .join("..")
+            .join(missing.file_name().unwrap())
+            .join("..")
+            .join(victim.file_name().unwrap())
+            .join("..")
+            .join(&repo_name)
+            .join("src")
+            .join("kept.txt");
+        fs::write(
+            hide.join("MANIFEST"),
+            format!("repo\t{}\n0\t{}\n", canon.display(), original.display()),
+        )
+        .unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        let victim_meta = fs::symlink_metadata(&victim).unwrap();
+        assert!(victim_meta.is_file() && !victim_meta.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "safe\n");
+        assert!(!missing.exists());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert!(!hide.exists(), "stranded hide was left");
+    }
+
+    #[test]
+    fn discriminate_recovers_a_cancelled_name_when_the_backup_is_already_gone() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/false", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let repo_name = canon.file_name().unwrap().to_os_string();
+        let victim = parent.join(format!(
+            "crucible-victim-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let missing = parent.join(format!(
+            "crucible-missing-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-cancel-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _cleanup = RemoveOnDrop(vec![victim.clone(), missing.clone(), hide.clone()]);
+        let _ = fs::remove_file(&victim);
+        let _ = fs::remove_dir_all(&missing);
+        let _ = fs::remove_dir_all(&hide);
+        fs::write(&victim, "safe\n").unwrap();
+        fs::create_dir(&hide).unwrap();
+        let original = canon
+            .join("src")
+            .join("..")
+            .join("..")
+            .join(missing.file_name().unwrap())
+            .join("..")
+            .join(victim.file_name().unwrap())
+            .join("..")
+            .join(&repo_name)
+            .join("src")
+            .join("kept.txt");
+        fs::write(
+            hide.join("MANIFEST"),
+            format!("repo\t{}\n0\t{}\n", canon.display(), original.display()),
+        )
+        .unwrap();
+        check(root, &["alpha"]).unwrap();
+        let victim_meta = fs::symlink_metadata(&victim).unwrap();
+        assert!(victim_meta.is_file() && !victim_meta.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "safe\n");
+        assert!(!missing.exists());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert!(!hide.exists(), "stranded hide was left");
     }
 
     #[test]

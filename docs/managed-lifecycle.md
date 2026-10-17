@@ -313,7 +313,7 @@ The command is not a shell. A command that cannot be started is refused. The pro
 REVIEW. A command that does not exit within 15 seconds is not a pass. The process group is
 stopped when the command exits, and when it does not exit within 15 seconds, before
 the files are put back. Those bytes are a copy taken before the command runs, so a write
-to the hidden file does not change them. A killed check still restores the named copy. A restore whose destination now resolves outside the product
+to the hidden file does not change them. A killed check still restores the named copy. An ancestor that is a symlink to another path in the product tree, or a file where a directory must be, is replaced with a real directory, and the symlink target is left unchanged. A restore whose destination now resolves outside the product
 tree is refused, and the hide directory is kept. SIGINT and SIGTERM during the move, the run, or
 the restore put the files back too. A killed check leaves a
 manifest beside the product tree, and the next `check` puts the files back from it. A second
