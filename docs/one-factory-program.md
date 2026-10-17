@@ -149,7 +149,7 @@ A row here is a bet. Visible judgment is on main at `181cd59` (pull request 125)
 | visible-judgment | done | Extend the existing land decision | Before the slice is on main, a person can see a judgment of that slice and can see that the judge is not the author |
 | dashboard-tab | done | The crucible workspace tab shows the existing factory report, with one time on each block | The one dashboard tab in the crucible workspace shows the existing factory report, and agents, repo, reviews, next, blocked, git, and intake each show the same readable time |
 | B1 | done | Restart and resume run the maker | `attempt restart` of a stopped attempt runs the maker through the existing deliver path. `attempt resume` of a dead pid does the same. A correction for that order is visible to the waiter. Neither command is a second `orchestrate run`. `attempt stop` stays a signal to the recorded pid |
-| import-gate | open | Reject an illegal import and banned slop before review | `crucible phase SLUG REVIEW` rejects an illegal import and rejects banned slop before review, on this checkout and on a freshly adopted repository, and the test fails if that check is removed |
+| import-gate | done `0d961b1` | Reject an illegal import and banned slop before review | `crucible phase SLUG REVIEW` rejects an illegal import and rejects banned slop before review, on this checkout and on a freshly adopted repository, and the test fails if that check is removed |
 
 ## import-gate seam
 
