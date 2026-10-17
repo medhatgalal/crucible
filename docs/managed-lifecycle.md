@@ -280,7 +280,10 @@ maker attempt records the work id it started from and its result records the new
 id; a reviewer attempt refuses if the work changes while review is in progress.
 
 Move to review only after the maker attempt has returned and its current-work PASS is recorded.
-The transition refuses without that result:
+The transition refuses without that result. When the product repository has
+`architecture/modules.md`, the same transition also refuses an import that names another module
+folder, and refuses an import that uses `..` or an absolute path. A missing map does not add a
+boundary. A refusal does not change the stage:
 
 ```sh
 $CP phase fix-report-flow REVIEW
