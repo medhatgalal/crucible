@@ -315,7 +315,9 @@ stopped before the files are put back. SIGINT and SIGTERM during the move, the r
 the restore put the files back too. A killed check leaves a
 manifest beside the product tree, and the next `check` puts the files back from it. A second
 check refuses `falsifier probe in progress` while the probe still holds that directory, and does
-not move the files. `close` removes
+not move the files. Recovery ignores a hide directory owned by someone else, and refuses a
+restore path outside the product tree. An owned path that contains a tab, a newline, or a carriage return is refused
+before anything is moved. `close` removes
 its lock when this refusal returns.
 
 Managed maker dispatch records every maker in `MAKERS.tsv`. Reviewer contracts and results label their

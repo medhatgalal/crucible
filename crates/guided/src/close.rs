@@ -5,6 +5,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -291,6 +292,13 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
         if crate::dispatch::unsafe_owned(rel) || !owned_path_stays_in_repo(&repo, rel) {
             continue;
         }
+        if rel
+            .bytes()
+            .any(|byte| matches!(byte, b'\t' | b'\n' | b'\r'))
+        {
+            hidden.restore()?;
+            return Err(message("refused: owned path cannot be recorded"));
+        }
         let path = repo.join(rel);
         let meta = match fs::symlink_metadata(&path) {
             Ok(meta) => meta,
@@ -369,7 +377,12 @@ impl Hidden {
                 "refused: cannot hold the owned files outside the product tree",
             ));
         }
-        fs::create_dir(&dir)?;
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(&dir)?;
+        let mut perms = fs::metadata(&dir)?.permissions();
+        perms.set_mode(0o700);
+        fs::set_permissions(&dir, perms)?;
         let lock = match OpenOptions::new()
             .create(true)
             .read(true)
@@ -402,7 +415,8 @@ impl Hidden {
         let canon = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
         let mut body = format!("repo\t{}\n", canon.display());
         for (index, (original, _)) in self.pairs.iter().enumerate() {
-            body.push_str(&format!("{index}\t{}\n", original.display()));
+            let stored = fs::canonicalize(original).unwrap_or_else(|_| original.clone());
+            body.push_str(&format!("{index}\t{}\n", stored.display()));
         }
         let tmp = self.dir.join("MANIFEST.tmp");
         {
@@ -657,6 +671,7 @@ fn recover_stranded(repo: &Path) -> Result<(), GuidedError> {
             .file_name()
             .to_string_lossy()
             .starts_with(".crucible-falsifier-hide-")
+            && hide_dir_is_ours(&entry.path())
         {
             dirs.push(entry.path());
         }
@@ -666,6 +681,208 @@ fn recover_stranded(repo: &Path) -> Result<(), GuidedError> {
         restore_one_hide(&dir, &repo)?;
     }
     Ok(())
+}
+
+fn hide_dir_is_ours(dir: &Path) -> bool {
+    fs::symlink_metadata(dir)
+        .map(|meta| meta.uid() == unsafe { libc::getuid() })
+        .unwrap_or(false)
+}
+
+fn lexical_absolute(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::RootDir => out.push(comp),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::Normal(part) => out.push(part),
+            std::path::Component::Prefix(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+fn restore_target_inside(repo: &Path, original: &Path) -> bool {
+    let Some(normalized) = lexical_absolute(original) else {
+        return false;
+    };
+    // Collapse `..` before looking at the filesystem, then canonicalize the
+    // longest existing prefix. `/var` and a symlink to this same tree stay
+    // inside. A prefix that canonicalizes outside the tree does not.
+    let Some(lexical) = resolve_restore_path(&normalized) else {
+        return false;
+    };
+    if !lexical.starts_with(repo) || lexical.as_path() == repo {
+        return false;
+    }
+    // `rename` follows a symlink and only then applies `..`. The lexical path
+    // can sit inside the tree while that rename lands outside it.
+    if path_has_dot(original) {
+        let Some(kernel) = kernel_restore_landing(original) else {
+            return false;
+        };
+        if kernel.as_path() != lexical.as_path() || !kernel.starts_with(repo) {
+            return false;
+        }
+    }
+    true
+}
+
+fn path_has_dot(path: &Path) -> bool {
+    path.components().any(|comp| {
+        matches!(
+            comp,
+            std::path::Component::CurDir | std::path::Component::ParentDir
+        )
+    })
+}
+
+#[derive(Clone)]
+enum KernelStep {
+    Root,
+    Cur,
+    Parent,
+    Normal(std::ffi::OsString),
+}
+
+fn kernel_steps(path: &Path) -> Option<Vec<KernelStep>> {
+    let mut out = Vec::new();
+    for comp in path.components() {
+        out.push(match comp {
+            std::path::Component::Prefix(_) => return None,
+            std::path::Component::RootDir => KernelStep::Root,
+            std::path::Component::CurDir => KernelStep::Cur,
+            std::path::Component::ParentDir => KernelStep::Parent,
+            std::path::Component::Normal(part) => KernelStep::Normal(part.to_os_string()),
+        });
+    }
+    Some(out)
+}
+
+/// Where `rename` creates the final component. `.` and `..` are applied after
+/// symlink targets, which is the kernel order, not the lexical order.
+fn kernel_restore_landing(original: &Path) -> Option<PathBuf> {
+    if !original.is_absolute() {
+        return None;
+    }
+    let steps = kernel_steps(original)?;
+    let name = match steps.last()? {
+        KernelStep::Normal(part) => part.clone(),
+        _ => return None,
+    };
+    let mut resolved = kernel_resolve(&steps[..steps.len() - 1])?;
+    resolved.push(name);
+    Some(resolved)
+}
+
+fn kernel_resolve(initial: &[KernelStep]) -> Option<PathBuf> {
+    use std::collections::VecDeque;
+    let mut pending: VecDeque<KernelStep> = initial.iter().cloned().collect();
+    let mut out = PathBuf::new();
+    let mut followed = 0u32;
+    let mut missing = false;
+    while let Some(step) = pending.pop_front() {
+        match step {
+            KernelStep::Root => {
+                out = PathBuf::from("/");
+                missing = false;
+            }
+            KernelStep::Cur => {}
+            KernelStep::Parent => {
+                if !out.pop() {
+                    return None;
+                }
+                missing = kernel_path_missing(&out)?;
+            }
+            KernelStep::Normal(part) => {
+                out.push(&part);
+                if missing {
+                    continue;
+                }
+                match fs::symlink_metadata(&out) {
+                    Ok(meta) if meta.file_type().is_symlink() => {
+                        followed += 1;
+                        if followed > 40 {
+                            return None;
+                        }
+                        let target = fs::read_link(&out).ok()?;
+                        out.pop();
+                        let target_steps = kernel_steps(&target)?;
+                        if target.is_absolute() {
+                            out.clear();
+                            missing = false;
+                        }
+                        let mut rest = VecDeque::new();
+                        rest.extend(target_steps);
+                        while let Some(next) = pending.pop_front() {
+                            rest.push_back(next);
+                        }
+                        pending = rest;
+                    }
+                    Ok(_) => {}
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => missing = true,
+                    Err(_) => return None,
+                }
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn kernel_path_missing(path: &Path) -> Option<bool> {
+    if path == Path::new("/") {
+        return Some(false);
+    }
+    match fs::symlink_metadata(path) {
+        Ok(_) => Some(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Some(true),
+        Err(_) => None,
+    }
+}
+
+/// Parent's canonical location, plus the final component `rename` will create.
+/// Canonicalize follows a symlink, so a parent that points outside the tree
+/// resolves outside and the caller rejects it.
+fn resolve_restore_path(normalized: &Path) -> Option<PathBuf> {
+    let name = normalized.file_name()?;
+    let mut resolved = resolve_existing_prefix(normalized.parent()?)?;
+    resolved.push(name);
+    Some(resolved)
+}
+
+fn resolve_existing_prefix(path: &Path) -> Option<PathBuf> {
+    let mut missing = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        match fs::symlink_metadata(&cur) {
+            Ok(_) => {
+                let mut resolved = fs::canonicalize(&cur).ok()?;
+                for part in missing.iter().rev() {
+                    resolved.push(part);
+                }
+                return Some(resolved);
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(cur.file_name()?.to_os_string());
+                if !cur.pop() {
+                    return None;
+                }
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 fn restore_one_hide(dir: &Path, repo: &Path) -> Result<(), GuidedError> {
@@ -747,6 +964,13 @@ fn restore_hide_manifest(dir: &Path, repo: &Path) -> Result<(), GuidedError> {
     };
     if recorded != repo {
         return Ok(());
+    }
+    for (original, _) in &pairs {
+        if !restore_target_inside(repo, original) {
+            return Err(message(
+                "refused: restore target is outside the product tree",
+            ));
+        }
     }
     pairs.sort_by_key(|(original, _)| original.components().count());
     for (original, backup) in pairs {
@@ -2770,5 +2994,248 @@ Stop if the owned file is not restored.
             fs::read_to_string(root.join("src/kept.txt")).unwrap(),
             "live\n"
         );
+    }
+
+    #[test]
+    fn discriminate_refuses_an_owned_path_that_cannot_be_recorded() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", false);
+        fs::create_dir_all(root.join("src")).unwrap();
+        let owned = root.join("src").join("a\tb.txt");
+        fs::write(&owned, "live\n").unwrap();
+        let item = fs::read_to_string(root.join("items/alpha/ITEM.md")).unwrap();
+        fs::write(
+            root.join("items/alpha/ITEM.md"),
+            item.replace("- src/kept.txt", "- src/a\tb.txt"),
+        )
+        .unwrap();
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: owned path cannot be recorded");
+        assert_eq!(fs::read_to_string(&owned).unwrap(), "live\n");
+    }
+
+    #[test]
+    fn discriminate_does_not_restore_a_path_outside_the_product_tree() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let outside = parent.join(format!("crucible-outside-target-{}", std::process::id()));
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-outside-{}",
+            std::process::id()
+        ));
+        let _cleanup = RemoveOnDrop(vec![outside.clone(), hide.clone()]);
+        let _ = fs::remove_file(&outside);
+        let _ = fs::remove_dir_all(&hide);
+        fs::write(&outside, "safe\n").unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::write(hide.join("0"), "pwned\n").unwrap();
+        fs::write(
+            hide.join("MANIFEST"),
+            format!("repo\t{}\n0\t{}\n", canon.display(), outside.display()),
+        )
+        .unwrap();
+        let result = check(root, &["alpha"]);
+        let outside_body = fs::read_to_string(&outside).unwrap_or_default();
+        let kept_body = fs::read_to_string(root.join("src/kept.txt")).unwrap_or_default();
+        let hide_left = hide.exists();
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "refused: restore target is outside the product tree"
+        );
+        assert_eq!(outside_body, "safe\n");
+        assert_eq!(kept_body, "live\n");
+        assert!(hide_left, "outside refusal removed the hide directory");
+        let _ = fs::remove_dir_all(&hide);
+        let _ = fs::remove_file(&outside);
+    }
+
+    #[test]
+    fn discriminate_restores_a_hide_named_through_a_symlink_of_the_same_tree() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let link = parent.join(format!("crucible-repo-link-{}", std::process::id()));
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-alias-{}",
+            std::process::id()
+        ));
+        let _cleanup = RemoveOnDrop(vec![link.clone(), hide.clone()]);
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_dir_all(&hide);
+        std::os::unix::fs::symlink(&canon, &link).unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::rename(root.join("src/kept.txt"), hide.join("0")).unwrap();
+        fs::write(
+            hide.join("MANIFEST"),
+            format!(
+                "repo\t{}\n0\t{}\n",
+                canon.display(),
+                link.join("src/kept.txt").display()
+            ),
+        )
+        .unwrap();
+        let result = check(root, &["alpha"]);
+        let kept_body = fs::read_to_string(root.join("src/kept.txt")).unwrap_or_default();
+        let hide_left = hide.exists();
+        let report = result.expect("same-tree alias must restore");
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(kept_body, "live\n");
+        assert!(!hide_left, "stranded hide was left at {}", hide.display());
+        let _ = fs::remove_dir_all(&hide);
+        let _ = fs::remove_file(&link);
+    }
+
+    #[test]
+    fn discriminate_does_not_follow_a_symlink_outside_the_product_tree() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let outside = parent.join(format!("crucible-escape-dir-{}", std::process::id()));
+        let link = canon.join("src/escape");
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-escape-{}",
+            std::process::id()
+        ));
+        let _cleanup = RemoveOnDrop(vec![outside.clone(), hide.clone()]);
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_dir_all(&hide);
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("victim"), "safe\n").unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::write(hide.join("0"), "pwned\n").unwrap();
+        fs::write(
+            hide.join("MANIFEST"),
+            format!(
+                "repo\t{}\n0\t{}\n",
+                canon.display(),
+                link.join("victim").display()
+            ),
+        )
+        .unwrap();
+        let result = check(root, &["alpha"]);
+        let victim_body = fs::read_to_string(outside.join("victim")).unwrap_or_default();
+        let kept_body = fs::read_to_string(root.join("src/kept.txt")).unwrap_or_default();
+        let hide_left = hide.exists();
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "refused: restore target is outside the product tree"
+        );
+        assert_eq!(victim_body, "safe\n");
+        assert_eq!(kept_body, "live\n");
+        assert!(hide_left, "outside refusal removed the hide directory");
+        let _ = fs::remove_dir_all(&hide);
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn discriminate_does_not_let_dotdot_escape_through_a_symlink() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let outside = parent.join(format!("crucible-dotdot-dir-{}", std::process::id()));
+        let victim = parent.join(format!("crucible-dotdot-victim-{}", std::process::id()));
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-dotdot-{}",
+            std::process::id()
+        ));
+        let link = canon.join("src/escape");
+        let _cleanup = RemoveOnDrop(vec![outside.clone(), victim.clone(), hide.clone()]);
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_file(&victim);
+        let _ = fs::remove_dir_all(&hide);
+        fs::create_dir(&outside).unwrap();
+        fs::write(&victim, "safe\n").unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        fs::create_dir(&hide).unwrap();
+        fs::write(hide.join("0"), "pwned\n").unwrap();
+        let original = canon
+            .join("src")
+            .join("escape")
+            .join("..")
+            .join(victim.file_name().unwrap());
+        fs::write(
+            hide.join("MANIFEST"),
+            format!("repo\t{}\n0\t{}\n", canon.display(), original.display()),
+        )
+        .unwrap();
+        let result = check(root, &["alpha"]);
+        let victim_body = fs::read_to_string(&victim).unwrap_or_default();
+        let kept_body = fs::read_to_string(root.join("src/kept.txt")).unwrap_or_default();
+        let hide_left = hide.exists();
+        let _ = fs::remove_dir_all(&hide);
+        let _ = fs::remove_file(&victim);
+        let _ = fs::remove_dir_all(&outside);
+        let _ = fs::remove_file(&link);
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "refused: restore target is outside the product tree"
+        );
+        assert_eq!(victim_body, "safe\n");
+        assert_eq!(kept_body, "live\n");
+        assert!(hide_left, "outside refusal removed the hide directory");
+    }
+
+    #[test]
+    fn discriminate_restores_a_dotdot_that_stays_inside_the_tree() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let hide = parent.join(format!(
+            ".crucible-falsifier-hide-inside-dot-{}",
+            std::process::id()
+        ));
+        let _cleanup = RemoveOnDrop(vec![hide.clone()]);
+        let _ = fs::remove_dir_all(&hide);
+        fs::create_dir(&hide).unwrap();
+        fs::rename(root.join("src/kept.txt"), hide.join("0")).unwrap();
+        let original = canon.join("src").join("..").join("src").join("kept.txt");
+        fs::write(
+            hide.join("MANIFEST"),
+            format!("repo\t{}\n0\t{}\n", canon.display(), original.display()),
+        )
+        .unwrap();
+        let result = check(root, &["alpha"]);
+        let kept_body = fs::read_to_string(root.join("src/kept.txt")).unwrap_or_default();
+        let hide_left = hide.exists();
+        let report = result.expect("a dotdot path inside the tree must restore");
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(kept_body, "live\n");
+        assert!(!hide_left, "stranded hide was left at {}", hide.display());
+        let _ = fs::remove_dir_all(&hide);
+    }
+
+    struct RemoveOnDrop(Vec<PathBuf>);
+    impl Drop for RemoveOnDrop {
+        fn drop(&mut self) {
+            for path in &self.0 {
+                let _ = fs::remove_dir_all(path);
+                let _ = fs::remove_file(path);
+            }
+        }
     }
 }
