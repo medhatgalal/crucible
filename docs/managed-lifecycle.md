@@ -299,6 +299,19 @@ $CP check fix-report-flow
 $CP close fix-report-flow "one durable lesson, or NONE"
 ```
 
+`check` moves each existing owned file aside, runs the one focused falsifier in the product
+repository, and puts the files back before it returns. If that command still exits 0, check
+refuses and writes nothing:
+
+```text
+crucible: refused: falsifier does not discriminate
+```
+
+A missing owned file is not a removal. A symlink, including a symlinked parent, is not moved. The
+copy is kept outside the product tree until the files are back, and a restore failure is an error.
+The command is not a shell. A command that does not exit within 15 seconds is not a pass, and its
+process group is stopped before the files are put back.
+
 Managed maker dispatch records every maker in `MAKERS.tsv`. Reviewer contracts and results label their
 relation to those maker families as `SAME-FAMILY`, `CROSS-FAMILY`, or `MIXED-FAMILY`; every recorded maker
 is barred from reviewing the integrated item.
@@ -518,14 +531,15 @@ Managed lifecycle refuses:
 - incompatible outcome/next-action pairs, REJECT without a fingerprint, repeated findings, and
   retries beyond the single infrastructure retry;
 - duplicate current-work PASSes and duplicate canonical expensive checks.
-- managed closure when a compatibility verdict is not backed by its matching attempt result.
+- managed closure when a compatibility verdict is not backed by its matching attempt result;
+- `check` when the focused falsifier still exits 0 after the item's owned files are moved aside.
 
 ## What this behavior does not yet provide
 
 Managed lifecycle currently owns item state, bounded attempts, typed results, retry stops,
 economical reuse of unchanged expensive evidence, frozen task graphs, isolated task worktrees, owned
-path enforcement, and stable integration. It does not provide conversion of active item-file programs,
-automatic agent launching or cancellation, or proof that a recorded command is a discriminating test.
+path enforcement, and stable integration. It does not provide conversion of active item-file
+programs or automatic agent launching or cancellation.
 Task dispatch currently refuses a task with more than one direct dependency; broader fan-in remains a
 separate integration behavior. The coordinating agent supplies orchestration and human interaction; do
 not describe those as shell-enforced merely because managed lifecycle is enabled.

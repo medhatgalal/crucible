@@ -5,7 +5,14 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
+
+#[cfg(test)]
+use std::sync::Mutex;
 
 use crucible_contract::{format_rfc3339_z, Clock};
 
@@ -69,6 +76,7 @@ pub fn check(root: &Path, args: &[&str]) -> Result<CheckReport, GuidedError> {
         if phase_of(root, slug)? != "REVIEW" {
             say(&mut out, &mut bad, "FAIL managed item must be in REVIEW");
         }
+        refuse_nondiscriminating_falsifier(root, slug)?;
     } else {
         check_item_falsifier(&dir, &mut out, &mut bad)?;
     }
@@ -241,6 +249,212 @@ fn check_product_porcelain(
         );
     }
     Ok(())
+}
+
+const FALSIFIER_BOUND: Duration = Duration::from_secs(15);
+static HIDE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+static FALSIFIER_BOUND_OVERRIDE: Mutex<Option<Duration>> = Mutex::new(None);
+
+fn falsifier_bound() -> Duration {
+    #[cfg(test)]
+    {
+        if let Some(bound) = *FALSIFIER_BOUND_OVERRIDE
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+        {
+            return bound;
+        }
+    }
+    FALSIFIER_BOUND
+}
+
+/// Move each existing owned file aside, run the one focused falsifier, and put the files back.
+/// Exit 0 means the command still passes with the behavior gone.
+fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), GuidedError> {
+    let text = fs::read_to_string(crate::dispatch::item_dir(root, slug).join("ITEM.md"))?;
+    let command = crate::dispatch::section_lines(&text, "Focused falsifier")
+        .into_iter()
+        .next()
+        .unwrap_or_default();
+    let repo = crate::orchestrate::review_directory(root);
+    let mut hidden = Hidden::prepare(&repo)?;
+    let mut paths = Vec::new();
+    for line in crate::dispatch::section_lines(&text, "Owned files") {
+        let Some(rel) = line.strip_prefix("- ") else {
+            continue;
+        };
+        if crate::dispatch::unsafe_owned(rel) || !owned_path_stays_in_repo(&repo, rel) {
+            continue;
+        }
+        let path = repo.join(rel);
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                hidden.restore()?;
+                return Err(err.into());
+            }
+        };
+        if meta.file_type().is_symlink() || !(meta.is_file() || meta.is_dir()) {
+            continue;
+        }
+        paths.push(path);
+    }
+    paths.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for path in paths {
+        let backup = hidden.dir.join(hidden.pairs.len().to_string());
+        if let Err(err) = fs::rename(&path, &backup) {
+            hidden.restore()?;
+            return Err(err.into());
+        }
+        hidden.pairs.push((path, backup));
+    }
+    if hidden.pairs.is_empty() {
+        hidden.restore()?;
+        return Ok(());
+    }
+    let ran = falsifier_passed(&repo, &command);
+    hidden.restore()?;
+    if ran? {
+        return Err(message("refused: falsifier does not discriminate"));
+    }
+    Ok(())
+}
+
+struct Hidden {
+    dir: PathBuf,
+    pairs: Vec<(PathBuf, PathBuf)>,
+}
+
+impl Hidden {
+    fn prepare(repo: &Path) -> Result<Self, GuidedError> {
+        let parent = repo.parent().unwrap_or(repo);
+        let dir = parent.join(format!(
+            ".crucible-falsifier-hide-{}-{}",
+            std::process::id(),
+            HIDE_SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        if dir.starts_with(repo) {
+            return Err(message(
+                "refused: cannot hold the owned files outside the product tree",
+            ));
+        }
+        fs::create_dir(&dir)?;
+        Ok(Self {
+            dir,
+            pairs: Vec::new(),
+        })
+    }
+
+    fn restore(&mut self) -> Result<(), GuidedError> {
+        let mut first: Option<GuidedError> = None;
+        for (original, backup) in self.pairs.drain(..).rev() {
+            if let Err(err) = put_back(&original, &backup) {
+                if first.is_none() {
+                    first = Some(message(format!(
+                        "could not restore {}: {err}",
+                        original.display()
+                    )));
+                }
+            }
+        }
+        if fs::remove_dir(&self.dir).is_err() && first.is_none() && self.dir.exists() {
+            first = Some(message(format!("could not remove {}", self.dir.display())));
+        }
+        match first {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for Hidden {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+fn put_back(original: &Path, backup: &Path) -> std::io::Result<()> {
+    if let Ok(meta) = fs::symlink_metadata(original) {
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            fs::remove_dir_all(original)?;
+        } else {
+            fs::remove_file(original)?;
+        }
+    }
+    fs::rename(backup, original)
+}
+
+/// A symlinked ancestor would make `rename` leave the product tree.
+fn owned_path_stays_in_repo(repo: &Path, rel: &str) -> bool {
+    let mut cur = repo.to_path_buf();
+    for part in rel.split('/') {
+        if part.is_empty() {
+            continue;
+        }
+        cur.push(part);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => return false,
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+fn falsifier_passed(repo: &Path, line: &str) -> Result<bool, GuidedError> {
+    let argv: Vec<&str> = line.split_whitespace().collect();
+    let Some(program) = argv.first().copied() else {
+        return Ok(false);
+    };
+    if program.is_empty() {
+        return Ok(false);
+    }
+    let mut command = Command::new(program);
+    command
+        .args(&argv[1..])
+        .current_dir(repo)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // The falsifier and anything it starts share one group, so the time bound stops all of them.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    let started = Instant::now();
+    let bound = falsifier_bound();
+    loop {
+        match child.try_wait()? {
+            Some(status) => return Ok(status.success()),
+            None if started.elapsed() >= bound => {
+                stop_falsifier_group(&mut child);
+                return Ok(false);
+            }
+            None => thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
+fn stop_falsifier_group(child: &mut Child) {
+    let pgid = child.id();
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{pgid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn check_item_falsifier(dir: &Path, out: &mut String, bad: &mut bool) -> Result<(), GuidedError> {
@@ -1780,5 +1994,247 @@ A1700.1.1\talpha\tT1\tw\tmaker\tj1\tkindB\tA1\tFOCUSED\tRUNNING\t1\t2\t-
             .unwrap()
             .contains("STATUS: CLOSED"));
         assert!(!dir.join(".closing").exists());
+    }
+
+    fn discriminate_item(falsifier: &str) -> String {
+        format!(
+            "\
+# alpha — discriminate
+
+## Goal
+
+Show the falsifier fails when the behavior is gone.
+
+## Non-goals
+
+No other gate.
+
+## Risk
+
+LOW
+
+## Owned files
+
+- src/kept.txt
+
+## Acceptance criteria
+
+- [ ] A1
+
+## Focused falsifier
+
+{falsifier}
+
+## Expensive evidence
+
+NONE
+
+## Stop conditions
+
+Stop if the owned file is not restored.
+"
+        )
+    }
+
+    fn plant_discriminate(root: &Path, falsifier: &str, create_file: bool) {
+        fs::write(root.join("PROGRAM"), "lifecycle: managed\n").unwrap();
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tREVIEW\tw1\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        let dir = root.join("items/alpha");
+        fs::create_dir_all(dir.join("work")).unwrap();
+        fs::write(dir.join("work/note.txt"), "body\n").unwrap();
+        fs::write(dir.join("ITEM.md"), discriminate_item(falsifier)).unwrap();
+        if create_file {
+            fs::create_dir_all(root.join("src")).unwrap();
+            fs::write(root.join("src/kept.txt"), "live\n").unwrap();
+        }
+    }
+
+    #[test]
+    fn discriminate_refuses_when_the_falsifier_still_passes() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", true);
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier does not discriminate");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_allows_a_falsifier_that_fails_after_removal() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_skips_when_the_owned_file_is_absent() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", false);
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+    }
+
+    struct BoundGuard;
+    impl BoundGuard {
+        fn set(bound: std::time::Duration) -> Self {
+            *super::FALSIFIER_BOUND_OVERRIDE
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = Some(bound);
+            Self
+        }
+    }
+    impl Drop for BoundGuard {
+        fn drop(&mut self) {
+            *super::FALSIFIER_BOUND_OVERRIDE
+                .lock()
+                .unwrap_or_else(|err| err.into_inner()) = None;
+        }
+    }
+
+    fn write_script(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+        let mut perms = fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    #[test]
+    fn discriminate_restores_when_the_command_recreates_the_directory() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/recreate.sh", false);
+        fs::create_dir_all(root.join("src/widget")).unwrap();
+        fs::write(root.join("src/widget/note"), "live\n").unwrap();
+        let item = fs::read_to_string(root.join("items/alpha/ITEM.md")).unwrap();
+        fs::write(
+            root.join("items/alpha/ITEM.md"),
+            item.replace("- src/kept.txt", "- src/widget"),
+        )
+        .unwrap();
+        write_script(
+            &root.join("tools/recreate.sh"),
+            "#!/bin/sh\nmkdir -p src/widget\nprintf 'fake\\n' > src/widget/note\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/widget/note")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_stops_the_command_group_before_restore() {
+        let _bound = BoundGuard::set(std::time::Duration::from_millis(400));
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/linger.sh", true);
+        write_script(
+            &root.join("tools/linger.sh"),
+            "#!/bin/sh\n(sleep 3; printf 'late\\n' > src/kept.txt) &\necho $! > tools/child.pid\nsleep 8\n",
+        );
+        let started = std::time::Instant::now();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "check waited for the falsifier: {:?}",
+            started.elapsed()
+        );
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        let pid = fs::read_to_string(root.join("tools/child.pid"))
+            .unwrap()
+            .trim()
+            .to_string();
+        let alive = std::process::Command::new("/bin/kill")
+            .args(["-0", "--", &pid])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!alive.success(), "writer {pid} still alive");
+    }
+
+    #[test]
+    fn discriminate_uses_the_product_repo() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let product = root.join("product");
+        fs::create_dir_all(product.join("src")).unwrap();
+        fs::write(product.join("src/kept.txt"), "live\n").unwrap();
+        plant_discriminate(root, "/usr/bin/true", false);
+        fs::write(
+            root.join("PROGRAM"),
+            format!("repo: {}\nlifecycle: managed\n", product.display()),
+        )
+        .unwrap();
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier does not discriminate");
+        assert_eq!(
+            fs::read_to_string(product.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_does_not_move_through_a_symlinked_parent() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        let outside = tmp.0.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("kept.txt"), "live\n").unwrap();
+        plant_discriminate(root, "/usr/bin/true", false);
+        std::os::unix::fs::symlink(&outside, root.join("src")).unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(outside.join("kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert!(root
+            .join("src")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
     }
 }
