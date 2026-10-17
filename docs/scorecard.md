@@ -18,7 +18,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | --- | --- | --- | --- | --- |
 | SC-1 | Proof is a run of the real binary, not a checklist or a model saying it worked | 2 | 2 | Both sides ran `crucible --version` and printed `1.28.0`. The pull request links those receipts |
 | SC-2 | An architect check happens before code that crosses a boundary | 0 | 0 | The note is in the same change as the code. No `./crucible` receipt |
-| SC-3 | Boundaries are folders, and a gate rejects illegal imports and banned slop before review | 0 | 0 | Crates exist. No import gate |
+| SC-3 | Boundaries are folders, and a gate rejects illegal imports and banned slop before review | 2 | 2 | Both sides refused `phase REVIEW` for an illegal import and for banned slop. The pull request links those runs |
 | SC-4 | One paved path for each job | 0 | 0 | No `./crucible` receipt on this commit. `IDEA.md` remains the unported kernel walk |
 | SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 0 | 0 | The discriminator is a library test. No `./crucible` receipt on this commit |
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
