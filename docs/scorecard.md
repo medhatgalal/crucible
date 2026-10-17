@@ -20,7 +20,7 @@ The rule: a file in the program wins. If the program has no `roles/<role>.md` an
 | SC-2 | An architect check happens before code that crosses a boundary | 0 | 0 | The note is in the same change as the code. No `./crucible` receipt |
 | SC-3 | Boundaries are folders, and a gate rejects illegal imports and banned slop before review | 2 | 2 | Both sides refused `phase REVIEW` for an illegal import and for banned slop. The pull request links those runs |
 | SC-4 | One paved path for each job | 0 | 0 | No `./crucible` receipt on this commit. `IDEA.md` remains the unported kernel walk |
-| SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 0 | 0 | The discriminator is a library test. No `./crucible` receipt on this commit |
+| SC-5 | A repeated mistake becomes a test, lint, CI check, or rule | 2 | 2 | Both sides refused `check` when the falsifier still passed after the owned file was removed. The pull request links those runs |
 | SC-6 | A feature map is generated, kept in the repo, and pull requests link their evidence | 0 | 0 | No generated map |
 | SC-7 | A gardener pass proposes a new rule or a deletion | 0 | 0 | No gardener |
 | SC-8 | Nothing merges without evidence | 2 | 2 | Both sides refused `crucible land` when `reviews/review.md` was absent. The pull request links those two runs |

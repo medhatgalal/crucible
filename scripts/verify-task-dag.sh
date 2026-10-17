@@ -109,7 +109,7 @@ MEDIUM
 
 ## Focused falsifier
 
-scripts/verify-task-dag.sh
+/bin/test -f src/one
 
 ## Expensive evidence
 
