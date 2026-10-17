@@ -357,6 +357,7 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
 
 struct Hidden {
     dir: PathBuf,
+    repo: PathBuf,
     pairs: Vec<(PathBuf, PathBuf)>,
     lock: Option<File>,
     /// A failed restore must not delete the manifest on a later `Drop`.
@@ -403,6 +404,7 @@ impl Hidden {
         }
         let hidden = Self {
             dir,
+            repo: canon,
             pairs: Vec::new(),
             lock: Some(lock),
             pending_failure: false,
@@ -438,6 +440,12 @@ impl Hidden {
         }
         let mut first: Option<GuidedError> = None;
         for (original, backup) in self.pairs.drain(..).rev() {
+            if !restore_target_inside(&self.repo, &original) {
+                self.pending_failure = true;
+                return Err(message(
+                    "refused: restore target is outside the product tree",
+                ));
+            }
             if let Err(err) = put_back(&original, &backup) {
                 if first.is_none() {
                     first = Some(message(format!(
@@ -593,8 +601,10 @@ fn falsifier_passed(repo: &Path, line: &str) -> Result<bool, GuidedError> {
                 return Err(err.into());
             }
             Ok(Some(status)) => {
-                if INTERRUPTED.swap(false, Ordering::SeqCst) {
-                    stop_falsifier_group(&mut child);
+                let interrupted = INTERRUPTED.swap(false, Ordering::SeqCst);
+                // The leader can exit while a background child is still in the group.
+                stop_falsifier_group(&mut child);
+                if interrupted {
                     return Err(message("refused: check interrupted"));
                 }
                 return Ok(status.success());
@@ -3227,6 +3237,102 @@ Stop if the owned file is not restored.
         assert_eq!(kept_body, "live\n");
         assert!(!hide_left, "stranded hide was left at {}", hide.display());
         let _ = fs::remove_dir_all(&hide);
+    }
+
+    #[test]
+    fn discriminate_does_not_restore_through_a_parent_the_falsifier_replaced() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/swap.sh", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let parent = canon.parent().unwrap();
+        let outside = parent.join(format!("crucible-swap-outside-{}", std::process::id()));
+        let _cleanup = RemoveOnDrop(vec![outside.clone()]);
+        let _hide = HidePrefixCleanup(parent.to_path_buf());
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir(&outside).unwrap();
+        write_script(
+            &root.join("tools/swap.sh"),
+            &format!(
+                "#!/bin/sh\nrmdir src\nln -s '{}' src\nexit 1\n",
+                outside.display()
+            ),
+        );
+        let result = check(root, &["alpha"]);
+        let leaked = outside.join("kept.txt");
+        let leaked_body = fs::read_to_string(&leaked).unwrap_or_default();
+        let mut saved = String::new();
+        if let Ok(entries) = fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name
+                    .to_string_lossy()
+                    .starts_with(".crucible-falsifier-hide-")
+                {
+                    if let Ok(text) = fs::read_to_string(entry.path().join("0")) {
+                        saved = text;
+                    }
+                }
+            }
+        }
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "refused: restore target is outside the product tree"
+        );
+        assert!(
+            leaked_body.is_empty() && !leaked.exists(),
+            "restore followed the replaced parent: {leaked_body:?}"
+        );
+        assert_eq!(saved, "live\n");
+    }
+
+    #[test]
+    fn discriminate_stops_a_child_that_outlives_the_falsifier() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/bg.sh", true);
+        write_script(
+            &root.join("tools/bg.sh"),
+            "#!/bin/sh\n(sleep 1; printf 'late\\n' > src/kept.txt) &\necho $! > tools/child.pid\nexit 1\n",
+        );
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        let pid = fs::read_to_string(root.join("tools/child.pid"))
+            .unwrap()
+            .trim()
+            .to_string();
+        let alive = std::process::Command::new("/bin/kill")
+            .args(["-0", "--", &pid])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(!alive.success(), "writer {pid} still alive");
+    }
+
+    struct HidePrefixCleanup(PathBuf);
+    impl Drop for HidePrefixCleanup {
+        fn drop(&mut self) {
+            let Ok(entries) = fs::read_dir(&self.0) else {
+                return;
+            };
+            let prefix = format!(".crucible-falsifier-hide-{}-", std::process::id());
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(&prefix) {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
+            }
+        }
     }
 
     struct RemoveOnDrop(Vec<PathBuf>);
