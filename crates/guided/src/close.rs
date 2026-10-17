@@ -3,16 +3,15 @@
 //! The lesson date is the UTC calendar date of [`Clock::now_unix`] (shell line 5974),
 //! not `date +%Y-%m-%d`.
 
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
-
-#[cfg(test)]
-use std::sync::Mutex;
 
 use crucible_contract::{format_rfc3339_z, Clock};
 
@@ -72,11 +71,15 @@ pub fn check(root: &Path, args: &[&str]) -> Result<CheckReport, GuidedError> {
         );
     }
     if uses_managed_lifecycle(root)? {
+        let repo = crate::orchestrate::review_directory(root);
+        // Before validation, so a killed probe is restored even when this check then refuses.
+        recover_stranded(&repo)?;
         validate_managed_item(root, slug)?;
-        if phase_of(root, slug)? != "REVIEW" {
+        if phase_of(root, slug)? == "REVIEW" {
+            refuse_nondiscriminating_falsifier(root, slug)?;
+        } else {
             say(&mut out, &mut bad, "FAIL managed item must be in REVIEW");
         }
-        refuse_nondiscriminating_falsifier(root, slug)?;
     } else {
         check_item_falsifier(&dir, &mut out, &mut bad)?;
     }
@@ -305,11 +308,19 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
     paths.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for path in paths {
         let backup = hidden.dir.join(hidden.pairs.len().to_string());
+        // The manifest names the backup before the rename. A kill in that gap
+        // leaves the file in place; a kill after the rename is recoverable.
+        hidden.pairs.push((path.clone(), backup.clone()));
+        if let Err(err) = hidden.write_manifest(&repo) {
+            hidden.pairs.pop();
+            hidden.restore()?;
+            return Err(err);
+        }
         if let Err(err) = fs::rename(&path, &backup) {
+            hidden.pairs.pop();
             hidden.restore()?;
             return Err(err.into());
         }
-        hidden.pairs.push((path, backup));
     }
     if hidden.pairs.is_empty() {
         hidden.restore()?;
@@ -326,29 +337,78 @@ fn refuse_nondiscriminating_falsifier(root: &Path, slug: &str) -> Result<(), Gui
 struct Hidden {
     dir: PathBuf,
     pairs: Vec<(PathBuf, PathBuf)>,
+    lock: Option<File>,
+    /// A failed restore must not delete the manifest on a later `Drop`.
+    pending_failure: bool,
 }
 
 impl Hidden {
     fn prepare(repo: &Path) -> Result<Self, GuidedError> {
-        let parent = repo.parent().unwrap_or(repo);
+        let canon = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+        let parent = canon.parent().unwrap_or(&canon);
         let dir = parent.join(format!(
             ".crucible-falsifier-hide-{}-{}",
             std::process::id(),
             HIDE_SEQ.fetch_add(1, Ordering::Relaxed)
         ));
-        if dir.starts_with(repo) {
+        if dir.starts_with(&canon) {
             return Err(message(
                 "refused: cannot hold the owned files outside the product tree",
             ));
         }
         fs::create_dir(&dir)?;
-        Ok(Self {
+        let lock = match OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(dir.join("LOCK"))
+        {
+            Ok(file) => file,
+            Err(err) => {
+                let _ = fs::remove_dir(&dir);
+                return Err(err.into());
+            }
+        };
+        if let Err(err) = lock_hide(&lock) {
+            drop(lock);
+            let _ = fs::remove_file(dir.join("LOCK"));
+            let _ = fs::remove_dir(&dir);
+            return Err(err.into());
+        }
+        let hidden = Self {
             dir,
             pairs: Vec::new(),
-        })
+            lock: Some(lock),
+            pending_failure: false,
+        };
+        hidden.write_manifest(repo)?;
+        Ok(hidden)
+    }
+
+    fn write_manifest(&self, repo: &Path) -> Result<(), GuidedError> {
+        let canon = fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+        let mut body = format!("repo\t{}\n", canon.display());
+        for (index, (original, _)) in self.pairs.iter().enumerate() {
+            body.push_str(&format!("{index}\t{}\n", original.display()));
+        }
+        let tmp = self.dir.join("MANIFEST.tmp");
+        {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&tmp)?;
+            file.write_all(body.as_bytes())?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp, self.dir.join("MANIFEST"))?;
+        Ok(())
     }
 
     fn restore(&mut self) -> Result<(), GuidedError> {
+        if self.pending_failure {
+            return Err(message("could not restore owned files"));
+        }
         let mut first: Option<GuidedError> = None;
         for (original, backup) in self.pairs.drain(..).rev() {
             if let Err(err) = put_back(&original, &backup) {
@@ -360,28 +420,83 @@ impl Hidden {
                 }
             }
         }
-        if fs::remove_dir(&self.dir).is_err() && first.is_none() && self.dir.exists() {
-            first = Some(message(format!("could not remove {}", self.dir.display())));
+        if let Some(err) = first {
+            self.pending_failure = true;
+            return Err(err);
         }
-        match first {
-            Some(err) => Err(err),
-            None => Ok(()),
+        self.remove_hide_dir()
+    }
+
+    fn remove_hide_dir(&mut self) -> Result<(), GuidedError> {
+        if !self.dir.exists() {
+            self.lock.take();
+            return Ok(());
         }
+        let _ = fs::remove_file(self.dir.join("MANIFEST"));
+        let _ = fs::remove_file(self.dir.join("MANIFEST.tmp"));
+        self.lock.take();
+        let _ = fs::remove_file(self.dir.join("LOCK"));
+        if fs::remove_dir(&self.dir).is_err() && self.dir.exists() {
+            return Err(message(format!("could not remove {}", self.dir.display())));
+        }
+        Ok(())
     }
 }
 
 impl Drop for Hidden {
     fn drop(&mut self) {
-        let _ = self.restore();
+        if self.restore().is_err() {
+            // Unlock so the next check can restore from the manifest.
+            self.lock.take();
+        }
     }
 }
 
+fn lock_hide(file: &File) -> std::io::Result<()> {
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+fn try_lock_hide(file: &File) -> Result<bool, std::io::Error> {
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        return Ok(true);
+    }
+    let err = std::io::Error::last_os_error();
+    if err.kind() == std::io::ErrorKind::WouldBlock || err.raw_os_error() == Some(libc::EWOULDBLOCK)
+    {
+        return Ok(false);
+    }
+    Err(err)
+}
+
 fn put_back(original: &Path, backup: &Path) -> std::io::Result<()> {
+    let backup_meta = match fs::symlink_metadata(backup) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // Another check already restored, or the rename never happened.
+            // Do not unlink the live path.
+            if fs::symlink_metadata(original).is_ok() {
+                return Ok(());
+            }
+            return Err(err);
+        }
+        Err(err) => return Err(err),
+    };
     if let Ok(meta) = fs::symlink_metadata(original) {
-        if meta.is_dir() && !meta.file_type().is_symlink() {
-            fs::remove_dir_all(original)?;
-        } else {
-            fs::remove_file(original)?;
+        let original_is_dir = meta.is_dir() && !meta.file_type().is_symlink();
+        let backup_is_file = backup_meta.is_file() || backup_meta.file_type().is_symlink();
+        // `rename` replaces a file. It does not replace a directory.
+        if original_is_dir || !backup_is_file {
+            if original_is_dir {
+                fs::remove_dir_all(original)?;
+            } else {
+                fs::remove_file(original)?;
+            }
         }
     }
     fs::rename(backup, original)
@@ -426,23 +541,211 @@ fn falsifier_passed(repo: &Path, line: &str) -> Result<bool, GuidedError> {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    // Installed before spawn so a signal cannot land in the gap after the child exists.
+    let _signals = StopSignals::install();
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Err(message("refused: falsifier did not run"));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
+            return Err(message("refused: check interrupted"));
+        }
         Err(err) => return Err(err.into()),
     };
     let started = Instant::now();
     let bound = falsifier_bound();
     loop {
-        match child.try_wait()? {
-            Some(status) => return Ok(status.success()),
-            None if started.elapsed() >= bound => {
+        if INTERRUPTED.swap(false, Ordering::SeqCst) {
+            stop_falsifier_group(&mut child);
+            return Err(message("refused: check interrupted"));
+        }
+        match child.try_wait() {
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
+                stop_falsifier_group(&mut child);
+                return Err(message("refused: check interrupted"));
+            }
+            Err(err) => return Err(err.into()),
+            Ok(Some(status)) => {
+                if INTERRUPTED.swap(false, Ordering::SeqCst) {
+                    stop_falsifier_group(&mut child);
+                    return Err(message("refused: check interrupted"));
+                }
+                return Ok(status.success());
+            }
+            Ok(None) if started.elapsed() >= bound => {
                 stop_falsifier_group(&mut child);
                 return Ok(false);
             }
-            None => thread::sleep(Duration::from_millis(20)),
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
         }
     }
+}
+
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+static SIGNAL_LOCK: Mutex<()> = Mutex::new(());
+
+extern "C" fn on_stop(_: libc::c_int) {
+    INTERRUPTED.store(true, Ordering::SeqCst);
+}
+
+struct StopSignals {
+    old_int: libc::sigaction,
+    old_term: libc::sigaction,
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+impl StopSignals {
+    fn install() -> Self {
+        let lock = SIGNAL_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        INTERRUPTED.store(false, Ordering::SeqCst);
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = on_stop as *const () as usize;
+            action.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut action.sa_mask);
+            let mut old_int = std::mem::zeroed();
+            let mut old_term = std::mem::zeroed();
+            libc::sigaction(libc::SIGINT, &action, &mut old_int);
+            libc::sigaction(libc::SIGTERM, &action, &mut old_term);
+            Self {
+                old_int,
+                old_term,
+                _lock: lock,
+            }
+        }
+    }
+}
+
+impl Drop for StopSignals {
+    fn drop(&mut self) {
+        unsafe {
+            libc::sigaction(libc::SIGINT, &self.old_int, std::ptr::null_mut());
+            libc::sigaction(libc::SIGTERM, &self.old_term, std::ptr::null_mut());
+        }
+    }
+}
+
+fn recover_stranded(repo: &Path) -> Result<(), GuidedError> {
+    let Ok(repo) = fs::canonicalize(repo) else {
+        return Ok(());
+    };
+    let Some(parent) = repo.parent() else {
+        return Ok(());
+    };
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".crucible-falsifier-hide-")
+        {
+            dirs.push(entry.path());
+        }
+    }
+    dirs.sort();
+    for dir in dirs {
+        restore_one_hide(&dir, &repo)?;
+    }
+    Ok(())
+}
+
+fn restore_one_hide(dir: &Path, repo: &Path) -> Result<(), GuidedError> {
+    let lock = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dir.join("LOCK"))
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            // A live probe writes LOCK before MANIFEST and holds it. No LOCK means no live owner.
+            if dir.join("MANIFEST").is_file() {
+                return restore_hide_manifest(dir, repo);
+            }
+            let _ = fs::remove_file(dir.join("MANIFEST.tmp"));
+            let _ = fs::remove_dir(dir);
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    if !try_lock_hide(&lock)? {
+        if hide_manifest_names(dir, repo)? {
+            return Err(message("refused: falsifier probe in progress"));
+        }
+        return Ok(());
+    }
+    let restored = restore_hide_manifest(dir, repo);
+    drop(lock);
+    restored
+}
+
+fn hide_manifest_names(dir: &Path, repo: &Path) -> Result<bool, GuidedError> {
+    let text = match fs::read_to_string(dir.join("MANIFEST")) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    for line in records(&text) {
+        let mut fields = line.split('\t');
+        if fields.next() != Some("repo") {
+            continue;
+        }
+        let Ok(recorded) = fs::canonicalize(fields.next().unwrap_or("")) else {
+            return Ok(false);
+        };
+        return Ok(recorded.as_path() == repo);
+    }
+    Ok(false)
+}
+
+fn restore_hide_manifest(dir: &Path, repo: &Path) -> Result<(), GuidedError> {
+    let text = match fs::read_to_string(dir.join("MANIFEST")) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let _ = fs::remove_file(dir.join("MANIFEST.tmp"));
+            let _ = fs::remove_file(dir.join("LOCK"));
+            let _ = fs::remove_dir(dir);
+            return Ok(());
+        }
+        Err(err) => return Err(err.into()),
+    };
+    let mut recorded = None;
+    let mut pairs = Vec::new();
+    for line in records(&text) {
+        let mut fields = line.split('\t');
+        let key = fields.next().unwrap_or("");
+        let value = fields.next().unwrap_or("");
+        if key == "repo" {
+            recorded = Some(PathBuf::from(value));
+        } else if let Ok(index) = key.parse::<usize>() {
+            pairs.push((PathBuf::from(value), dir.join(index.to_string())));
+        }
+    }
+    let Some(recorded) = recorded else {
+        return Ok(());
+    };
+    let Ok(recorded) = fs::canonicalize(&recorded) else {
+        return Ok(());
+    };
+    if recorded != repo {
+        return Ok(());
+    }
+    pairs.sort_by_key(|(original, _)| original.components().count());
+    for (original, backup) in pairs {
+        put_back(&original, &backup)
+            .map_err(|err| message(format!("could not restore {}: {err}", original.display())))?;
+    }
+    let _ = fs::remove_file(dir.join("MANIFEST"));
+    let _ = fs::remove_file(dir.join("MANIFEST.tmp"));
+    let _ = fs::remove_file(dir.join("LOCK"));
+    let _ = fs::remove_dir(dir);
+    Ok(())
 }
 
 fn stop_falsifier_group(child: &mut Child) {
@@ -1041,7 +1344,13 @@ pub fn close(root: &Path, args: &[&str], clock: &dyn Clock) -> Result<String, Gu
     }
     let before = workid(root, slug)?;
     // `die` inside check is `exit`, so the shell never reaches the `||` rmdir.
-    let report = check(root, &[slug])?;
+    let report = match check(root, &[slug]) {
+        Ok(report) => report,
+        Err(err) => {
+            release_closing(&dir);
+            return Err(err);
+        }
+    };
     if report.status != 0 {
         release_closing(&dir);
         return Err(message(format!("refused: {slug} is not closeable")));
@@ -2236,5 +2545,201 @@ Stop if the owned file is not restored.
             .unwrap()
             .file_type()
             .is_symlink());
+    }
+
+    #[test]
+    fn discriminate_refuses_when_the_falsifier_does_not_run() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/no/such/falsifier", true);
+        let err = check(root, &["alpha"]).unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier did not run");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_skips_the_probe_before_review() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", true);
+        fs::write(
+            root.join("STATE.tsv"),
+            format!("{STATE_HEADER}\nalpha\tACTIVE\tBUILD\tw1\tLOW\t-\t-\t1\n"),
+        )
+        .unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            report.text.contains("FAIL managed item must be in REVIEW"),
+            "{}",
+            report.text
+        );
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn discriminate_restores_a_hide_left_by_an_interrupted_check() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/bin/test -f src/kept.txt", true);
+        let canon = fs::canonicalize(root).unwrap();
+        let hide = canon.parent().unwrap().join(format!(
+            ".crucible-falsifier-hide-interrupt-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&hide).unwrap();
+        fs::rename(root.join("src/kept.txt"), hide.join("0")).unwrap();
+        fs::write(
+            hide.join("MANIFEST"),
+            format!(
+                "repo\t{}\n0\t{}\n",
+                canon.display(),
+                canon.join("src/kept.txt").display()
+            ),
+        )
+        .unwrap();
+        let report = check(root, &["alpha"]).unwrap();
+        assert!(
+            !report.text.contains("falsifier does not discriminate"),
+            "{}",
+            report.text
+        );
+        assert!(
+            !report.text.contains("falsifier did not run"),
+            "{}",
+            report.text
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+        assert!(
+            !hide.exists(),
+            "stranded hide was left at {}",
+            hide.display()
+        );
+    }
+
+    #[test]
+    fn discriminate_stops_when_the_process_receives_sigterm() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/linger.sh", true);
+        write_script(
+            &root.join("tools/linger.sh"),
+            "#!/bin/sh\nprintf ready\\n > tools/ready\nwhile true; do sleep 1; done\n",
+        );
+        let check_root = root.to_path_buf();
+        let worker = thread::spawn(move || check(&check_root, &["alpha"]));
+        let ready = root.join("tools/ready");
+        let started = std::time::Instant::now();
+        while !ready.is_file() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(3),
+                "falsifier did not start"
+            );
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        unsafe {
+            libc::kill(std::process::id() as libc::pid_t, libc::SIGTERM);
+        }
+        let err = worker.join().expect("check thread").unwrap_err();
+        assert_eq!(err.to_string(), "refused: check interrupted");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn put_back_leaves_the_live_file_when_the_backup_is_gone() {
+        let tmp = Tmp::new();
+        let original = tmp.0.join("kept.txt");
+        fs::write(&original, "live\n").unwrap();
+        super::put_back(&original, &tmp.0.join("missing-backup")).unwrap();
+        assert_eq!(fs::read_to_string(&original).unwrap(), "live\n");
+    }
+
+    #[test]
+    fn discriminate_a_second_check_does_not_take_the_hidden_file() {
+        let _bound = BoundGuard::set(std::time::Duration::from_secs(8));
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "tools/linger.sh", true);
+        write_script(
+            &root.join("tools/linger.sh"),
+            "#!/bin/sh\nprintf ready\\n > tools/ready\nwhile true; do sleep 1; done\n",
+        );
+        let check_root = root.to_path_buf();
+        let worker = thread::spawn(move || check(&check_root, &["alpha"]));
+        let ready = root.join("tools/ready");
+        let started = std::time::Instant::now();
+        while !ready.is_file() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(3),
+                "falsifier did not start"
+            );
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !root.join("src/kept.txt").exists(),
+            "probe did not hide the owned file"
+        );
+        let second = std::time::Instant::now();
+        let err = close(
+            root,
+            &["alpha", "must not close during the probe"],
+            &FixedClock::new(0),
+        )
+        .unwrap_err();
+        assert!(
+            second.elapsed() < std::time::Duration::from_secs(2),
+            "close waited on the probe: {:?}",
+            second.elapsed()
+        );
+        assert_eq!(err.to_string(), "refused: falsifier probe in progress");
+        assert!(!root.join("items/alpha/.closing").exists());
+        assert!(
+            !root.join("src/kept.txt").exists(),
+            "close moved the owned file back while the probe held it"
+        );
+        unsafe {
+            libc::kill(std::process::id() as libc::pid_t, libc::SIGTERM);
+        }
+        let err = worker.join().expect("check thread").unwrap_err();
+        assert_eq!(err.to_string(), "refused: check interrupted");
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
+    }
+
+    #[test]
+    fn close_releases_the_lock_when_the_falsifier_does_not_discriminate() {
+        let tmp = Tmp::new();
+        let root = tmp.0.as_path();
+        plant_discriminate(root, "/usr/bin/true", true);
+        let err = close(
+            root,
+            &["alpha", "the falsifier still passed"],
+            &FixedClock::new(0),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "refused: falsifier does not discriminate");
+        assert!(!root.join("items/alpha/.closing").exists());
+        assert_eq!(
+            fs::read_to_string(root.join("src/kept.txt")).unwrap(),
+            "live\n"
+        );
     }
 }
